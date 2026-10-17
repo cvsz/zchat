@@ -46,7 +46,7 @@ If the error says `requirements.txt (line 1)` and mentions only pywinauto, you a
 1. Open Camfrog and join a room. For Camfrog 8.x, launch `room-control.exe` and use **Setup → Auto-detect**. Findings: `docs/CAMFROG-8.5-FINDINGS.md`.
 2. Edit that app's `config.json`, set your nickname, and configure room replies. Keep `dry_run` on while checking behavior.
 3. Use `im-autoreply.exe` for private IM auto-reply; its config and logs are separate from Room Control.
-4. Use `status-random.exe` or `status-marquee.exe` for separate status apps, or `status-changer.exe` for their combined interface and Activity Log. Each has its own data folder. Dry-run is enabled by default; enable **Send statuses live to Camfrog** before using **Apply Now** or **Start** to send statuses.
+4. Use `status-random.exe` or `status-marquee.exe` for separate status apps, or `status-changer.exe` for their combined interface and Activity Log. Each has its own data folder. Keep dry-run enabled: live background sends currently stop with `BACKGROUND_UNSUPPORTED` because Camfrog's submit path has not passed desktop-isolation verification. `web-status.exe` is a separate website-based feature.
 5. Open a private chat in Camfrog, then use `chat-im-private.exe` to refresh and focus its window. Its **Discover controls** button dumps the control tree to `controls.txt` for selector setup, like the other apps.
 
 `python camfrog_auto.py ...` remains available as a source-only developer CLI. It uses the local `config.json`, which is ignored by Git; create it with `python camfrog_auto.py init --config config.json` or copy `config.example.json`. CI and builds validate the safe example. The CLI is not one of the eight packaged apps. The `extras\*.bat` helpers are source-checkout shortcuts, except `extras\gui.bat` which launches the built `dist\room-control\room-control.exe`.
@@ -69,7 +69,7 @@ Room Control and IM Auto-reply use the GUI **Save & Start** and **Stop** control
 
 Each app writes logs beside its own config. The source CLI uses `camfrog_auto.log` in the repository folder.
 
-**Background status updates:** Random and Marquee can update Camfrog's native status control without bringing its window to the front. The worker can discover minimized or hidden windows, but Camfrog must remain running in the same signed-in Windows session and UI Automation must still expose the status control. This does not work after Camfrog exits; behavior while Windows is locked or the session is disconnected depends on Windows and Camfrog. Room-chat replies use a different embedded input and still require the room window to be foreground.
+**Strict background status updates:** Status Changer, Random, and Marquee can discover Camfrog controls, but the current Camfrog 8.5 submit path is not verified to preserve desktop state. Strict mode therefore returns `BACKGROUND_UNSUPPORTED` before writing or submitting a status. Do not treat a discovered or minimized window as proof that a background update is supported. Interactive mode can affect foreground focus. Room-chat replies use a different embedded input and require the room window to be foreground.
 
 ## Scrolling status + history switch
 
@@ -77,8 +77,8 @@ Each app writes logs beside its own config. The source CLI uses `camfrog_auto.lo
 - **History switch** (`status.history`): every status you set is saved to `status_history.json`. With `use_as_source: true` the next status is picked from that history (`rotate` = round-robin, `random`, `most_used`). Your `status.messages` are seeded into it automatically.
 - **TH/EN auto switch** (`status.language_cycle: ["th","en"]`): alternates Thai, English, Thai, English… each time the status changes. Works with history and with plain messages.
 - **Safety:** every frame is a real status change on Camfrog, so frames are rate-limited (`step_seconds >= 0.3`). Keep `interval_seconds` generous for Random mode and start with `dry_run: true`.
-- **Live status send:** the status apps start in dry-run mode. In `status-changer.exe`, **Save Data** only saves settings; status changes are sent by **Start** after **Send statuses live to Camfrog** is enabled. The legacy status executables retain **Apply Now**. When Camfrog is not foreground, status sends use the verified background ComboBox path without changing window focus.
-- **Background status updates:** when Camfrog is not foreground, the status worker writes the verified Edit control and posts Enter to its verified ComboBox parent. It does not raise Camfrog or take focus. Select **Use background status updates** to use that path even while Camfrog is foreground. The worker checks the Edit read-back before submitting. See `status.background_enter_target` in `CONFIG-EN.md`.
+- **Live status send:** status apps start in dry-run mode. In `status-changer.exe`, **Save Data** only saves settings. A live **Start** request returns `BACKGROUND_UNSUPPORTED` before changing Camfrog because the submit path has not passed the no-interference requirement. Do not use interactive submission when desktop isolation is required; it may affect foreground focus. `web-status.exe` uses a separate website flow and has separate authentication and verification limits.
+- **Background status option:** the disabled **Strict background (currently unsupported)** control is retained as a capability notice; it does not enable a successful send. See `status.execution_mode` in `CONFIG-EN.md`.
 
 Preview offline without opening Camfrog:
 ```

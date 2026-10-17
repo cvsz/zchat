@@ -156,7 +156,7 @@ function renderAgents(items) {
     const action = document.createElement("td");
     if (item.revoked_at) action.textContent = "Revoked";
     else action.append(button("Revoke", "danger", async () => {
-      if (!window.confirm(`Revoke agent ${item.name}? Its pending commands will be canceled.`)) return;
+      if (!window.confirm(`Revoke agent ${item.name}? Pending commands will be canceled. Claimed commands will be marked effect unknown because an action may already be running and cannot be interrupted.`)) return;
       const requestGeneration = sessionGeneration;
       try {
         await api(`/agents/${item.id}/revoke`, { method: "POST" });
@@ -200,7 +200,7 @@ function renderCommands(items) {
     cell(row, formatDate(item.created_at));
     cell(row, accountNames.get(item.account_id) || item.account_id);
     cell(row, item.operation);
-    cell(row, item.state);
+    cell(row, item.state === "effect_unknown" ? "Effect unknown" : item.state);
     cell(row, item.result_code);
     const action = document.createElement("td");
     if (item.state === "pending") action.append(button("Cancel", "secondary", async () => {

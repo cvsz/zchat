@@ -82,6 +82,28 @@ def test_feature_package_excludes_the_separate_zchat_client(tmp_path, monkeypatc
         }
 
 
+def test_feature_package_includes_each_app_icon(tmp_path):
+    for relative in package.FEATURE_EXECUTABLES:
+        executable = tmp_path / relative
+        executable.parent.mkdir(parents=True, exist_ok=True)
+        executable.write_bytes(relative.encode())
+        (executable.parent / "app.ico").write_bytes(b"zchat icon")
+    package.write_sums(tmp_path, "camfrog-features")
+
+    bundle = package.make_zip(
+        tmp_path,
+        tmp_path / "bundle.zip",
+        executables_only=True,
+        included_executables=set(package.FEATURE_EXECUTABLES),
+    )
+    with zipfile.ZipFile(bundle) as archive:
+        names = set(archive.namelist())
+        assert all(
+            f"{Path(relative).parent.as_posix()}/app.ico" in names
+            for relative in package.FEATURE_EXECUTABLES
+        )
+
+
 def test_zip_contains_files_with_relative_paths(tmp_path):
     d = tmp_path / "dist"
     (d / "sub").mkdir(parents=True)
@@ -217,7 +239,26 @@ def test_icon_is_valid_multisize():
     import struct
     d = (Path(__file__).resolve().parent.parent / "app.ico").read_bytes()
     reserved, kind, n = struct.unpack("<HHH", d[:6])
-    assert (reserved, kind) == (0, 1) and n >= 4
+    assert (reserved, kind) == (0, 1)
+    sizes = {
+        (width or 256, height or 256)
+        for width, height, _colors, _reserved, _planes, _bpp, _length, _offset
+        in (struct.unpack_from("<BBBBHHII", d, 6 + i * 16) for i in range(n))
+    }
+    assert sizes == {(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)}
+
+
+def test_doctor_rejects_icon_missing_a_required_resolution(tmp_path, monkeypatch):
+    import doctor
+
+    icon = (Path(__file__).resolve().parent.parent / "app.ico").read_bytes()
+    # Keep the header and first image only to simulate an accidentally incomplete icon.
+    incomplete = icon[:6 + 16 + int.from_bytes(icon[14:18], "little")]
+    incomplete = incomplete[:4] + (1).to_bytes(2, "little") + incomplete[6:]
+    monkeypatch.setattr(doctor, "ROOT", tmp_path)
+    (tmp_path / "app.ico").write_bytes(incomplete)
+
+    assert "incomplete" in doctor.icon_problem()[0]
 
 
 # ---- audit regressions ----
@@ -349,3 +390,13 @@ def test_build_cleans_stale_root_web_status_exe_before_packaging():
     cleanup = r'if exist "dist\web-status.exe" del /q "dist\web-status.exe"'
     assert cleanup in build
     assert build.index(cleanup) < build.index("tools\\package.py")
+
+
+def test_build_requires_and_bundles_the_zchat_icon_before_packaging():
+    root = Path(__file__).resolve().parent.parent
+    build = (root / "build.bat").read_text(encoding="utf-8")
+    assert "refusing to build apps with a default Python icon" in build
+    assert "set \"ICONARG=--icon app.ico --add-data app.ico;.\"" in build
+    assert build.index('copy /y "app.ico" "dist\\%%D\\app.ico"') < build.index(
+        "tools\\package.py"
+    )

@@ -2,6 +2,8 @@
 
 Researched 2026-10-13. Sources are Camfrog's own public pages and anonymous HTTPS GETs. No login, cookies, credentials, or form submissions were used.
 
+Follow-up on 2026-10-18: after operator authorization, one read-only GET using the local development `WEBAUTH_BOT_USER` cookie loaded the authenticated `/bot/profile` form. No account values were recorded and no form was submitted. This confirms the current local cookie can read that page; it does not establish a supported API contract or verify any Bot Manager mutation.
+
 ## Public route checks
 
 | Route | Anonymous result | What this establishes |

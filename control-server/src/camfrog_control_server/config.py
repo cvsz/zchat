@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -23,6 +24,7 @@ class Settings:
     log_format: Literal["json", "text"] = "json"
     cors_origins: list[str] = field(default_factory=list)
     trusted_hosts: list[str] = field(default_factory=list)
+    zworkforce_integration_token: str = field(default="", repr=False)
 
     def __post_init__(self) -> None:
         if not self.database_url.strip():
@@ -31,6 +33,12 @@ class Settings:
             raise ValueError("CONTROL_ADMIN_TOKEN must contain at least 32 characters.")
         if len(self.jwt_signing_secret) < 32:
             raise ValueError("CONTROL_JWT_SECRET must contain at least 32 characters.")
+        if self.zworkforce_integration_token and not re.fullmatch(
+            r"[A-Za-z0-9._~-]{32,512}", self.zworkforce_integration_token
+        ):
+            raise ValueError(
+                "CONTROL_ZWORKFORCE_INTEGRATION_TOKEN must be 32 to 512 URL-safe characters."
+            )
         if not 15 <= self.command_lease_seconds <= 600:
             raise ValueError("CONTROL_COMMAND_LEASE_SECONDS must be between 15 and 600.")
         if not 1 <= self.command_max_attempts <= 10:
@@ -62,6 +70,9 @@ class Settings:
         database_url = os.environ.get("DATABASE_URL", "").strip()
         admin_api_token = os.environ.get("CONTROL_ADMIN_TOKEN", "")
         jwt_signing_secret = os.environ.get("CONTROL_JWT_SECRET", "")
+        zworkforce_integration_token = os.environ.get(
+            "CONTROL_ZWORKFORCE_INTEGRATION_TOKEN", ""
+        ).strip()
         if not database_url:
             raise ValueError("DATABASE_URL is required; no database default is provided.")
         if not admin_api_token:
@@ -121,6 +132,7 @@ class Settings:
             database_url=database_url,
             admin_api_token=admin_api_token,
             jwt_signing_secret=jwt_signing_secret,
+            zworkforce_integration_token=zworkforce_integration_token,
             docs_enabled=docs_value == "true",
             command_lease_seconds=lease_seconds,
             command_max_attempts=max_attempts,

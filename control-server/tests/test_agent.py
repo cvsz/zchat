@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -13,6 +14,7 @@ from camfrog_control_server.agent import (
     AgentTransportError,
     ControlPlaneClient,
     NoCamfrogProvider,
+    _has_command_lease_window,
     poll_once,
     validate_server_url,
 )
@@ -121,6 +123,60 @@ def test_poll_once_includes_account_client_state_in_heartbeat() -> None:
         "/agent/heartbeat",
         {"state": "running", "client_process_state": "unknown"},
     )
+
+
+def test_command_lease_preflight_uses_server_issued_duration_and_poll_round_trip() -> None:
+    issued_at = datetime.now(UTC)
+    command = {
+        "claim_issued_at": issued_at.isoformat(),
+        "claim_expires_at": (issued_at + timedelta(seconds=15)).isoformat(),
+    }
+    assert _has_command_lease_window(command, request_elapsed_seconds=0.1)
+    assert not _has_command_lease_window(command, request_elapsed_seconds=10.1)
+    assert not _has_command_lease_window(
+        {**command, "claim_expires_at": (issued_at + timedelta(seconds=4)).isoformat()},
+        request_elapsed_seconds=0,
+    )
+    assert not _has_command_lease_window(
+        {**command, "claim_issued_at": issued_at.replace(tzinfo=None).isoformat()},
+        request_elapsed_seconds=0,
+    )
+
+
+def test_poll_once_does_not_execute_command_without_safe_lease_window() -> None:
+    now = datetime.now(UTC)
+    command = {
+        "id": "8b07c248-5ac8-4375-bb14-a46e32ad4457",
+        "claim_token": "c" * 43,
+        "claim_issued_at": now.isoformat(),
+        "claim_expires_at": (now + timedelta(seconds=4)).isoformat(),
+        "operation": "launch",
+        "payload": {},
+    }
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, dict | None]] = []
+
+        def request(self, method: str, path: str, body: dict | None = None):
+            self.calls.append((method, path, body))
+            if path == "/agent/commands/next":
+                return {"command": command}
+            return None
+
+    class CountingProvider(NoCamfrogProvider):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def execute(self, _command: dict) -> tuple[str, str]:
+            self.calls += 1
+            return "succeeded", "ok"
+
+    client = FakeClient()
+    provider = CountingProvider()
+    assert poll_once(client, provider) is False
+    assert provider.calls == 0
+    assert not any(path.endswith("/result") for _, path, _ in client.calls)
 
 
 def test_poll_once_acknowledges_messages_only_after_provider_acceptance() -> None:

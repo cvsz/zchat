@@ -23,6 +23,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:?Run python -m camfrog_control_server.local_setup before a new local stack}
       CONTROL_ADMIN_TOKEN: ${CONTROL_ADMIN_TOKEN:?Run python -m camfrog_control_server.local_setup before a new local stack}
       CONTROL_JWT_SECRET: ${CONTROL_JWT_SECRET:?Run python -m camfrog_control_server.local_setup before a new local stack}
+      CONTROL_ZWORKFORCE_INTEGRATION_TOKEN: ${CONTROL_ZWORKFORCE_INTEGRATION_TOKEN:-}
       CONTROL_DOCS_ENABLED: ${CONTROL_DOCS_ENABLED:?Run python -m camfrog_control_server.local_setup before a new local stack}
       CONTROL_COMMAND_LEASE_SECONDS: ${CONTROL_COMMAND_LEASE_SECONDS:?Run python -m camfrog_control_server.local_setup before a new local stack}
       CONTROL_COMMAND_MAX_ATTEMPTS: ${CONTROL_COMMAND_MAX_ATTEMPTS:?Run python -m camfrog_control_server.local_setup before a new local stack}

@@ -225,10 +225,212 @@ def test_profiles_and_modes_are_pinned():
         load("status_random_gui").DEFAULTS)["status"]["random"] is True
     assert load("status_marquee_gui").runtime_config(
         load("status_marquee_gui").DEFAULTS)["status"]["marquee"]["enabled"] is True
+    assert load("status_random_gui").runtime_config(
+        load("status_random_gui").DEFAULTS)["status"]["execution_mode"] == "strict_background"
+    assert load("status_marquee_gui").runtime_config(
+        load("status_marquee_gui").DEFAULTS)["status"]["execution_mode"] == "strict_background"
+    assert load("status_random_gui").SingleInstanceGuard().name != load(
+        "status_marquee_gui").SingleInstanceGuard().name
+    assert load("status_random_gui").SingleInstanceGuard().window_title == "ZChat Random Status"
+    assert load("status_marquee_gui").SingleInstanceGuard().window_title == "ZChat Marquee Status"
     combined = load("status_changer_gui")
     assert combined.runtime_config(combined.DEFAULTS, "random")["status"]["random"] is True
     assert combined.runtime_config(
         combined.DEFAULTS, "marquee")["status"]["marquee"]["enabled"] is True
+
+
+@pytest.mark.parametrize("name", ["status_random_gui", "status_marquee_gui"])
+def test_split_status_worker_entry_forces_strict_background(name, monkeypatch):
+    mod = load(name)
+    calls = []
+    monkeypatch.setattr(
+        mod, "cli_main", lambda argv, **kwargs: calls.append((argv, kwargs)) or 0
+    )
+    assert mod.main(["--worker", "--config", "legacy.json", "run"]) == 0
+    assert calls == [
+        (["--config", "legacy.json", "run"], {"force_strict_background": True})
+    ]
+
+
+@pytest.mark.parametrize(
+    "name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"]
+)
+def test_status_workers_hold_one_shared_writer_lock_for_their_lifecycle(
+    name, monkeypatch, tmp_path
+):
+    mod = load(name)
+    events = []
+
+    class WriterLock:
+        def __init__(self, resource_key, timeout_seconds):
+            events.append(("lock", resource_key, timeout_seconds))
+
+        def acquire(self):
+            events.append("acquired")
+            return True
+
+        def release(self):
+            events.append("released")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "camfrog_status_engine",
+        SimpleNamespace(StatusResourceLock=WriterLock),
+    )
+    pid_file = tmp_path / f"{name}.pid"
+    monkeypatch.setattr(mod, "running_pid", lambda _cfg: None)
+    monkeypatch.setattr(mod, "pid_path", lambda _cfg: pid_file)
+    monkeypatch.setattr(mod, "read_pid", lambda _cfg: mod.os.getpid())
+
+    class Runner:
+        def __init__(self, cfg, *_args):
+            assert cfg["status"]["execution_mode"] == "strict_background"
+            events.append("runner-created")
+
+        def run(self):
+            events.append("runner-ran")
+            return 0
+
+    monkeypatch.setattr(mod, "Runner", Runner)
+    legacy_cfg = {
+        "autoreply": {"enabled": True},
+        "autoreply_im": {"enabled": True},
+        "status": {"execution_mode": "interactive"},
+    }
+    assert mod.run_guarded(legacy_cfg, None) == 0
+    assert events == [
+        ("lock", "camfrog_status_writer", 0.5),
+        "acquired",
+        "runner-created",
+        "runner-ran",
+        "released",
+    ]
+    assert not pid_file.exists()
+
+
+@pytest.mark.parametrize(
+    "name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"]
+)
+def test_status_worker_fails_closed_without_shared_writer_lock(
+    name, monkeypatch, tmp_path, capsys
+):
+    mod = load(name)
+
+    class WriterLock:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def acquire(self):
+            raise TimeoutError("writer already owned")
+
+        def release(self):
+            pass
+
+    monkeypatch.setitem(
+        sys.modules,
+        "camfrog_status_engine",
+        SimpleNamespace(StatusResourceLock=WriterLock),
+    )
+    pid_file = tmp_path / f"{name}.pid"
+    monkeypatch.setattr(mod, "running_pid", lambda _cfg: None)
+    monkeypatch.setattr(mod, "pid_path", lambda _cfg: pid_file)
+    monkeypatch.setattr(mod, "Runner", lambda *_args: pytest.fail("writer lock must fail closed"))
+    assert mod.run_guarded(
+        {
+            "autoreply": {"enabled": True},
+            "autoreply_im": {"enabled": True},
+            "status": {"execution_mode": "interactive"},
+        },
+        None,
+    ) == 3
+    assert not pid_file.exists()
+    assert "Another status worker owns" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"]
+)
+def test_status_standalone_profile_overrides_legacy_interactive_mode(name):
+    mod = load(name)
+    legacy = copy.deepcopy(mod.DEFAULTS)
+    legacy["status"]["execution_mode"] = "interactive"
+
+    configured = mod.apply_app_profile(legacy)
+
+    assert configured["status"]["execution_mode"] == "strict_background"
+    assert legacy["status"]["execution_mode"] == "interactive"
+
+
+@pytest.mark.parametrize(
+    "name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"]
+)
+def test_status_commit_strict_mode_never_uses_foreground_input(name, monkeypatch):
+    mod = load(name)
+    win = SimpleNamespace(handle=100)
+    ctrl = SimpleNamespace(
+        set_focus=lambda: pytest.fail("strict status commit must not set focus"),
+        click_input=lambda: pytest.fail("strict status commit must not click"),
+        type_keys=lambda *_args, **_kwargs: pytest.fail(
+            "strict status commit must not inject keys"
+        ),
+    )
+    calls = []
+    monkeypatch.setattr(
+        mod, "commit_background", lambda text, dry=False: calls.append((text, dry)) or True
+    )
+
+    assert mod.commit(
+        win,
+        ctrl,
+        "background status",
+        False,
+        execution_mode="strict_background",
+    )
+    assert calls == [("background status", False)]
+
+
+@pytest.mark.parametrize(
+    "name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"]
+)
+def test_live_status_worker_fails_before_spawn_when_strict_submit_is_unverified(
+    name, monkeypatch, capsys
+):
+    mod = load(name)
+    monkeypatch.setitem(
+        sys.modules,
+        "camfrog_status_engine",
+        SimpleNamespace(strict_background_submit_supported=lambda: False),
+    )
+    monkeypatch.setattr(mod, "running_pid", lambda _cfg: None)
+    monkeypatch.setattr(
+        mod.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail("unsupported worker must not spawn"),
+    )
+    config = copy.deepcopy(mod.DEFAULTS)
+    config["dry_run"] = False
+    config["status"]["enabled"] = True
+    args = SimpleNamespace(config=None, lang=None)
+
+    # Both CLI entry points must reject before creating a child or entering the
+    # retrying worker loop. The GUI button has a separate start adapter too.
+    assert mod.cmd_start(config, args) == 2
+    assert "BACKGROUND_UNSUPPORTED" in capsys.readouterr().out
+    assert mod.run_guarded(config) == 2
+    assert "BACKGROUND_UNSUPPORTED" in capsys.readouterr().out
+
+    messages = []
+    assert mod.cmd_start_worker(
+        config, args, report=messages.append,
+    ) == 2
+    assert len(messages) == 1
+    assert "BACKGROUND_UNSUPPORTED" in messages[0]
+    assert capsys.readouterr().out == ""
+
+    assert mod.cmd_start_worker(
+        config, SimpleNamespace(config=None, lang=None)
+    ) == 2
+    assert "BACKGROUND_UNSUPPORTED" in capsys.readouterr().out
 
 
 def test_room_and_im_profiles_disable_other_features():
@@ -1067,6 +1269,7 @@ def test_apply_sends_frames_immediately_when_scroll_on(monkeypatch):
     cfg = copy.deepcopy(m.DEFAULTS)
     cfg["dry_run"] = True
     cfg["status"]["enabled"] = True
+    cfg["status"]["execution_mode"] = "interactive"
     cfg["status"]["max_length"] = 120
     cfg["status"]["marquee"].update(enabled=True, scroll=True, width=10, stride=2,
                                     step_seconds=0.3, cycles=1, max_frames=80)
@@ -1089,6 +1292,7 @@ def test_apply_falls_back_to_single_shot_when_scroll_off(monkeypatch):
     cfg = copy.deepcopy(m.DEFAULTS)
     cfg["dry_run"] = True
     cfg["status"]["enabled"] = True
+    cfg["status"]["execution_mode"] = "interactive"
     cfg["status"]["marquee"].update(enabled=True, scroll=False)
     monkeypatch.setattr(m, "get_window", lambda config: object())
     monkeypatch.setattr(m, "find", lambda win, spec: object())
@@ -1097,3 +1301,32 @@ def test_apply_falls_back_to_single_shot_when_scroll_off(monkeypatch):
     monkeypatch.setattr(m, "load_cfg", lambda path: cfg)
     assert m.apply_status_scrolling("dummy.json", "hello") == 0
     assert seen == ["hello"]
+
+
+@pytest.mark.parametrize("scrolling", [False, True])
+def test_strict_background_failure_does_not_fall_back_to_uia_discovery(
+        monkeypatch, scrolling):
+    """A strict submit rejection must not trigger legacy window discovery."""
+    import status_marquee_gui as m
+
+    cfg = copy.deepcopy(m.DEFAULTS)
+    cfg["dry_run"] = False
+    cfg["status"]["enabled"] = True
+    cfg["status"]["execution_mode"] = "strict_background"
+    cfg["status"]["marquee"].update(enabled=scrolling, scroll=scrolling,
+                                     width=8, stride=1, cycles=1)
+    monkeypatch.setattr(m, "load_cfg", lambda _path: cfg)
+    monkeypatch.setattr(
+        m, "commit_background",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(
+            "background status failed (state=BACKGROUND_UNSUPPORTED, "
+            "code=STRICT_SUBMIT_UNVERIFIED)")),
+    )
+    monkeypatch.setattr(
+        m, "cmd_detect",
+        lambda *_args, **_kwargs: pytest.fail("strict failure must not run UIA discovery"),
+    )
+
+    apply = m.apply_status_scrolling if scrolling else m.apply_status_text
+    with pytest.raises(RuntimeError, match="STRICT_SUBMIT_UNVERIFIED"):
+        apply("dummy.json", "strict background test")

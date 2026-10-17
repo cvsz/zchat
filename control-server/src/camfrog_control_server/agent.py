@@ -7,6 +7,7 @@ import getpass
 import random
 import sys
 import time
+from datetime import UTC, datetime
 from typing import Any
 
 from .transport import (
@@ -17,6 +18,24 @@ from .transport import (
     validate_server_url as validate_server_url,
 )
 from .windows_client import WindowsCamfrogClientProvider
+
+COMMAND_LEASE_PREFLIGHT_RESERVE_SECONDS = 5.0
+
+
+def _has_command_lease_window(command: dict[str, Any], request_elapsed_seconds: float) -> bool:
+    """Require enough server-issued lease time to remain after the poll round trip."""
+    try:
+        issued_at = datetime.fromisoformat(str(command["claim_issued_at"]).replace("Z", "+00:00"))
+        expires_at = datetime.fromisoformat(str(command["claim_expires_at"]).replace("Z", "+00:00"))
+        if issued_at.tzinfo is None or expires_at.tzinfo is None:
+            return False
+        lease_seconds = (expires_at.astimezone(UTC) - issued_at.astimezone(UTC)).total_seconds()
+        elapsed = float(request_elapsed_seconds)
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
+    if elapsed < 0:
+        return False
+    return lease_seconds - elapsed >= COMMAND_LEASE_PREFLIGHT_RESERVE_SECONDS
 
 
 class NoCamfrogProvider:
@@ -35,17 +54,22 @@ def poll_once(client: ControlPlaneClient, provider: Any) -> bool:
     if callable(process_state):
         heartbeat["client_process_state"] = process_state()
     client.request("POST", "/agent/heartbeat", heartbeat)
+    command_poll_started = time.monotonic()
     response = client.request("GET", "/agent/commands/next")
+    command_poll_elapsed = time.monotonic() - command_poll_started
     command = (response or {}).get("command")
     did_work = False
     if command is not None:
-        state, code = provider.execute(command)
-        client.request(
-            "POST",
-            f"/agent/commands/{command['id']}/result",
-            {"claim_token": command["claim_token"], "state": state, "code": code},
-        )
-        did_work = True
+        if _has_command_lease_window(command, command_poll_elapsed):
+            state, code = provider.execute(command)
+            client.request(
+                "POST",
+                f"/agent/commands/{command['id']}/result",
+                {"claim_token": command["claim_token"], "state": state, "code": code},
+            )
+            did_work = True
+        else:
+            print("Command lease is stale or malformed; refusing local execution.")
 
     receive_chat_message = getattr(provider, "receive_chat_message", None)
     if callable(receive_chat_message):

@@ -1,9 +1,14 @@
 """Shared background status engine and evidence-driven executor for Camfrog Video Chat.
 
 Provides:
-- Strict true background status execution without focus stealing, mouse movement,
-  keyboard injection, clipboard mutation, or registry sound modifications.
-- Authoritative status commit verification via CComboBoxTS item state.
+- Fail-closed strict background status execution unless a submit adapter can
+  prove it does not activate or interact with the desktop.
+- Legacy targeted window-message submission, which is not accepted as strict
+  background because Camfrog may activate its window while handling key messages.
+- Foreground endpoint checks that reject the result when desktop isolation cannot
+  be confirmed; these checks cannot prevent or detect every transient activation.
+- Camfrog client UI state confirmation via CComboBoxTS item state; this does not
+  verify the provider's externally visible status.
 - Separation of execution modes (strict_background vs interactive).
 - Shared status rotation, marquee frames, concurrency protection, and recovery.
 """
@@ -21,6 +26,7 @@ from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import camfrog_windows_runtime as cwr
+from camfrog_emergency_stop import EmergencyStopHook, EmergencyStopScope
 from camfrog_windows_runtime import (
     ClassifiedWindow,
     ProcessIdentity,
@@ -30,17 +36,16 @@ from camfrog_windows_runtime import (
     revalidate_process_identity,
     revalidate_window_identity,
 )
-from camfrog_emergency_stop import EmergencyStopHook
 
 
 class StatusResultState(str, Enum):
-    """Authoritative result states for a status update request."""
+    """Evidence states for a status request; none assert external provider state."""
     PENDING = "PENDING"
     PROCESS_VERIFIED = "PROCESS_VERIFIED"
     WINDOW_VERIFIED = "WINDOW_VERIFIED"
     TEXT_WRITTEN = "TEXT_WRITTEN"
     SUBMIT_DISPATCHED = "SUBMIT_DISPATCHED"
-    VERIFIED_APPLIED = "VERIFIED_APPLIED"
+    CLIENT_STATE_CONFIRMED = "CLIENT_STATE_CONFIRMED"
     FAILED = "FAILED"
     UNKNOWN = "UNKNOWN"
     BACKGROUND_UNSUPPORTED = "BACKGROUND_UNSUPPORTED"
@@ -50,6 +55,15 @@ class ExecutionMode(str, Enum):
     """Execution mode distinguishing strict background from interactive."""
     STRICT_BACKGROUND = "strict_background"
     INTERACTIVE = "interactive"
+
+
+def strict_background_submit_supported() -> bool:
+    """Return whether a submit route is verified to preserve desktop state.
+
+    Camfrog 8.5 currently has no verified route, so callers must fail closed.
+    Keep startup and execution checks on the same capability gate.
+    """
+    return False
 
 
 @dataclass
@@ -66,6 +80,8 @@ class StatusExecutionEvidence:
     verification_source: str
     applied_text: str = ""
     error_code: Optional[str] = None
+    foreground_matches_before_and_after: Optional[bool] = None
+    foreground_matches_before_submit: Optional[bool] = None
     created_at: float = field(default_factory=time.time)
 
     def as_dict(self) -> Dict[str, Any]:
@@ -77,9 +93,64 @@ class StatusExecutionEvidence:
 class StatusControlAdapter:
     """Low-level interface to Camfrog's CComboBoxTS and Edit controls."""
 
-    def __init__(self, combo_hwnd: int, edit_hwnd: int):
+    MESSAGE_TIMEOUT_MS = 1000
+
+    def __init__(
+        self,
+        combo_hwnd: int,
+        edit_hwnd: int,
+        expected_pid: Optional[int] = None,
+        parent_hwnd: Optional[int] = None,
+    ):
         self.combo_hwnd = combo_hwnd
         self.edit_hwnd = edit_hwnd
+        self.expected_pid = expected_pid
+        self.parent_hwnd = parent_hwnd
+
+    def supports_strict_background_submit(self) -> bool:
+        """Whether this adapter has a submit path proven to preserve desktop state.
+
+        The current Camfrog 8.5 adapter submits with targeted Enter key messages.
+        Those messages avoid system-wide input injection, but live evidence showed
+        foreground activation, so they cannot satisfy the strict isolation contract.
+        """
+        return strict_background_submit_supported()
+
+    def controls_are_current(
+        self,
+        expected_pid: Optional[int] = None,
+        parent_hwnd: Optional[int] = None,
+    ) -> bool:
+        """Verify both HWNDs still identify the expected Camfrog child controls."""
+        if sys.platform != "win32":
+            return False
+
+        pid = expected_pid or self.expected_pid
+        parent = parent_hwnd or self.parent_hwnd
+        if pid is None or parent is None:
+            return False
+        try:
+            import win32gui
+            import win32process
+
+            expected_controls = (
+                (self.combo_hwnd, 1436, {"CComboBoxTS"}),
+                (self.edit_hwnd, 1001, {"Edit", "CEditTS"}),
+            )
+            for hwnd, control_id, classes in expected_controls:
+                if not win32gui.IsWindow(hwnd) or not win32gui.IsChild(parent, hwnd):
+                    return False
+                _, owner_pid = win32process.GetWindowThreadProcessId(hwnd)
+                if owner_pid != pid:
+                    return False
+                if (
+                    win32gui.GetDlgCtrlID(hwnd) != control_id
+                    and win32gui.GetClassName(hwnd) not in classes
+                ):
+                    return False
+            return True
+        except Exception:
+            return False
 
     def write_text_no_focus(self, text: str) -> bool:
         """Write text into the status Edit control without setting keyboard focus."""
@@ -88,21 +159,36 @@ class StatusControlAdapter:
 
         try:
             import win32con
-            import win32gui
-
             # Fail closed on stale/dangling handles: never report success
             # for a control that does not exist.
-            if not win32gui.IsWindow(self.edit_hwnd):
+            import win32gui
+
+            if not self.controls_are_current():
                 return False
 
-            # 1. Send WM_SETTEXT to Edit control (nonzero LRESULT = accepted)
-            settext_ok = win32gui.SendMessage(self.edit_hwnd, win32con.WM_SETTEXT, 0, text)
-            if not settext_ok:
+            # Cross-process SendMessage can block forever if Camfrog is hung.
+            # Keep each UI request bounded and fail closed on timeout.
+            text_buffer = ctypes.create_unicode_buffer(text)
+            settext_result = _send_message_timeout(
+                self.edit_hwnd,
+                win32con.WM_SETTEXT,
+                0,
+                ctypes.addressof(text_buffer),
+                self.MESSAGE_TIMEOUT_MS,
+            )
+            if not settext_result:
                 return False
 
             # 2. Notify parent CComboBoxTS of EN_CHANGE
             wparam = (win32con.EN_CHANGE << 16) | 1001
-            win32gui.SendMessage(self.combo_hwnd, win32con.WM_COMMAND, wparam, self.edit_hwnd)
+            if _send_message_timeout(
+                self.combo_hwnd,
+                win32con.WM_COMMAND,
+                wparam,
+                self.edit_hwnd,
+                self.MESSAGE_TIMEOUT_MS,
+            ) is None:
+                return False
 
             return True
         except Exception:
@@ -114,41 +200,68 @@ class StatusControlAdapter:
             return ""
 
         try:
+            if not self.controls_are_current():
+                return ""
             import win32con
-            import win32gui
             buf = ctypes.create_unicode_buffer(512)
-            win32gui.SendMessage(self.edit_hwnd, win32con.WM_GETTEXT, 512, buf)
+            result = _send_message_timeout(
+                self.edit_hwnd,
+                win32con.WM_GETTEXT,
+                512,
+                ctypes.addressof(buf),
+                self.MESSAGE_TIMEOUT_MS,
+            )
+            if result is None:
+                return ""
             return buf.value
         except Exception:
             return ""
 
     def read_applied_status(self) -> str:
-        """Read authoritative status committed at index 0 of CComboBoxTS list."""
+        """Read local status text at CComboBoxTS index 0, not provider state."""
         if sys.platform != "win32":
             return ""
 
         try:
-            import win32con
-            import win32gui
-
-            count = win32gui.SendMessage(self.combo_hwnd, win32con.CB_GETCOUNT, 0, 0)
-            if count <= 0:
+            if not self.controls_are_current():
                 return ""
-            length = win32gui.SendMessage(self.combo_hwnd, win32con.CB_GETLBTEXTLEN, 0, 0)
-            if length < 0:
+            import win32con
+            count = _send_message_timeout(
+                self.combo_hwnd, win32con.CB_GETCOUNT, 0, 0, self.MESSAGE_TIMEOUT_MS
+            )
+            if count is None or count <= 0:
+                return ""
+            length = _send_message_timeout(
+                self.combo_hwnd, win32con.CB_GETLBTEXTLEN, 0, 0, self.MESSAGE_TIMEOUT_MS
+            )
+            if length is None or length < 0:
                 return ""
             buf = ctypes.create_unicode_buffer(length + 1)
-            win32gui.SendMessage(self.combo_hwnd, win32con.CB_GETLBTEXT, 0, buf)
+            result = _send_message_timeout(
+                self.combo_hwnd,
+                win32con.CB_GETLBTEXT,
+                0,
+                ctypes.addressof(buf),
+                self.MESSAGE_TIMEOUT_MS,
+            )
+            if result is None:
+                return ""
             return buf.value
         except Exception:
             return ""
 
     def post_background_enter(self) -> bool:
-        """Post Enter key message to CComboBoxTS without focus stealing or sound hacks."""
+        """Post legacy Enter key messages to CComboBoxTS without global injection.
+
+        This method is not a strict-background capability: Camfrog may activate a
+        window while handling the messages. The strict executor refuses this path.
+        """
         if sys.platform != "win32":
             return False
 
         try:
+            if not self.controls_are_current():
+                return False
             user32 = ctypes.windll.user32
             # Scan code for VK_RETURN (0x0D) is 0x1C
             lparam_down = 0x001C0001
@@ -158,6 +271,55 @@ class StatusControlAdapter:
             return bool(res_down and res_up)
         except Exception:
             return False
+
+
+def _send_message_timeout(
+    hwnd: int,
+    message: int,
+    wparam: int,
+    lparam: int,
+    timeout_ms: int,
+) -> int | None:
+    """Send one Win32 message with a finite wait; ``None`` means timeout/error."""
+    if sys.platform != "win32":
+        return None
+    try:
+        send_message_timeout = ctypes.windll.user32.SendMessageTimeoutW
+        send_message_timeout.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint,
+            ctypes.c_size_t,
+            ctypes.c_ssize_t,
+            ctypes.c_uint,
+            ctypes.c_uint,
+            ctypes.POINTER(ctypes.c_size_t),
+        ]
+        send_message_timeout.restype = ctypes.c_ssize_t
+        result = ctypes.c_size_t()
+        succeeded = send_message_timeout(
+            ctypes.c_void_p(hwnd),
+            message,
+            wparam,
+            lparam,
+            0x0002,  # SMTO_ABORTIFHUNG
+            max(1, int(timeout_ms)),
+            ctypes.byref(result),
+        )
+        return int(result.value) if succeeded else None
+    except Exception:
+        return None
+
+
+def _foreground_window_handle() -> Optional[int]:
+    """Return the current foreground HWND, or None when it cannot be sampled."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import win32gui
+
+        return win32gui.GetForegroundWindow() or None
+    except Exception:
+        return None
 
 
 # ---------- Camfrog Window Resolver ----------
@@ -235,7 +397,12 @@ class CamfrogWindowResolver:
                 f"(combo={combo_hwnd}, edit={edit_hwnd})."
             )
 
-        adapter = StatusControlAdapter(combo_hwnd=combo_hwnd, edit_hwnd=edit_hwnd)
+        adapter = StatusControlAdapter(
+            combo_hwnd=combo_hwnd,
+            edit_hwnd=edit_hwnd,
+            expected_pid=proc.pid,
+            parent_hwnd=main_win.hwnd,
+        )
         return proc, main_win, adapter
 
 
@@ -255,6 +422,7 @@ class StatusResourceLock:
         self.resource_key = str(resource_key or "global").replace("\\", "_")
         self.timeout_seconds = max(0.1, float(timeout_seconds))
         self._mutex_handle = None
+        self._kernel32 = None
         self._thread_lock = self._get_thread_lock(self.resource_key)
         self._acquired_thread = False
         self._acquired_mutex = False
@@ -278,21 +446,41 @@ class StatusResourceLock:
 
         if sys.platform == "win32":
             try:
-                kernel32 = ctypes.windll.kernel32
+                from ctypes import wintypes
+
+                kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+                create_mutex = kernel32.CreateMutexW
+                create_mutex.argtypes = (
+                    ctypes.c_void_p,
+                    wintypes.BOOL,
+                    wintypes.LPCWSTR,
+                )
+                create_mutex.restype = wintypes.HANDLE
+                wait_for_single_object = kernel32.WaitForSingleObject
+                wait_for_single_object.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+                wait_for_single_object.restype = wintypes.DWORD
+                release_mutex = kernel32.ReleaseMutex
+                release_mutex.argtypes = (wintypes.HANDLE,)
+                release_mutex.restype = wintypes.BOOL
+                close_handle = kernel32.CloseHandle
+                close_handle.argtypes = (wintypes.HANDLE,)
+                close_handle.restype = wintypes.BOOL
                 mutex_name = f"Local\\ZChat_StatusLock_{self.resource_key}"
 
-                handle = kernel32.CreateMutexW(None, False, mutex_name)
+                handle = create_mutex(None, False, mutex_name)
                 if not handle:
                     self._thread_lock.release()
                     self._acquired_thread = False
                     return False
                 self._mutex_handle = handle
+                self._kernel32 = kernel32
 
                 rem_ms = max(10, int(max(0.01, deadline - time.monotonic()) * 1000))
-                wait_res = kernel32.WaitForSingleObject(handle, rem_ms)
+                wait_res = wait_for_single_object(handle, rem_ms)
                 if wait_res not in (0x00000000, 0x00000080):  # WAIT_OBJECT_0 or WAIT_ABANDONED
-                    kernel32.CloseHandle(handle)
+                    close_handle(handle)
                     self._mutex_handle = None
+                    self._kernel32 = None
                     self._thread_lock.release()
                     self._acquired_thread = False
                     return False
@@ -301,10 +489,12 @@ class StatusResourceLock:
             except Exception:
                 if self._mutex_handle:
                     try:
-                        ctypes.windll.kernel32.CloseHandle(self._mutex_handle)
+                        if self._kernel32 is not None:
+                            self._kernel32.CloseHandle(self._mutex_handle)
                     except Exception:
                         pass
                     self._mutex_handle = None
+                    self._kernel32 = None
                 self._thread_lock.release()
                 self._acquired_thread = False
                 return False
@@ -313,15 +503,16 @@ class StatusResourceLock:
 
     def release(self) -> None:
         """Release the scoped lock."""
-        if sys.platform == "win32" and self._mutex_handle:
+        if sys.platform == "win32" and self._mutex_handle and self._kernel32 is not None:
             try:
                 if self._acquired_mutex:
-                    ctypes.windll.kernel32.ReleaseMutex(self._mutex_handle)
-                ctypes.windll.kernel32.CloseHandle(self._mutex_handle)
+                    self._kernel32.ReleaseMutex(self._mutex_handle)
+                self._kernel32.CloseHandle(self._mutex_handle)
             except Exception:
                 pass
             finally:
                 self._mutex_handle = None
+                self._kernel32 = None
                 self._acquired_mutex = False
 
         if self._acquired_thread:
@@ -346,9 +537,9 @@ class StatusResourceLock:
 # ---------- Background Status Executor ----------
 
 class BackgroundStatusExecutor(EmergencyStopHook):
-    """Executes status changes strictly without desktop interference.
+    """Executes a status change only when strict desktop isolation is supported.
 
-    Execution sequence:
+    When an adapter declares a verified submit capability, the execution sequence is:
     1. DISCOVER_PROCESS
     2. VERIFY_PROCESS
     3. DISCOVER_WINDOW
@@ -356,19 +547,44 @@ class BackgroundStatusExecutor(EmergencyStopHook):
     5. WRITE_TEXT_WITHOUT_FOCUS
     6. VERIFY_TEXT_READBACK
     7. SUBMIT_WITHOUT_GLOBAL_INPUT
-    8. VERIFY_APPLIED_STATE
+    8. CONFIRM_CLIENT_STATE
     9. REPORT_RESULT
+
+    The current Camfrog adapter does not declare that capability, so strict mode
+    returns BACKGROUND_UNSUPPORTED before staging text or submitting key messages.
     """
 
     def __init__(
         self,
         resolver: Optional[CamfrogWindowResolver] = None,
         default_mode: ExecutionMode = ExecutionMode.STRICT_BACKGROUND,
+        emergency_scope: EmergencyStopScope = EmergencyStopScope.GLOBAL,
+        emergency_resource_key: Optional[str] = None,
     ):
         EmergencyStopHook.__init__(self)
         self.resolver = resolver or CamfrogWindowResolver()
         self.default_mode = default_mode
+        self.emergency_scope = emergency_scope
+        self.emergency_resource_key = emergency_resource_key
         self._lock = threading.Lock()
+
+    @staticmethod
+    def _target_identity_is_current(
+        proc: ProcessIdentity,
+        main_win: ClassifiedWindow,
+        adapter: StatusControlAdapter,
+    ) -> bool:
+        """Revalidate the Camfrog process, main HWND, and status child controls."""
+        if sys.platform != "win32":
+            return True
+        try:
+            return (
+                revalidate_process_identity(proc)
+                and revalidate_window_identity(main_win, proc)
+                and adapter.controls_are_current(proc.pid, main_win.hwnd)
+            )
+        except Exception:
+            return False
 
     def execute_status_change(
         self,
@@ -382,6 +598,42 @@ class BackgroundStatusExecutor(EmergencyStopHook):
         req_id = f"req-{uuid.uuid4().hex[:8]}"
         op_id = f"op-{uuid.uuid4().hex[:8]}"
         mode = execution_mode or self.default_mode
+
+        def emergency_stop_evidence(
+            proc: Optional[ProcessIdentity] = None,
+            main_win: Optional[ClassifiedWindow] = None,
+        ) -> StatusExecutionEvidence:
+            return StatusExecutionEvidence(
+                request_id=req_id,
+                operation_id=op_id,
+                client_version=proc.version if proc else "",
+                process_identity=proc.as_dict() if proc else {},
+                window_role=main_win.role.value if main_win else "",
+                execution_mode=mode.value,
+                result_state=StatusResultState.FAILED.value,
+                duration_ms=(time.monotonic() - start_time) * 1000,
+                verification_source="emergency_stop",
+                error_code="EMERGENCY_STOP",
+            )
+
+        def target_identity_evidence(
+            proc: ProcessIdentity,
+            main_win: ClassifiedWindow,
+            result_state: StatusResultState = StatusResultState.FAILED,
+            error_code: str = "TARGET_IDENTITY_CHANGED",
+        ) -> StatusExecutionEvidence:
+            return StatusExecutionEvidence(
+                request_id=req_id,
+                operation_id=op_id,
+                client_version=proc.version,
+                process_identity=proc.as_dict(),
+                window_role=main_win.role.value,
+                execution_mode=mode.value,
+                result_state=result_state.value,
+                duration_ms=(time.monotonic() - start_time) * 1000,
+                verification_source="target_identity_revalidation",
+                error_code=error_code,
+            )
 
         clean_text = (status_text or "").strip()
         if not clean_text:
@@ -403,18 +655,7 @@ class BackgroundStatusExecutor(EmergencyStopHook):
             try:
                 self.check_emergency_stop()
             except StopIteration:
-                return StatusExecutionEvidence(
-                    request_id=req_id,
-                    operation_id=op_id,
-                    client_version="",
-                    process_identity={},
-                    window_role="",
-                    execution_mode=mode.value,
-                    result_state=StatusResultState.FAILED.value,
-                    duration_ms=(time.monotonic() - start_time) * 1000,
-                    verification_source="emergency_stop",
-                    error_code="EMERGENCY_STOP",
-                )
+                return emergency_stop_evidence()
             # 1 & 2. DISCOVER_PROCESS & VERIFY_PROCESS
             try:
                 proc, main_win, adapter = self.resolver.resolve_status_controls(pid=pid)
@@ -464,16 +705,14 @@ class BackgroundStatusExecutor(EmergencyStopHook):
             lock_resource = f"pid_{proc.pid}"
             try:
                 with StatusResourceLock(resource_key=lock_resource, timeout_seconds=timeout_seconds):
-                    # Recheck foreground before operation to record evidence that desktop is undisturbed
-                    fg_before = 0
-                    if sys.platform == "win32":
-                        try:
-                            import win32gui
-                            fg_before = win32gui.GetForegroundWindow()
-                        except Exception:
-                            pass
+                    # Snapshot foreground before and after; this detects endpoint changes,
+                    # but cannot rule out a transient focus change between samples.
+                    fg_before = _foreground_window_handle()
 
-                    # Check if requested status is already active to avoid duplicate submissions
+                    if not self._target_identity_is_current(proc, main_win, adapter):
+                        return target_identity_evidence(proc, main_win)
+
+                    # Check current client UI text to avoid duplicate submissions.
                     current_status = adapter.read_applied_status()
                     if current_status == clean_text:
                         return StatusExecutionEvidence(
@@ -483,13 +722,36 @@ class BackgroundStatusExecutor(EmergencyStopHook):
                             process_identity=proc.as_dict(),
                             window_role=main_win.role.value,
                             execution_mode=mode.value,
-                            result_state=StatusResultState.VERIFIED_APPLIED.value,
+                            result_state=StatusResultState.CLIENT_STATE_CONFIRMED.value,
                             duration_ms=(time.monotonic() - start_time) * 1000,
-                            verification_source="combo_history_already_active",
+                            verification_source="client_combo_state_already_active",
                             applied_text=clean_text,
                         )
 
+                    if (
+                        mode == ExecutionMode.STRICT_BACKGROUND
+                        and not adapter.supports_strict_background_submit()
+                    ):
+                        return StatusExecutionEvidence(
+                            request_id=req_id,
+                            operation_id=op_id,
+                            client_version=proc.version,
+                            process_identity=proc.as_dict(),
+                            window_role=main_win.role.value,
+                            execution_mode=mode.value,
+                            result_state=StatusResultState.BACKGROUND_UNSUPPORTED.value,
+                            duration_ms=(time.monotonic() - start_time) * 1000,
+                            verification_source="submit_capability",
+                            error_code="STRICT_SUBMIT_UNVERIFIED",
+                        )
+
                     # 5. WRITE_TEXT_WITHOUT_FOCUS
+                    try:
+                        self.check_emergency_stop()
+                    except StopIteration:
+                        return emergency_stop_evidence(proc, main_win)
+                    if not self._target_identity_is_current(proc, main_win, adapter):
+                        return target_identity_evidence(proc, main_win)
                     write_ok = adapter.write_text_no_focus(clean_text)
                     if not write_ok:
                         return StatusExecutionEvidence(
@@ -522,6 +784,36 @@ class BackgroundStatusExecutor(EmergencyStopHook):
                         )
 
                     # 7. SUBMIT_WITHOUT_GLOBAL_INPUT
+                    try:
+                        self.check_emergency_stop()
+                    except StopIteration:
+                        return emergency_stop_evidence(proc, main_win)
+                    if not self._target_identity_is_current(proc, main_win, adapter):
+                        return target_identity_evidence(proc, main_win)
+                    fg_before_submit = _foreground_window_handle()
+                    foreground_matches_before_submit = (
+                        fg_before == fg_before_submit
+                        if fg_before is not None and fg_before_submit is not None
+                        else None
+                    )
+                    if (
+                        sys.platform == "win32"
+                        and mode == ExecutionMode.STRICT_BACKGROUND
+                        and foreground_matches_before_submit is not True
+                    ):
+                        return StatusExecutionEvidence(
+                            request_id=req_id,
+                            operation_id=op_id,
+                            client_version=proc.version,
+                            process_identity=proc.as_dict(),
+                            window_role=main_win.role.value,
+                            execution_mode=mode.value,
+                            result_state=StatusResultState.BACKGROUND_UNSUPPORTED.value,
+                            duration_ms=(time.monotonic() - start_time) * 1000,
+                            verification_source="foreground_pre_submit",
+                            error_code="FOREGROUND_PRECONDITION_NOT_CONFIRMED",
+                            foreground_matches_before_submit=foreground_matches_before_submit,
+                        )
                     post_ok = adapter.post_background_enter()
                     if not post_ok:
                         return StatusExecutionEvidence(
@@ -537,25 +829,31 @@ class BackgroundStatusExecutor(EmergencyStopHook):
                             error_code="POST_ENTER_FAILED",
                         )
 
-                    # 8. VERIFY_APPLIED_STATE
-                    # Poll CComboBoxTS item 0 for authoritative commit
+                    # 8. CONFIRM_CLIENT_STATE
+                    # Poll CComboBoxTS item 0. This only confirms local client UI state.
                     applied_confirmed = False
                     deadline = time.monotonic() + timeout_seconds
                     while time.monotonic() < deadline:
                         time.sleep(0.05)
+                        if not self._target_identity_is_current(proc, main_win, adapter):
+                            return target_identity_evidence(
+                                proc,
+                                main_win,
+                                result_state=StatusResultState.UNKNOWN,
+                                error_code="TARGET_IDENTITY_LOST_AFTER_SUBMIT",
+                            )
                         applied = adapter.read_applied_status()
                         if applied == clean_text:
                             applied_confirmed = True
                             break
 
                     # Confirm desktop foreground was not stolen
-                    fg_after = 0
-                    if sys.platform == "win32":
-                        try:
-                            import win32gui
-                            fg_after = win32gui.GetForegroundWindow()
-                        except Exception:
-                            pass
+                    fg_after = _foreground_window_handle()
+                    focus_matches = (
+                        fg_before == fg_after
+                        if fg_before is not None and fg_after is not None
+                        else None
+                    )
 
                     duration_ms = (time.monotonic() - start_time) * 1000
 
@@ -571,6 +869,32 @@ class BackgroundStatusExecutor(EmergencyStopHook):
                             duration_ms=duration_ms,
                             verification_source="combo_history_verification",
                             error_code="COMMIT_NOT_VERIFIED",
+                            foreground_matches_before_and_after=focus_matches,
+                        )
+
+                    # Local text read-back is not enough to call strict mode
+                    # safe when the desktop foreground changed or could not be
+                    # sampled. The status may have reached the client, but the
+                    # no-focus acceptance condition was not established.
+                    if (
+                        sys.platform == "win32"
+                        and mode == ExecutionMode.STRICT_BACKGROUND
+                        and focus_matches is not True
+                    ):
+                        return StatusExecutionEvidence(
+                            request_id=req_id,
+                            operation_id=op_id,
+                            client_version=proc.version,
+                            process_identity=proc.as_dict(),
+                            window_role=main_win.role.value,
+                            execution_mode=mode.value,
+                            result_state=StatusResultState.BACKGROUND_UNSUPPORTED.value,
+                            duration_ms=duration_ms,
+                            verification_source="foreground_isolation",
+                            applied_text=clean_text,
+                            error_code="FOREGROUND_ISOLATION_NOT_CONFIRMED",
+                            foreground_matches_before_and_after=focus_matches,
+                            foreground_matches_before_submit=foreground_matches_before_submit,
                         )
 
                     return StatusExecutionEvidence(
@@ -580,10 +904,12 @@ class BackgroundStatusExecutor(EmergencyStopHook):
                         process_identity=proc.as_dict(),
                         window_role=main_win.role.value,
                         execution_mode=mode.value,
-                        result_state=StatusResultState.VERIFIED_APPLIED.value,
+                        result_state=StatusResultState.CLIENT_STATE_CONFIRMED.value,
                         duration_ms=duration_ms,
-                        verification_source="combo_history_item_0",
+                        verification_source="client_combo_item_0",
                         applied_text=clean_text,
+                        foreground_matches_before_and_after=focus_matches,
+                        foreground_matches_before_submit=foreground_matches_before_submit,
                     )
             except TimeoutError:
                 return StatusExecutionEvidence(

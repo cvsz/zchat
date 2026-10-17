@@ -202,12 +202,11 @@ rem ============================================================
 
 set "ICONARG="
 
-if exist "app.ico" (
-    set "ICONARG=--icon app.ico"
-) else (
-    echo WARNING: app.ico not found, building without an icon.
-    echo WARNING: ไม่พบ app.ico จะสร้างโดยไม่มีไอคอน
+if not exist "app.ico" (
+    echo ERROR: app.ico not found; refusing to build apps with a default Python icon.
+    goto :fail
 )
+set "ICONARG=--icon app.ico --add-data app.ico;."
 
 
 rem ============================================================
@@ -322,6 +321,11 @@ echo === BUILD MUSIC DJ ===
 if errorlevel 1 goto :fail
 
 
+for %%D in (room-control chat-im-private status-random status-marquee status-changer im-autoreply music-dj web-status) do (
+    copy /y "app.ico" "dist\%%D\app.ico" >nul
+    if errorlevel 1 goto :fail
+)
+
 rem ============================================================
 rem Package + SHA256
 rem ============================================================
@@ -349,12 +353,6 @@ if not exist "dist\web-status\web-status.exe" goto :fail
 if not exist "dist\music-dj\music-dj.exe" goto :fail
 if not exist "dist\SHA256SUMS.txt" goto :fail
 if not exist "%FEATURE_NAME%-windows.zip" goto :fail
-if not exist "app.ico" goto :skip_icon_copy
-for %%D in (room-control chat-im-private status-random status-marquee status-changer im-autoreply music-dj web-status) do (
-    copy /y "app.ico" "dist\%%D\app.ico" >nul
-    if errorlevel 1 goto :fail
-)
-:skip_icon_copy
 
 echo.
 echo BUILD OK / สร้างสำเร็จ

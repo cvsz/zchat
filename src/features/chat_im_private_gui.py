@@ -3201,16 +3201,17 @@ def main(argv=None):
 
 
 class PrivateChatManager:
-    def __init__(self, config_path):
+    def __init__(self, config_path, *, parent=None):
         import tkinter as tk
         from tkinter import ttk
 
         self.tk = tk
         self.ttk = ttk
+        self.embedded = parent is not None
         self.config_path = Path(config_path)
         self.config = load_private_config(self.config_path)
         self.windows = []
-        self.root = self.tk.Tk()
+        self.root = parent if self.embedded else self.tk.Tk()
         self.root.configure(background="#f4f1e8")
         style = self.ttk.Style(self.root)
         try:
@@ -3227,9 +3228,10 @@ class PrivateChatManager:
         style.configure("TEntry", padding=(4, 4), fieldbackground="#ffffff", foreground="#283648")
         style.configure("TNotebook", background="#f4f1e8")
         style.configure("TNotebook.Tab", padding=(11, 6), font=("Segoe UI", 9))
-        self.root.title("Camfrog Private Chat")
-        self.root.geometry("460x360")
-        self.root.minsize(360, 280)
+        if not self.embedded:
+            self.root.title("Camfrog Private Chat")
+            self.root.geometry("460x360")
+            self.root.minsize(360, 280)
 
         self.ttk.Label(self.root, text=(
             "Open a private chat in Camfrog, then refresh this list. "
@@ -3260,8 +3262,9 @@ class PrivateChatManager:
         actions.pack(fill="x")
         self.ttk.Button(actions, text="Save filters", command=self.save_filters).pack(side="left", padx=5)
         self.ttk.Button(actions, text="Discover controls", command=self.discover).pack(side="left")
-        self.ttk.Button(actions, text="Check for updates",
-                        command=self.check_update).pack(side="left", padx=5)
+        if not self.embedded:
+            self.ttk.Button(actions, text="Check for updates",
+                            command=self.check_update).pack(side="left", padx=5)
         self.ttk.Button(actions, text="Refresh", command=self.refresh).pack(side="right")
         self.ttk.Button(actions, text="Activate selected", command=self.activate_selected).pack(
             side="right", padx=5)
@@ -3275,8 +3278,9 @@ class PrivateChatManager:
             if check_for_update("chat-im-private.exe"):
                 self.root.after(0, self.check_update)
 
-        import threading
-        threading.Thread(target=auto_update, daemon=True).start()
+        if not self.embedded:
+            import threading
+            threading.Thread(target=auto_update, daemon=True).start()
 
     def save_filters(self, refresh_after=True, silent=False):
         try:
@@ -3304,6 +3308,9 @@ class PrivateChatManager:
             messagebox.showerror("Private chat filters", str(exc), parent=self.root)
 
     def check_update(self):
+        if self.embedded:
+            self.status.set("Updates are managed by ZChat Client.")
+            return
         self.status.set("Checking for updates...")
 
         def work():

@@ -46,7 +46,7 @@ Room Control และ IM Auto-reply ใช้ `config.json` แยกกัน 
 1. เปิด Camfrog แล้วเข้าห้อง สำหรับ Camfrog 8.x เปิด `room-control.exe` แล้วใช้ **Setup → Auto-detect** ผลวิเคราะห์: `docs/CAMFROG-8.5-FINDINGS.md`
 2. แก้ `config.json` ของแอปนั้น ตั้งนิค ตั้งกฎตอบ คง `dry_run` ไว้ขณะทดสอบ
 3. ใช้ `im-autoreply.exe` สำหรับตอบ IM ส่วนตัว config และ log แยกจาก Room Control
-4. ใช้ `status-random.exe` หรือ `status-marquee.exe` สำหรับแอปแยก หรือ `status-changer.exe` สำหรับหน้ารวมพร้อม Activity Log แต่ละแอปเก็บข้อมูลของตัวเอง ค่าเริ่มต้นเป็นโหมดทดลอง ให้เปิด **Send statuses live to Camfrog** ก่อนกด **Apply Now** หรือ **Start** เพื่อส่งสถานะจริง
+4. ใช้ `status-random.exe` หรือ `status-marquee.exe` สำหรับแอปแยก หรือ `status-changer.exe` สำหรับหน้ารวมพร้อม Activity Log แต่ละแอปเก็บข้อมูลของตัวเอง ให้คงโหมดทดลองไว้ก่อน: การส่งจริงผ่าน worker เบื้องหลังจะหยุดด้วย `BACKGROUND_UNSUPPORTED` เพราะเส้นทางส่งของ Camfrog ยังไม่ผ่านการยืนยันว่าไม่รบกวน desktop ส่วน `web-status.exe` เป็นฟีเจอร์แยกที่ใช้เว็บไซต์
 5. เปิดแชทส่วนตัวใน Camfrog แล้วใช้ `chat-im-private.exe` refresh และโฟกัสหน้าต่าง ปุ่ม **Discover controls** ดึงรายการ control ลง `controls.txt` เพื่อตั้ง selector เหมือนแอปอื่น
 
 คำสั่ง `python camfrog_auto.py ...` ยังใช้เป็น CLI สำหรับพัฒนา โดยใช้ `config.json` ในเครื่องซึ่ง Git จะไม่ติดตาม สร้างได้ด้วย `python camfrog_auto.py init --config config.json` หรือคัดลอกจาก `config.example.json` ส่วน CI และ build ตรวจด้วยตัวอย่างที่ปลอดภัย CLI นี้ไม่ใช่หนึ่งในแปดแอปที่ build คำสั่งใน `extras\*.bat` เป็นทางลัด ยกเว้น `extras\gui.bat` ที่เปิด `dist\room-control\room-control.exe` ที่ build แล้ว
@@ -69,7 +69,7 @@ Room Control และ IM Auto-reply มีปุ่ม **Save & Start** กั�
 
 แต่ละแอปบันทึก log ในโฟลเดอร์ของ config ตัวเอง ส่วน source CLI ใช้ `camfrog_auto.log` ในโฟลเดอร์ repository
 
-**ส่งสถานะเบื้องหลัง:** Random และ Marquee เปลี่ยนสถานะผ่าน control ของ Camfrog ได้โดยไม่ดึงหน้าต่างขึ้นมาหน้าสุด worker ค้นหา control ในหน้าต่างที่ย่อหรือซ่อนได้ แต่ต้องเปิด Camfrog ค้างไว้ใน Windows session ของผู้ใช้คนเดิม และ UI Automation ต้องยังมองเห็น control สถานะ วิธีนี้ใช้ไม่ได้เมื่อปิด Camfrog แล้ว ส่วนกรณี Windows ล็อกหน้าจอหรือตัดการเชื่อมต่อ session ขึ้นกับ Windows และ Camfrog การตอบแชทในห้องใช้ช่องกรอกข้อความอีกชนิดหนึ่งและยังต้องให้หน้าต่างห้องอยู่หน้าสุด
+**ส่งสถานะเบื้องหลังแบบเข้มงวด:** Status Changer, Random และ Marquee ค้นหา control ของ Camfrog ได้ แต่ยังยืนยันไม่ได้ว่าเส้นทางส่งสถานะของ Camfrog 8.5 รักษาสภาพ desktop โดยไม่รบกวนผู้ใช้ โหมด strict จึงคืน `BACKGROUND_UNSUPPORTED` ก่อนเขียนหรือส่งสถานะ การค้นพบหน้าต่างหรือการย่อหน้าต่างไม่ได้ยืนยันว่ารองรับการอัปเดตเบื้องหลัง โหมด interactive อาจเปลี่ยนโฟกัสหน้าต่าง การตอบแชทในห้องใช้ช่องกรอกอีกชนิดหนึ่งและต้องให้หน้าต่างห้องอยู่หน้าสุด
 
 ## สถานะเลื่อน + สลับจากประวัติ
 
@@ -77,8 +77,8 @@ Room Control และ IM Auto-reply มีปุ่ม **Save & Start** กั�
 - **สลับจากประวัติ** (`status.history`): ทุก status ที่ตั้งถูกเก็บลง `status_history.json` ถ้าเปิด `use_as_source` จะสลับเลือกจากประวัติให้อัตโนมัติ (`rotate` = วนรอบ, `random`, `most_used`) ข้อความใน `status.messages` ถูกใส่เข้าไปอัตโนมัติ
 - **สลับไทย-อังกฤษอัตโนมัติ** (`status.language_cycle: ["th","en"]`): สลับไทย→อังกฤษ→ไทย… ทุกครั้งที่เปลี่ยน status ใช้ได้ทั้งประวัติและข้อความปกติ
 - **ความปลอดภัย:** ทุกเฟรมคือการเปลี่ยน status จริง จึงจำกัดความถี่ขั้นต่ำ 0.3 วินาที ควรตั้งช่วงเวลาให้เหมาะสมและเริ่มด้วย `dry_run: true`
-- **ส่งสถานะจริง:** แอปสถานะเริ่มในโหมดทดลอง สำหรับ `status-changer.exe` ปุ่ม **Save Data** บันทึกค่าเท่านั้น การส่งสถานะทำผ่าน **Start** หลังเปิด **Send statuses live to Camfrog** ส่วน exe รุ่นเดิมยังมีปุ่ม **Apply Now** เมื่อ Camfrog ไม่ได้อยู่หน้าสุด จะใช้เส้นทาง ComboBox เบื้องหลังโดยไม่เปลี่ยนโฟกัส
-- **ส่งสถานะเบื้องหลัง:** เมื่อ Camfrog ไม่ได้อยู่หน้าสุด worker จะเขียนลง Edit ที่ตรวจสอบแล้ว แล้วส่ง Enter ไปยัง ComboBox แม่ โดยไม่ดึงหน้าต่างหรือแย่งโฟกัส เลือก **Use background status updates** เพื่อใช้วิธีนี้แม้ Camfrog อยู่หน้าสุด worker จะตรวจข้อความที่อ่านกลับจาก Edit ก่อนส่ง ดู `status.background_enter_target` ใน `CONFIG-TH.md`
+- **ส่งสถานะจริง:** แอปสถานะเริ่มในโหมดทดลอง ปุ่ม **Save Data** บันทึกค่าเท่านั้น คำสั่ง **Start** แบบ live จะคืน `BACKGROUND_UNSUPPORTED` ก่อนเปลี่ยนสถานะ เพราะเส้นทางส่งยังไม่ผ่านข้อกำหนดห้ามรบกวน desktop อย่าใช้โหมด interactive หากต้องรักษา desktop ไว้ เพราะอาจเปลี่ยนโฟกัส `web-status.exe` ใช้เส้นทางเว็บไซต์แยกต่างหากและมีข้อจำกัดด้านการยืนยันตัวตน/ผลลัพธ์แยกกัน
+- **ตัวเลือก background status:** ช่อง **Strict background (currently unsupported)** ถูกปิดไว้เพื่อแจ้งข้อจำกัด และยังไม่สามารถส่งสถานะได้ ดู `status.execution_mode` ใน `CONFIG-TH.md`
 
 ดูตัวอย่างโดยไม่ต้องเปิด Camfrog:
 ```
