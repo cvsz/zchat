@@ -20,8 +20,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src" / "camfrog"))
 
+from camfrog_emergency_stop import (
+    EmergencyStopGuard,
+    EmergencyStopRegistry,
+    EmergencyStopScope,
+)
 from camfrog_status_engine import (
     CamfrogWindowResolver,
+    StatusResourceLock,
     _foreground_window_handle,
     _send_message_timeout,
 )
@@ -142,6 +148,125 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _submit_and_record(args, process, window, adapter) -> int:
+    before = _snapshot()
+    prior_edit_text = adapter.read_edit_text()
+    staged = adapter.write_text_no_focus(args.status)
+    if not staged or adapter.read_edit_text() != args.status:
+        print(
+            "Could not stage and read back the status text; no submit route was sent.",
+            file=sys.stderr,
+        )
+        return 4
+
+    stop_registry = EmergencyStopRegistry()
+    if stop_registry.is_stopped(EmergencyStopScope.FEATURE, "camfrog.status-changer"):
+        if not adapter.write_text_no_focus(prior_edit_text):
+            print(
+                "Emergency stop is active; restoring the prior edit text failed.",
+                file=sys.stderr,
+            )
+            return 8
+        print(
+            "Emergency stop became active before submit; probe was refused.",
+            file=sys.stderr,
+        )
+        return 7
+    if (
+        not revalidate_process_identity(process)
+        or not revalidate_window_identity(window, process)
+        or not adapter.controls_are_current(process.pid, window.hwnd)
+    ):
+        if not adapter.write_text_no_focus(prior_edit_text):
+            print(
+                "Target changed before submit; restoring the prior edit text failed.",
+                file=sys.stderr,
+            )
+            return 8
+        print("Target identity changed before submit.", file=sys.stderr)
+        return 3
+
+    if args.route == "combo-post":
+        sent = adapter.post_background_enter()
+    elif args.route == "edit-char":
+        sent = (
+            _send_message_timeout(
+                adapter.edit_hwnd, WM_CHAR, 0x0D, 0, MESSAGE_TIMEOUT_MS
+            )
+            is not None
+        )
+    elif args.route == "edit-post":
+        user32 = ctypes.windll.user32
+        sent = bool(
+            user32.PostMessageW(
+                adapter.edit_hwnd, WM_KEYDOWN, VK_RETURN, _enter_lparam()
+            )
+            and user32.PostMessageW(
+                adapter.edit_hwnd, WM_KEYUP, VK_RETURN, _enter_lparam(key_up=True)
+            )
+        )
+    elif args.route == "combo-send":
+        sent = _send_enter(adapter.combo_hwnd)
+    else:
+        sent = _send_parent_command(
+            window.hwnd, adapter.combo_hwnd, adapter.edit_hwnd, args.wparam
+        )
+
+    deadline = time.monotonic() + 3.0
+    readback = adapter.read_applied_status()
+    while readback != args.status and time.monotonic() < deadline:
+        time.sleep(0.05)
+        readback = adapter.read_applied_status()
+    after = _snapshot()
+    edit_text_restored = adapter.write_text_no_focus(prior_edit_text)
+    if not edit_text_restored:
+        print("Probe ended; restoring the prior edit text failed.", file=sys.stderr)
+    record = {
+        "captured_at": datetime.now(UTC).isoformat(),
+        "provider": "camfrog",
+        "provider_version": process.version,
+        "pid": process.pid,
+        "window_role": window.role.value,
+        "route": args.route,
+        "status_length": len(args.status),
+        "submit_message_accepted": bool(sent),
+        "client_state": (
+            "CLIENT_STATE_CONFIRMED"
+            if readback == args.status
+            else "EFFECT_UNKNOWN"
+            if sent
+            else "SUBMIT_NOT_ACCEPTED"
+        ),
+        "client_combo_readback_matches": readback == args.status,
+        "client_combo_readback_length": len(readback),
+        "prior_edit_text_restored": edit_text_restored,
+        "foreground_same_at_endpoints": (
+            before["foreground_hwnd"] == after["foreground_hwnd"]
+            if before["foreground_hwnd"] is not None
+            and after["foreground_hwnd"] is not None
+            else None
+        ),
+        "cursor_same_at_endpoints": before["cursor"] == after["cursor"],
+        "keyboard_state_same_at_endpoints": (
+            before["keyboard_state_sha256"] == after["keyboard_state_sha256"]
+            if before["keyboard_state_sha256"] is not None
+            and after["keyboard_state_sha256"] is not None
+            else None
+        ),
+        "endpoint_snapshots_only": True,
+        "provider_state_verified": False,
+    }
+    _append_log(args.log, record)
+    print(json.dumps(record, sort_keys=True))
+    print(f"Sanitized log: {args.log}")
+    print(
+        "A matching endpoint snapshot does not prove absence of transient focus changes."
+    )
+    if not edit_text_restored:
+        return 8
+    return 0 if sent and readback == args.status else 5
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if sys.platform != "win32":
@@ -185,78 +310,30 @@ def main(argv: list[str] | None = None) -> int:
         print("Status controls failed identity validation.", file=sys.stderr)
         return 3
 
-    before = _snapshot()
-    staged = adapter.write_text_no_focus(args.status)
-    if not staged or adapter.read_edit_text() != args.status:
-        print(
-            "Could not stage and read back the status text; no submit route was sent.",
-            file=sys.stderr,
-        )
-        return 4
-
-    if args.route == "combo-post":
-        sent = adapter.post_background_enter()
-    elif args.route == "edit-char":
-        sent = (
-            _send_message_timeout(
-                adapter.edit_hwnd, WM_CHAR, 0x0D, 0, MESSAGE_TIMEOUT_MS
-            )
-            is not None
-        )
-    elif args.route == "edit-post":
-        user32 = ctypes.windll.user32
-        sent = bool(
-            user32.PostMessageW(
-                adapter.edit_hwnd, WM_KEYDOWN, VK_RETURN, _enter_lparam()
-            )
-            and user32.PostMessageW(
-                adapter.edit_hwnd, WM_KEYUP, VK_RETURN, _enter_lparam(key_up=True)
-            )
-        )
-    elif args.route == "combo-send":
-        sent = _send_enter(adapter.combo_hwnd)
-    else:
-        sent = _send_parent_command(
-            window.hwnd, adapter.combo_hwnd, adapter.edit_hwnd, args.wparam
-        )
-
-    time.sleep(0.5)
-    after = _snapshot()
-    readback = adapter.read_applied_status()
-    record = {
-        "captured_at": datetime.now(UTC).isoformat(),
-        "provider": "camfrog",
-        "provider_version": process.version,
-        "pid": process.pid,
-        "window_role": window.role.value,
-        "route": args.route,
-        "status_length": len(args.status),
-        "submit_message_accepted": bool(sent),
-        "client_combo_readback_matches": readback == args.status,
-        "client_combo_readback_length": len(readback),
-        "foreground_same_at_endpoints": (
-            before["foreground_hwnd"] == after["foreground_hwnd"]
-            if before["foreground_hwnd"] is not None
-            and after["foreground_hwnd"] is not None
-            else None
-        ),
-        "cursor_same_at_endpoints": before["cursor"] == after["cursor"],
-        "keyboard_state_same_at_endpoints": (
-            before["keyboard_state_sha256"] == after["keyboard_state_sha256"]
-            if before["keyboard_state_sha256"] is not None
-            and after["keyboard_state_sha256"] is not None
-            else None
-        ),
-        "endpoint_snapshots_only": True,
-        "provider_state_verified": False,
-    }
-    _append_log(args.log, record)
-    print(json.dumps(record, sort_keys=True))
-    print(f"Sanitized log: {args.log}")
-    print(
-        "A matching endpoint snapshot does not prove absence of transient focus changes."
-    )
-    return 0 if sent else 5
+    try:
+        with (
+            StatusResourceLock(resource_key=f"pid_{process.pid}", timeout_seconds=3.0),
+            EmergencyStopGuard(
+                EmergencyStopScope.FEATURE,
+                resource_key="camfrog.status-changer",
+                description="Camfrog status submit probe",
+            ),
+        ):
+            if not revalidate_process_identity(
+                process
+            ) or not revalidate_window_identity(window, process):
+                print("Target identity changed before submit.", file=sys.stderr)
+                return 3
+            if not adapter.controls_are_current(process.pid, window.hwnd):
+                print("Status controls changed before submit.", file=sys.stderr)
+                return 3
+            return _submit_and_record(args, process, window, adapter)
+    except TimeoutError:
+        print("Status resource is already owned by another writer.", file=sys.stderr)
+        return 6
+    except StopIteration:
+        print("Emergency stop is active; probe was refused.", file=sys.stderr)
+        return 7
 
 
 if __name__ == "__main__":
