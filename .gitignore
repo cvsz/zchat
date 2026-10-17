@@ -59,3 +59,6 @@ presence-evidence.sqlite3*
 /camfrog-client/
 
 .venv-runtime/
+
+# Local UI mockups (not part of the build).
+docs/mock/
