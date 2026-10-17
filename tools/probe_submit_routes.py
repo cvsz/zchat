@@ -1,8 +1,9 @@
 """Probe Camfrog status submit messages without global keyboard or mouse input.
 
 This tool can change the current Camfrog status. It requires --yes and logs only
-sanitized metadata. Endpoint foreground snapshots cannot rule out transient focus
-changes, and combo readback is not independent provider verification.
+sanitized metadata. It does not restore the prior provider status. Endpoint
+foreground snapshots cannot rule out transient focus changes, and combo readback
+is not independent provider verification.
 """
 
 from __future__ import annotations
@@ -130,7 +131,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--route", choices=ROUTES, required=True)
     parser.add_argument(
-        "--status", required=True, help="Temporary test status; never logged"
+        "--status",
+        required=True,
+        help="Test status sent to Camfrog; it may remain externally applied and is never logged",
     )
     parser.add_argument(
         "--pid", type=int, help="Verified Camfrog PID when multiple clients exist"
@@ -148,20 +151,69 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _restore_prior_edit_text(prior_text: str, process, window, adapter) -> bool:
+    """Restore the local edit draft only while the original target is still valid."""
+    try:
+        if (
+            not revalidate_process_identity(process)
+            or not revalidate_window_identity(window, process)
+            or not adapter.controls_are_current(process.pid, window.hwnd)
+        ):
+            return False
+        return bool(adapter.write_text_no_focus(prior_text)) and (
+            adapter.read_edit_text() == prior_text
+        )
+    except Exception:  # noqa: BLE001 - recovery must fail closed for any adapter error.
+        return False
+
+
+def _record_pre_submit_failure(
+    args, process, window, code: str, restored: bool
+) -> None:
+    _append_log(
+        args.log,
+        {
+            "captured_at": datetime.now(UTC).isoformat(),
+            "provider": "camfrog",
+            "provider_version": process.version,
+            "pid": process.pid,
+            "window_role": window.role.value,
+            "route": args.route,
+            "status_length": len(args.status),
+            "client_state": "SUBMIT_NOT_ACCEPTED",
+            "failure_code": code,
+            "prior_edit_text_restored": restored,
+            "provider_state_verified": False,
+        },
+    )
+
+
 def _submit_and_record(args, process, window, adapter) -> int:
     before = _snapshot()
     prior_edit_text = adapter.read_edit_text()
-    staged = adapter.write_text_no_focus(args.status)
-    if not staged or adapter.read_edit_text() != args.status:
+    try:
+        staged = adapter.write_text_no_focus(args.status)
+        staged_readback = adapter.read_edit_text()
+    except Exception:  # noqa: BLE001 - WM calls may raise platform-specific errors.
+        staged = False
+        staged_readback = ""
+    if not staged or staged_readback != args.status:
+        restored = _restore_prior_edit_text(prior_edit_text, process, window, adapter)
         print(
             "Could not stage and read back the status text; no submit route was sent.",
             file=sys.stderr,
         )
-        return 4
+        _record_pre_submit_failure(args, process, window, "TEXT_STAGE_FAILED", restored)
+        return 4 if restored else 8
 
     stop_registry = EmergencyStopRegistry()
     if stop_registry.is_stopped(EmergencyStopScope.FEATURE, "camfrog.status-changer"):
-        if not adapter.write_text_no_focus(prior_edit_text):
+        restored = _restore_prior_edit_text(prior_edit_text, process, window, adapter)
+        failure_code = (
+            "EMERGENCY_STOP_ACTIVE" if restored else "EMERGENCY_STOP_RESTORE_FAILED"
+        )
+        _record_pre_submit_failure(args, process, window, failure_code, restored)
+        if not restored:
             print(
                 "Emergency stop is active; restoring the prior edit text failed.",
                 file=sys.stderr,
@@ -177,7 +229,12 @@ def _submit_and_record(args, process, window, adapter) -> int:
         or not revalidate_window_identity(window, process)
         or not adapter.controls_are_current(process.pid, window.hwnd)
     ):
-        if not adapter.write_text_no_focus(prior_edit_text):
+        restored = _restore_prior_edit_text(prior_edit_text, process, window, adapter)
+        failure_code = (
+            "TARGET_IDENTITY_CHANGED" if restored else "TARGET_RESTORE_FAILED"
+        )
+        _record_pre_submit_failure(args, process, window, failure_code, restored)
+        if not restored:
             print(
                 "Target changed before submit; restoring the prior edit text failed.",
                 file=sys.stderr,
@@ -186,39 +243,69 @@ def _submit_and_record(args, process, window, adapter) -> int:
         print("Target identity changed before submit.", file=sys.stderr)
         return 3
 
-    if args.route == "combo-post":
-        sent = adapter.post_background_enter()
-    elif args.route == "edit-char":
-        sent = (
-            _send_message_timeout(
-                adapter.edit_hwnd, WM_CHAR, 0x0D, 0, MESSAGE_TIMEOUT_MS
+    try:
+        if args.route == "combo-post":
+            sent = adapter.post_background_enter()
+        elif args.route == "edit-char":
+            sent = (
+                _send_message_timeout(
+                    adapter.edit_hwnd, WM_CHAR, 0x0D, 0, MESSAGE_TIMEOUT_MS
+                )
+                is not None
             )
-            is not None
-        )
-    elif args.route == "edit-post":
-        user32 = ctypes.windll.user32
-        sent = bool(
-            user32.PostMessageW(
-                adapter.edit_hwnd, WM_KEYDOWN, VK_RETURN, _enter_lparam()
+        elif args.route == "edit-post":
+            user32 = ctypes.windll.user32
+            sent = bool(
+                user32.PostMessageW(
+                    adapter.edit_hwnd, WM_KEYDOWN, VK_RETURN, _enter_lparam()
+                )
+                and user32.PostMessageW(
+                    adapter.edit_hwnd, WM_KEYUP, VK_RETURN, _enter_lparam(key_up=True)
+                )
             )
-            and user32.PostMessageW(
-                adapter.edit_hwnd, WM_KEYUP, VK_RETURN, _enter_lparam(key_up=True)
+        elif args.route == "combo-send":
+            sent = _send_enter(adapter.combo_hwnd)
+        else:
+            sent = _send_parent_command(
+                window.hwnd, adapter.combo_hwnd, adapter.edit_hwnd, args.wparam
             )
-        )
-    elif args.route == "combo-send":
-        sent = _send_enter(adapter.combo_hwnd)
-    else:
-        sent = _send_parent_command(
-            window.hwnd, adapter.combo_hwnd, adapter.edit_hwnd, args.wparam
-        )
 
-    deadline = time.monotonic() + 3.0
-    readback = adapter.read_applied_status()
-    while readback != args.status and time.monotonic() < deadline:
-        time.sleep(0.05)
+        deadline = time.monotonic() + 3.0
         readback = adapter.read_applied_status()
-    after = _snapshot()
-    edit_text_restored = adapter.write_text_no_focus(prior_edit_text)
+        while readback != args.status and time.monotonic() < deadline:
+            time.sleep(0.05)
+            readback = adapter.read_applied_status()
+        after = _snapshot()
+    except Exception as exc:  # noqa: BLE001 - an interrupted submit has an unknown outcome.
+        edit_text_restored = _restore_prior_edit_text(
+            prior_edit_text, process, window, adapter
+        )
+        record = {
+            "captured_at": datetime.now(UTC).isoformat(),
+            "provider": "camfrog",
+            "provider_version": process.version,
+            "pid": process.pid,
+            "window_role": window.role.value,
+            "route": args.route,
+            "status_length": len(args.status),
+            "client_state": "EFFECT_UNKNOWN",
+            "failure_code": "SUBMIT_ROUTE_EXCEPTION",
+            "exception_type": type(exc).__name__,
+            "prior_edit_text_restored": edit_text_restored,
+            "foreground_same_at_endpoints": None,
+            "cursor_same_at_endpoints": None,
+            "keyboard_state_same_at_endpoints": None,
+            "endpoint_snapshots_only": True,
+            "provider_state_verified": False,
+        }
+        _append_log(args.log, record)
+        print(json.dumps(record, sort_keys=True))
+        print(f"Sanitized log: {args.log}")
+        return 5 if edit_text_restored else 8
+
+    edit_text_restored = _restore_prior_edit_text(
+        prior_edit_text, process, window, adapter
+    )
     if not edit_text_restored:
         print("Probe ended; restoring the prior edit text failed.", file=sys.stderr)
     record = {

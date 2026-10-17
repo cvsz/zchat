@@ -171,3 +171,103 @@ def test_probe_logs_only_sanitized_client_evidence_and_restores_edit_text(
     assert record["client_state"] == "CLIENT_STATE_CONFIRMED"
     assert record["provider_state_verified"] is False
     assert "sensitive test status" not in args.log.read_text(encoding="utf-8")
+
+
+def test_partial_stage_failure_restores_the_original_edit_text(monkeypatch, tmp_path):
+    class FakeRegistry:
+        def is_stopped(self, *_):
+            return False
+
+    class FakeAdapter:
+        edit_hwnd = 2345
+        combo_hwnd = 3456
+
+        def __init__(self):
+            self.edit_text = "prior draft"
+            self.writes = 0
+
+        def read_edit_text(self):
+            return self.edit_text
+
+        def write_text_no_focus(self, value):
+            self.writes += 1
+            self.edit_text = value
+            return self.writes != 1
+
+        def controls_are_current(self, *_):
+            return True
+
+    adapter = FakeAdapter()
+    process = SimpleNamespace(pid=1234, version="8.5.0.51219")
+    window = SimpleNamespace(hwnd=4567, role=SimpleNamespace(value="main_directory"))
+    args = SimpleNamespace(
+        route="combo-post",
+        status="test status",
+        wparam=None,
+        log=tmp_path / "probe.jsonl",
+    )
+    monkeypatch.setattr(probe, "EmergencyStopRegistry", FakeRegistry)
+    monkeypatch.setattr(probe, "revalidate_process_identity", lambda _: True)
+    monkeypatch.setattr(probe, "revalidate_window_identity", lambda *_: True)
+    monkeypatch.setattr(probe, "_snapshot", lambda: {"foreground_hwnd": 9})
+
+    result = probe._submit_and_record(args, process, window, adapter)
+
+    assert result == 4
+    assert adapter.edit_text == "prior draft"
+    record = json.loads(args.log.read_text(encoding="utf-8"))
+    assert record["failure_code"] == "TEXT_STAGE_FAILED"
+    assert record["prior_edit_text_restored"] is True
+
+
+def test_route_exception_is_logged_as_unknown_and_restores_edit_text(
+    monkeypatch, tmp_path
+):
+    class FakeRegistry:
+        def is_stopped(self, *_):
+            return False
+
+    class FakeAdapter:
+        edit_hwnd = 2345
+        combo_hwnd = 3456
+
+        def __init__(self):
+            self.edit_text = "prior draft"
+
+        def read_edit_text(self):
+            return self.edit_text
+
+        def write_text_no_focus(self, value):
+            self.edit_text = value
+            return True
+
+        def controls_are_current(self, *_):
+            return True
+
+        def post_background_enter(self):
+            raise OSError("simulated send failure")
+
+    adapter = FakeAdapter()
+    process = SimpleNamespace(pid=1234, version="8.5.0.51219")
+    window = SimpleNamespace(hwnd=4567, role=SimpleNamespace(value="main_directory"))
+    args = SimpleNamespace(
+        route="combo-post",
+        status="private test text",
+        wparam=None,
+        log=tmp_path / "probe.jsonl",
+    )
+    monkeypatch.setattr(probe, "EmergencyStopRegistry", FakeRegistry)
+    monkeypatch.setattr(probe, "revalidate_process_identity", lambda _: True)
+    monkeypatch.setattr(probe, "revalidate_window_identity", lambda *_: True)
+    monkeypatch.setattr(probe, "_snapshot", lambda: {"foreground_hwnd": 9})
+
+    result = probe._submit_and_record(args, process, window, adapter)
+
+    assert result == 5
+    assert adapter.edit_text == "prior draft"
+    content = args.log.read_text(encoding="utf-8")
+    record = json.loads(content)
+    assert record["client_state"] == "EFFECT_UNKNOWN"
+    assert record["failure_code"] == "SUBMIT_ROUTE_EXCEPTION"
+    assert record["exception_type"] == "OSError"
+    assert "private test text" not in content
