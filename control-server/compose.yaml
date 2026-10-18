@@ -1,5 +1,6 @@
 services:
   db:
+    container_name: zchat_postgres
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: ${POSTGRES_DB:?Run python -m camfrog_control_server.local_setup before a new local stack}
@@ -15,6 +16,7 @@ services:
     restart: unless-stopped
 
   control-server:
+    container_name: zchat-api
     build: .
     depends_on:
       db:
@@ -43,3 +45,4 @@ services:
 
 volumes:
   postgres_data:
+    name: zchat_postgres_data

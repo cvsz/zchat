@@ -7,7 +7,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [2.19.3] - 2026-10-19
+
 ### Fixed
+- Room Control, IM Auto-reply, Music DJ, and Chat IM Private now attempt Camfrog control discovery after startup and persist detected selectors only after config validation. The combined Status Changer saves both Random and Marquee status pools and configs before starting discovery. Each app retains its inlined discovery implementation and remains an independent one-file executable.
 - Create each status app data directory before clearing PID/start-gate files or launching its worker, so a fresh install can register and authorize the worker instead of leaving an unverified child running.
 - Document the current status submit trade-offs, interactive user-activity wait, automatic standalone status-app setup, and worker startup handshake consistently across the English and Thai guides.
 
@@ -59,6 +62,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Web Status now defaults to switching non-empty status slots every 60 seconds.
 - Status Changer records completed status text in its worker log and clears its status logs daily at 12:00 local time.
 - Music DJ queue paths are restricted to the app data folder.
+- MCP discovery and authenticated read-only resource results now declare private, zero-TTL caching; response data is not reusable across authorization contexts.
+
 
 ## [2.19.2] - 2026-10-11
 

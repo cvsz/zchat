@@ -22,7 +22,7 @@
 
 หน้า **Bot Manager** ของ Web Status ควบคุมคิวใน `music-dj.exe` แยกตัวผ่านไฟล์ในเครื่อง และอ่าน/ควบคุม vMix บนเครื่องเดียวกันได้ Music DJ รับ URL หรือ ID YouTube เข้าคิว เปิด player มาตรฐานที่มองเห็นได้ และเลื่อนคิวตาม event เล่น/จบเพลง ดูขอบเขตและรายการตรวจรับ Windows ที่ [`docs/zBOT-Youtube-MUSIC-DJ.md`](docs/zBOT-Youtube-MUSIC-DJ.md)
 
-Room Control และ IM Auto-reply ใช้ `config.json` แยกกัน ส่วน Chat IM Private ใช้ `private-chat-config.json` และ Random/Marquee ใช้ `camfrog-status-config.json` ในโฟลเดอร์ข้อมูลคนละชุด แต่ละแอปแยก pool, log, ประวัติ และ worker แอปสถานะแบบ standalone จะบันทึกค่าที่โหลดและลองค้นหา control เมื่อเปิดโปรแกรม ปุ่ม **Start** สร้างโฟลเดอร์ข้อมูล เปิด worker และรอการลงทะเบียน/อนุญาต PID ก่อนเริ่มส่งสถานะ
+Room Control และ IM Auto-reply ใช้ `config.json` แยกกัน ส่วน Chat IM Private ใช้ `private-chat-config.json` และ Random/Marquee ใช้ `camfrog-status-config.json` ในโฟลเดอร์ข้อมูลคนละชุด แต่ละแอปแยก pool, log, ประวัติ และ worker standalone ทุกแอปที่ใช้ Camfrog controls จะลองค้นหา control หลังเปิดหน้าต่าง และบันทึก selector เมื่อ config ผ่าน validation; Web Status ใช้ control บนเว็บไซต์จึงไม่รวมอยู่ด้วย ปุ่ม **Start** สร้างโฟลเดอร์ข้อมูล เปิด worker และรอการลงทะเบียน/อนุญาต PID ก่อนเริ่มส่งสถานะ
 
 ## สร้าง exe
 
@@ -43,11 +43,11 @@ Room Control และ IM Auto-reply ใช้ `config.json` แยกกัน 
 
 ## เริ่มต้นใช้งาน
 
-1. เปิด Camfrog แล้วเข้าห้อง สำหรับ Camfrog 8.x เปิด `room-control.exe` แล้วใช้ **Setup → Auto-detect** ผลวิเคราะห์: `docs/CAMFROG-8.5-FINDINGS.md`
+1. เปิด Camfrog แล้วเข้าห้องก่อนเปิดแอป standalone แอปจะลองค้นหา control ให้อัตโนมัติ ใช้ **Setup → Auto-detect** หรือ **Discover controls** เพื่อลองใหม่ ผลวิเคราะห์: `docs/CAMFROG-8.5-FINDINGS.md`
 2. แก้ `config.json` ของแอปนั้น ตั้งนิค ตั้งกฎตอบ คง `dry_run` ไว้ขณะทดสอบ
 3. ใช้ `im-autoreply.exe` สำหรับตอบ IM ส่วนตัว config และ log แยกจาก Room Control
 4. ใช้ `status-random.exe` หรือ `status-marquee.exe` สำหรับแอปแยก หรือ `status-changer.exe` สำหรับหน้ารวมพร้อม Activity Log แต่ละแอปเก็บข้อมูลของตัวเอง โหมด strict background ยังหยุดด้วย `BACKGROUND_UNSUPPORTED` ส่วน `best_effort_background` จะโพสต์ Enter ไปยัง combo สถานะ แต่ Camfrog อาจดึงหน้าต่างขึ้นหรือกะพริบ และยังไม่ยืนยันผลจากผู้ให้บริการ โหมด interactive จะรอให้ผู้ใช้หยุดใช้งาน desktop ก่อนส่ง ดู [`docs/STATUS-SUBMIT-MODES.md`](docs/STATUS-SUBMIT-MODES.md) ส่วน `web-status.exe` เป็นฟีเจอร์แยก
-5. เปิดแชทส่วนตัวใน Camfrog แล้วใช้ `chat-im-private.exe` refresh และโฟกัสหน้าต่าง ปุ่ม **Discover controls** ดึงรายการ control ลง `controls.txt` เพื่อตั้ง selector เหมือนแอปอื่น
+5. เปิดแชทส่วนตัวใน Camfrog แล้วใช้ `chat-im-private.exe` refresh และโฟกัสหน้าต่าง แอปจะลองค้นหา selector ตอนเปิด และยังใช้ **Discover controls** เพื่อบันทึกรายการ control ลง `controls.txt` สำหรับตรวจวิเคราะห์ได้
 
 คำสั่ง `python camfrog_auto.py ...` ยังใช้เป็น CLI สำหรับพัฒนา โดยใช้ `config.json` ในเครื่องซึ่ง Git จะไม่ติดตาม สร้างได้ด้วย `python camfrog_auto.py init --config config.json` หรือคัดลอกจาก `config.example.json` ส่วน CI และ build ตรวจด้วยตัวอย่างที่ปลอดภัย CLI นี้ไม่ใช่หนึ่งในแปดแอปที่ build คำสั่งใน `extras\*.bat` เป็นทางลัด ยกเว้น `extras\gui.bat` ที่เปิด `dist\room-control\room-control.exe` ที่ build แล้ว
 

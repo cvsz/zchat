@@ -4710,7 +4710,7 @@ def main(argv=None):
 # Read-only GitHub API (no token needed for public repos, stdlib only). Each
 # packaged app checks the same repo's latest release and downloads only its
 # own executable asset, verified against the release's SHA256SUMS.txt.
-APP_VERSION = "2.19.2"
+APP_VERSION = "2.19.3"
 GITHUB_REPO = os.environ.get("CAMFROG_UPDATE_REPO", "cvsz/zchat")
 UPDATE_ASSET_SUMS = "SHA256SUMS.txt"
 

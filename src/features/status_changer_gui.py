@@ -6639,6 +6639,41 @@ def build_app():
                     [var.get() for var in self._fields_for_mode(mode)],
                 )
 
+        def _save_discovery_inputs(self):
+            """Persist both status modes before discovery touches either config."""
+            if self.save_job is not None:
+                try:
+                    self.root.after_cancel(self.save_job)
+                except tk.TclError:
+                    pass
+                self.save_job = None
+
+            if self.save_settings() is None:
+                return False
+
+            try:
+                for mode in ("random", "marquee"):
+                    config_path = self.config_paths[mode]
+                    config = load_cfg(config_path)
+                    config["status"]["messages"] = messages_from_slots(
+                        var.get() for var in self._fields_for_mode(mode)
+                    )
+                    errors, _warnings = validate(config)
+                    if errors:
+                        raise ValueError("\n".join(errors))
+                    write_config(config_path, config)
+                    write_config(
+                        self.runtime_config_paths[mode], runtime_config(config, mode)
+                    )
+                    if mode != self.mode:
+                        self._log_activity("Status lines saved", mode)
+                return True
+            except (OSError, sqlite3.Error, ValueError, KeyError, TypeError) as exc:
+                self.note.configure(
+                    text=str(exc), foreground=STATUS_CHANGER_THEME["error"]
+                )
+                return False
+
         def save_data(self):
             """Persist current status pools and settings without contacting Camfrog."""
             if self.busy or self.stop_in_progress:
@@ -6662,8 +6697,8 @@ def build_app():
             detected selectors into this app's config (apply=True)."""
             if self.busy:
                 return
-            # Persist current operator edits before discovery rewrites selectors.
-            if self.save_settings() is None:
+            # Flush pending debounced saves and both mode pools before discovery.
+            if not self._save_discovery_inputs():
                 return
 
             def do():
@@ -6682,7 +6717,7 @@ def build_app():
             """Save current settings, then discover controls for both status modes."""
             if self.embedded or self.close_requested or self.busy:
                 return
-            if self.save_settings() is None:
+            if not self._save_discovery_inputs():
                 return
 
             def do():
@@ -7276,7 +7311,7 @@ def main(argv=None):
 # Read-only GitHub API (no token needed for public repos, stdlib only). Each
 # packaged app checks the same repo's latest release and downloads only its
 # own executable asset, verified against the release's SHA256SUMS.txt.
-APP_VERSION = "2.19.2"
+APP_VERSION = "2.19.3"
 GITHUB_REPO = os.environ.get("CAMFROG_UPDATE_REPO", "cvsz/zchat")
 UPDATE_ASSET_SUMS = "SHA256SUMS.txt"
 

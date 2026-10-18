@@ -46,6 +46,11 @@ def _enable_integration(client: TestClient) -> str:
     return token
 
 
+def _assert_private_uncached_result(result: dict) -> None:
+    assert result["ttlMs"] == 0
+    assert result["cacheScope"] == "private"
+
+
 def test_mcp_discovery_lists_only_read_only_tools_and_resources(api_client) -> None:
     client, _, _ = api_client
     token = _enable_integration(client)
@@ -56,21 +61,26 @@ def test_mcp_discovery_lists_only_read_only_tools_and_resources(api_client) -> N
     )
     assert response.status_code == 200
     assert response.json()["result"]["supportedVersions"] == [MCP_VERSION]
+    _assert_private_uncached_result(response.json()["result"])
 
-    tools = client.post(
+    tools_response = client.post(
         "/api/v1/integrations/zworkforce/v1/mcp",
         headers=_headers(token, "tools/list"),
         json=_payload("tools/list"),
-    ).json()["result"]["tools"]
+    )
+    _assert_private_uncached_result(tools_response.json()["result"])
+    tools = tools_response.json()["result"]["tools"]
     assert {tool["name"] for tool in tools} == {"zchat.capabilities", "zchat.health"}
     assert all(tool["annotations"]["readOnlyHint"] for tool in tools)
     assert all(tool["inputSchema"]["additionalProperties"] is False for tool in tools)
 
-    resources = client.post(
+    resources_response = client.post(
         "/api/v1/integrations/zworkforce/v1/mcp",
         headers=_headers(token, "resources/list"),
         json=_payload("resources/list"),
-    ).json()["result"]["resources"]
+    )
+    _assert_private_uncached_result(resources_response.json()["result"])
+    resources = resources_response.json()["result"]["resources"]
     assert {resource["uri"] for resource in resources} == {
         "zchat://capabilities",
         "zchat://health",
@@ -99,9 +109,20 @@ def test_mcp_reads_capabilities_and_health_through_zworkforce_client_contract(ap
         json=_payload("resources/read", {"uri": "zchat://health"}),
     )
     assert health_response.status_code == 200
-    health_content = health_response.json()["result"]["contents"][0]
+    health_result = health_response.json()["result"]
+    _assert_private_uncached_result(health_result)
+    health_content = health_result["contents"][0]
     assert health_content["uri"] == "zchat://health"
     assert '"database": "reachable"' in health_content["text"]
+
+    capability_resource = client.post(
+        "/api/v1/integrations/zworkforce/v1/mcp",
+        headers=_headers(token, "resources/read", "zchat://capabilities"),
+        json=_payload("resources/read", {"uri": "zchat://capabilities"}),
+    )
+    assert capability_resource.status_code == 200
+    _assert_private_uncached_result(capability_resource.json()["result"])
+    assert capability_resource.json()["result"]["contents"][0]["uri"] == "zchat://capabilities"
 
 
 def test_mcp_rejects_invalid_protocol_and_mismatched_method_headers(api_client) -> None:

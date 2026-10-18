@@ -868,11 +868,87 @@ def test_standalone_status_startup_discovers_controls(name):
 
     app._discover_controls_on_start()
     assert discovered == [True]
-
     app.close_requested = True
     app._discover_controls_on_start()
     assert discovered == [True]
 
+
+@pytest.mark.parametrize("name", ["room_control_gui", "im_autoreply_gui", "camfrog_music_gui"])
+def test_camfrog_apps_schedule_and_run_startup_discovery(name, monkeypatch):
+    mod = load(name)
+    app_class = mod.build_app()
+    app = object.__new__(app_class)
+    app._closing = False
+    app.busy = False
+    app.model = SimpleNamespace(path="settings.json", cfg={"seed": True})
+    tasks = []
+    app.run_bg = lambda fn, kind: tasks.append((fn, kind))
+    called = []
+    monkeypatch.setattr(mod, "cmd_detect", lambda *args: called.append(args) or 0)
+
+    app._discover_controls_on_start()
+    assert len(tasks) == 1
+    assert tasks[0][1] == "startup-detect"
+    assert tasks[0][0]() == 0
+    assert called == [({"seed": True}, "settings.json", True, True)]
+
+    app._closing = True
+    app._discover_controls_on_start()
+    assert len(tasks) == 1
+
+
+@pytest.mark.parametrize("name", [
+    "room_control_gui", "im_autoreply_gui", "camfrog_music_gui",
+    "status_random_gui", "status_marquee_gui", "status_changer_gui",
+    "chat_im_private_gui",
+])
+def test_each_camfrog_standalone_saves_only_valid_detected_selectors(
+        name, tmp_path, monkeypatch, capsys):
+    mod = load(name)
+    cfg = {"status": {"edit": {}}, "autoreply": {"history": {}, "input": {}}}
+    window = SimpleNamespace(handle=42)
+    control_rows = [{
+        "class_name": "Edit", "control_type": "Edit", "name": "",
+        "auto_id": "statusEdit", "visible": True, "enabled": True,
+        "left": 10, "top": 10, "w": 180, "h": 24,
+        "parent_class": "CComboBoxTS",
+    }]
+    monkeypatch.setattr(mod, "BASE", tmp_path)
+    monkeypatch.setattr(mod, "get_window", lambda _cfg: window)
+    monkeypatch.setattr(mod, "process_windows", lambda _window: [])
+    monkeypatch.setattr(mod, "describe_controls", lambda _window: control_rows)
+    monkeypatch.setattr(mod, "validate", lambda _candidate: ([], []))
+    path = tmp_path / "settings.json"
+
+    assert mod.cmd_detect(cfg, path, apply=True) == 0
+    capsys.readouterr()
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["status"]["edit"]["auto_id"] == "statusEdit"
+    assert saved["status"]["edit"]["index"] == 0
+
+
+@pytest.mark.parametrize("name", [
+    "room_control_gui", "im_autoreply_gui", "camfrog_music_gui", "chat_im_private_gui",
+])
+def test_camfrog_standalones_schedule_startup_discovery(name):
+    import ast
+
+    path = ROOT / "src" / "features" / f"{name}.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    scheduled = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr != "after" or len(node.args) < 2:
+            continue
+        callback = node.args[1]
+        if (isinstance(callback, ast.Attribute)
+                and isinstance(callback.value, ast.Name)
+                and callback.value.id == "self"
+                and callback.attr == "_discover_controls_on_start"):
+            scheduled.append(node.args[0])
+    assert scheduled, f"{name} does not schedule startup control discovery"
+    assert any(isinstance(delay, ast.Constant) and delay.value >= 500 for delay in scheduled)
 
 def test_combined_status_startup_saves_and_discovers_both_modes(monkeypatch):
     mod = load("status_changer_gui")
@@ -880,23 +956,57 @@ def test_combined_status_startup_saves_and_discovers_both_modes(monkeypatch):
     app.embedded = False
     app.close_requested = False
     app.busy = False
+    app.mode = "random"
+    app.save_job = "pending-save"
+    events = []
+    app.root = SimpleNamespace(after_cancel=lambda job: events.append(("cancel", job)))
     app.config_paths = {"random": "random.json", "marquee": "marquee.json"}
+    app.runtime_config_paths = {
+        "random": "random-runtime.json", "marquee": "marquee-runtime.json"
+    }
     app.config_path = "random.json"
-    saved = []
-    app.save_settings = lambda: saved.append(True) or {}
+    app.random_fields = [SimpleNamespace(get=lambda: "random text")]
+    app.marquee_fields = [SimpleNamespace(get=lambda: "marquee text")]
+    app._fields_for_mode = lambda mode: (
+        app.random_fields if mode == "random" else app.marquee_fields
+    )
+    app.save_settings = lambda: events.append(("save-active", "random")) or {}
+    app._log_activity = lambda message, mode: events.append(("saved", mode))
     tasks = []
     app.run_task = lambda function, *_args, **_kwargs: tasks.append(function)
     app._tr = lambda en, _th: en
-    discoveries = []
-    monkeypatch.setattr(mod, "run_control_discovery", discoveries.append)
-    monkeypatch.setattr(mod, "load_cfg", lambda path: {"loaded": path})
+    configs = {
+        path: {"status": {"messages": ["old"]}}
+        for path in app.config_paths.values()
+    }
+    monkeypatch.setattr(mod, "load_cfg", lambda path: configs[path])
+    monkeypatch.setattr(mod, "validate", lambda _config: ([], []))
+    monkeypatch.setattr(
+        mod,
+        "write_config",
+        lambda path, config: events.append(("write", path, config["status"]["messages"])),
+    )
+    monkeypatch.setattr(mod, "runtime_config", lambda config, _mode: config)
+    monkeypatch.setattr(
+        mod, "run_control_discovery", lambda path: events.append(("discover", path))
+    )
 
     app._discover_controls_on_start()
-    assert saved == [True]
+    assert app.save_job is None
     assert len(tasks) == 1
     assert tasks[0]() == 0
-    assert discoveries == ["random.json", "marquee.json"]
-    assert app.config == {"loaded": "random.json"}
+    assert events == [
+        ("cancel", "pending-save"),
+        ("save-active", "random"),
+        ("write", "random.json", ["random text"]),
+        ("write", "random-runtime.json", ["random text"]),
+        ("write", "marquee.json", ["marquee text"]),
+        ("write", "marquee-runtime.json", ["marquee text"]),
+        ("saved", "marquee"),
+        ("discover", "random.json"),
+        ("discover", "marquee.json"),
+    ]
+    assert app.config == configs["random.json"]
 
 
 def test_status_logs_clear_at_local_noon_once_per_day(tmp_path):

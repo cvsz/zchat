@@ -18,7 +18,7 @@ English version: `USER-MANUAL-EN.md`.
 ## 2. เริ่มใช้ครั้งแรก
 
 1. เปิด Camfrog แล้วเข้าห้อง (อย่าย่อลง tray)
-2. เปิดแอป แอปสถานะแบบ standalone จะบันทึกค่าที่โหลดและลองค้นหา control ให้อัตโนมัติ ส่วนแอปอื่นใช้ **Setup → Auto-detect** หรือ **Discover controls** เมื่อต้องการตั้ง selector
+2. เปิด Camfrog ก่อน แล้วจึงเปิดแอป standalone ที่ต้องการ แอป Camfrog ทุกตัวจะลองค้นหา control และบันทึก selector ที่ผ่าน validation ให้อัตโนมัติ ส่วน Web Status ใช้ control บนเว็บไซต์ ใช้ **Setup → Auto-detect** หรือ **Discover controls** เพื่อลองใหม่ และตรวจ selector ก่อนเปิด live actions
 3. เปิด `dry_run` ไว้ก่อนเสมอขณะทดสอบ โหมดนี้แค่บันทึกว่าจะส่งอะไร ไม่ส่งจริง
 4. คงโหมดทดลองไว้ระหว่างตรวจสอบ โหมด strict จะคืน `BACKGROUND_UNSUPPORTED` ส่วน `best_effort_background` ที่เลือกเปิดเองอาจดึงหน้าต่าง Camfrog ขึ้นหรือกะพริบ และไม่ยืนยันผลจากผู้ให้บริการ โหมด interactive จะรอให้ผู้ใช้หยุดใช้งาน desktop ก่อนใช้อินพุตจริง ดู `docs/STATUS-SUBMIT-MODES.md` ส่วน `web-status.exe` ใช้เว็บไซต์แยกต่างหาก
 
@@ -44,7 +44,7 @@ English version: `USER-MANUAL-EN.md`.
 
 - แสดงรายชื่อหน้าต่างแชทส่วนตัวที่เปิดอยู่ **Refresh** โหลดใหม่ ดับเบิลคลิกหรือ **Activate selected** เพื่อโฟกัส ไม่มีการอ่านหรือส่งข้อความ
 - ตัวกรองชื่อหน้าต่าง (regex) กับจำนวนสูงสุดช่วยจำกัดรายชื่อ **Save filters** บันทึกลง config ของแอปนี้
-- **Discover controls** ดึงรายการ control ลง `controls.txt` เพื่อตั้ง selector
+- **Discover controls** ลองค้นหาใหม่และบันทึกรายการ control ลง `controls.txt` สำหรับตรวจวิเคราะห์
 
 ## 6. Status Changer: Random, Marquee และ Activity Log
 

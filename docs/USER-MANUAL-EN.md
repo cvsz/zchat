@@ -18,7 +18,7 @@ Apps: `room-control`, `chat-im-private`, `status-random`, `status-marquee`, `sta
 ## 2. First run
 
 1. Open Camfrog and join a room (not tray-minimized).
-2. Open the app. Standalone status apps save their loaded settings and attempt control discovery automatically; other apps use **Setup → Auto-detect** or **Discover controls** when needed. This fills the control selectors.
+2. Open the app after Camfrog is running. Every standalone Camfrog app attempts control discovery and saves valid selector proposals automatically; Web Status uses website controls and is excluded. Use **Setup → Auto-detect** or **Discover controls** to retry. Verify the selected controls before enabling live actions.
    Keep only the intended Camfrog client process within the configured window-title filter. If matching windows belong to multiple or unverifiable processes, the desktop apps stop instead of guessing which account to control.
 3. Keep `dry_run` ON while checking behavior. Dry-run only logs what *would* be sent.
 4. Keep dry-run enabled while checking behavior. Strict status submission returns `BACKGROUND_UNSUPPORTED`. The opt-in `best_effort_background` route may activate or flash Camfrog and does not verify provider delivery. Interactive submission waits for user inactivity before using desktop input. `web-status.exe` is a separate website-based feature; see `docs/STATUS-SUBMIT-MODES.md`.
@@ -45,7 +45,7 @@ Apps: `room-control`, `chat-im-private`, `status-random`, `status-marquee`, `sta
 
 - Lists private-chat windows already open in Camfrog. **Refresh** reloads, double-click or **Activate selected** focuses one. It never reads or sends messages.
 - **Window title filter** (regex) + **Max windows** limit the list; **Save filters** stores them in this app's own config.
-- **Discover controls** dumps the control tree to `controls.txt` for selector setup.
+- **Discover controls** retries discovery and dumps the control tree to `controls.txt` for diagnostics.
 
 ## 6. Status Changer: Random, Marquee, and Activity Log
 

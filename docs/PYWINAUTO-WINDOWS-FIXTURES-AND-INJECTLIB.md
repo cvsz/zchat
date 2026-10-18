@@ -85,7 +85,7 @@ server-visible status, or packaged-runtime acceptance.
 
 The repository now includes process-identity/ownership checks that run on all
 platforms and Windows-only HWND integration cases in
-`windows_tests/test_runtime_adapter_regression.py`. Those tests use a small local
+`windows_tests/test_runtime_adapter.py`. Those tests use a small local
 Tk window by default; `ZCHAT_TESTAPP_EXE` can select a prebuilt test application
 for the cases that do not require closing the window while its process remains
 alive. The optional upstream checkout is pinned by
