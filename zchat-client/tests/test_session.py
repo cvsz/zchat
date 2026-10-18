@@ -5,13 +5,12 @@ import threading
 import time
 
 import pytest
-from camfrog_control_server.transport import AgentTransportError
 from zchat_client.session import AgentChatWorker, WorkerEvent
 
+from camfrog_control_server.transport import AgentTransportError
 
-def _wait_for_event(
-    worker: AgentChatWorker, kind: str, timeout: float = 2.0
-) -> WorkerEvent:
+
+def _wait_for_event(worker: AgentChatWorker, kind: str, timeout: float = 2.0) -> WorkerEvent:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -108,9 +107,7 @@ def test_chat_session_reads_assignment_without_command_heartbeat() -> None:
         def heartbeat(self) -> dict:
             nonlocal heartbeat_calls
             heartbeat_calls += 1
-            raise AssertionError(
-                "Chat-only sessions must not refresh command-agent presence"
-            )
+            raise AssertionError("Chat-only sessions must not refresh command-agent presence")
 
     worker = AgentChatWorker(
         "https://control.example",
@@ -240,9 +237,7 @@ def test_outgoing_retry_reuses_the_same_idempotency_key() -> None:
         def chat_session(self) -> dict:
             return {"account_id": account_id}
 
-        def submit_chat_message(
-            self, account_id: str, message_id: str, _body: str
-        ) -> dict:
+        def submit_chat_message(self, account_id: str, message_id: str, _body: str) -> dict:
             submitted_messages.append((account_id, message_id))
             if not self.failed_once:
                 self.failed_once = True
@@ -296,9 +291,7 @@ def test_queued_message_is_canceled_when_account_assignment_changes() -> None:
                 raise AssertionError("Assignment refresh was not released")
             return {"account_id": account_b}
 
-        def submit_chat_message(
-            self, account_id: str, message_id: str, _body: str
-        ) -> dict:
+        def submit_chat_message(self, account_id: str, message_id: str, _body: str) -> dict:
             submitted_messages.append((account_id, message_id))
             return {"id": "ef8a3056-60d8-42f5-b3d9-a11d2a2f62bf"}
 
@@ -353,15 +346,11 @@ def test_client_side_validation_rejects_blank_and_oversized_messages() -> None:
 def test_outgoing_queue_is_bounded() -> None:
     worker = AgentChatWorker("https://control.example", "agent-token")
     for index in range(100):
-        worker.submit_message(
-            f"Message {index}", "f6f17f92-ae7a-4c65-94d3-8376f08c909e"
-        )
+        worker.submit_message(f"Message {index}", "f6f17f92-ae7a-4c65-94d3-8376f08c909e")
 
     try:
         worker.submit_message("One too many", "f6f17f92-ae7a-4c65-94d3-8376f08c909e")
     except ValueError as exc:
         assert "queue is full" in str(exc)
     else:
-        raise AssertionError(
-            "The outgoing queue accepted more than its configured limit"
-        )
+        raise AssertionError("The outgoing queue accepted more than its configured limit")

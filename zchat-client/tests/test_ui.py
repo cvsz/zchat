@@ -57,9 +57,7 @@ def test_window_uses_application_icon() -> None:
         root.destroy()
 
 
-def test_frozen_application_icon_resolves_from_bundle_root(
-    monkeypatch, tmp_path
-) -> None:
+def test_frozen_application_icon_resolves_from_bundle_root(monkeypatch, tmp_path) -> None:
     icon_path = tmp_path / "app.ico"
     icon_path.write_bytes(b"icon")
     monkeypatch.setattr(ui.sys, "frozen", True, raising=False)
@@ -84,9 +82,7 @@ def test_connect_rejects_blank_server_url_before_using_token(monkeypatch) -> Non
 
         assert window.worker is None
         assert window.agent_token.get() == "unused-agent-token"
-        assert errors == [
-            ("Invalid server URL", "Server URL must be an absolute HTTP(S) URL.")
-        ]
+        assert errors == [("Invalid server URL", "Server URL must be an absolute HTTP(S) URL.")]
     finally:
         root.destroy()
 
@@ -158,9 +154,7 @@ def test_vip_membership_card_shows_provenance_and_expiry_in_both_languages() -> 
         assert window.membership_title.cget("text") == "สถานะ VIP"
         assert "บันทึกด้วยตนเอง" in window.membership_detail.cget("text")
         assert "ระเบียนชั่วคราว" in window.membership_detail.cget("text")
-        assert "ยังไม่ได้ตรวจสอบ Camfrog แบบสด" in window.membership_disclaimer.cget(
-            "text"
-        )
+        assert "ยังไม่ได้ตรวจสอบ Camfrog แบบสด" in window.membership_disclaimer.cget("text")
     finally:
         root.destroy()
 
@@ -195,9 +189,7 @@ def test_assignment_changes_clear_previous_account_chat_and_membership() -> None
         window._handle_event(None, next_assignment)
 
         assert window.assignment.get() == "Account: AnotherNick"
-        assert "Private message for first account" not in window.transcript.get(
-            "1.0", "end-1c"
-        )
+        assert "Private message for first account" not in window.transcript.get("1.0", "end-1c")
         assert window.membership_badge.cget("text") == "Gold VIP"
 
         window._handle_event(None, ui.WorkerEvent("assignment", {"account_id": None}))
@@ -213,9 +205,7 @@ def test_assignment_changes_clear_previous_account_chat_and_membership() -> None
 def test_client_palette_stays_identical_to_web_status_theme() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     module = ast.parse(
-        (repo_root / "src" / "features" / "web_status_gui.py").read_text(
-            encoding="utf-8"
-        )
+        (repo_root / "src" / "features" / "web_status_gui.py").read_text(encoding="utf-8")
     )
     assignments = [
         node.value
@@ -243,37 +233,27 @@ def test_keyboard_shortcuts_and_context_menu_work_for_editable_and_read_only_fie
         for key in "acvx":
             assert window.server_entry.bind(f"<Control-{key}>")
         window._handle_control_key(
-            SimpleNamespace(
-                widget=window.server_entry, keysym="a", char="\x01", keycode=65
-            )
+            SimpleNamespace(widget=window.server_entry, keysym="a", char="\x01", keycode=65)
         )
         assert window.server_entry.selection_present()
 
         window._handle_control_key(
-            SimpleNamespace(
-                widget=window.server_entry, keysym="c", char="\x03", keycode=67
-            )
+            SimpleNamespace(widget=window.server_entry, keysym="c", char="\x03", keycode=67)
         )
         assert root.clipboard_get() == "https://control.example"
 
         root.clipboard_clear()
         root.clipboard_append("https://pasted.example")
         window._handle_control_key(
-            SimpleNamespace(
-                widget=window.server_entry, keysym="v", char="\x16", keycode=86
-            )
+            SimpleNamespace(widget=window.server_entry, keysym="v", char="\x16", keycode=86)
         )
         assert window.server_entry.get() == "https://pasted.example"
 
         window._handle_control_key(
-            SimpleNamespace(
-                widget=window.server_entry, keysym="a", char="\x01", keycode=65
-            )
+            SimpleNamespace(widget=window.server_entry, keysym="a", char="\x01", keycode=65)
         )
         window._handle_control_key(
-            SimpleNamespace(
-                widget=window.server_entry, keysym="x", char="\x18", keycode=88
-            )
+            SimpleNamespace(widget=window.server_entry, keysym="x", char="\x18", keycode=88)
         )
         assert window.server_entry.get() == ""
         assert root.clipboard_get() == "https://pasted.example"
@@ -283,9 +263,7 @@ def test_keyboard_shortcuts_and_context_menu_work_for_editable_and_read_only_fie
         window.transcript.focus_force()
         root.update()
         window._handle_control_key(
-            SimpleNamespace(
-                widget=window.transcript, keysym="c", char="\x03", keycode=67
-            )
+            SimpleNamespace(widget=window.transcript, keysym="c", char="\x03", keycode=67)
         )
         assert "Read-only message" in root.clipboard_get()
 
@@ -319,14 +297,10 @@ def test_token_entry_is_never_copied_or_cut(monkeypatch) -> None:
         root.clipboard_append("existing clipboard")
 
         window._handle_control_key(
-            SimpleNamespace(
-                widget=window.token_entry, keysym="c", char="\x03", keycode=67
-            )
+            SimpleNamespace(widget=window.token_entry, keysym="c", char="\x03", keycode=67)
         )
         window._handle_control_key(
-            SimpleNamespace(
-                widget=window.token_entry, keysym="x", char="\x18", keycode=88
-            )
+            SimpleNamespace(widget=window.token_entry, keysym="x", char="\x18", keycode=88)
         )
         window.token_entry.event_generate("<<Copy>>")
         window.token_entry.event_generate("<<Cut>>")
@@ -375,9 +349,8 @@ def test_assignment_change_cancellation_is_explained_in_both_languages() -> None
         event = WorkerEvent("send_canceled", {"message_id": "12345678-1234"})
 
         window._handle_event(None, event)
-        assert (
-            "canceled because the account assignment changed"
-            in window.transcript.get("1.0", "end-1c")
+        assert "canceled because the account assignment changed" in window.transcript.get(
+            "1.0", "end-1c"
         )
 
         window._toggle_language()
