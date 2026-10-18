@@ -24,6 +24,7 @@ from .db import make_engine
 from .domain_api import router as domain_router
 from .observability import StructuredLogger, log_http_request, log_startup_event, redact_db_url
 from .rate_limit import SlidingWindowRateLimiter
+from .zworkforce_mcp import router as zworkforce_mcp_router
 
 
 def create_app(settings: Settings | None = None, *, engine=None) -> FastAPI:
@@ -180,4 +181,5 @@ def create_app(settings: Settings | None = None, *, engine=None) -> FastAPI:
     app.include_router(health)
     app.include_router(router, prefix="/api/v1")
     app.include_router(domain_router, prefix="/api/v1")
+    app.include_router(zworkforce_mcp_router, prefix="/api/v1")
     return app

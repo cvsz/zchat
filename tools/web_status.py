@@ -29,6 +29,7 @@ import shutil
 import sqlite3
 import sys
 import tempfile
+import urllib.error
 import urllib.parse
 import urllib.request
 from http.cookiejar import Cookie, CookieJar, MozillaCookieJar
@@ -37,6 +38,17 @@ from pathlib import Path
 # Frozen -> files live next to the exe; source -> the repo root (parent of tools/).
 BASE = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) \
     else Path(__file__).resolve().parent.parent
+
+# Keep the standalone source entry point and packaged EXE on the same profile
+# HTTP implementation as the in-app updater.
+if not getattr(sys, "frozen", False):
+    sys.path.insert(0, str(BASE / "src" / "camfrog"))
+from camfrog_profile_status import (  # noqa: E402
+    extract_csrf as _profile_extract_csrf,
+    extract_profile_identity as _profile_extract_identity,
+    fetch_profile as _profile_fetch,
+    post_profile_status as _profile_post_status,
+)
 
 LOGIN_URL = "https://www.camfrog.com/th/login/check.php"
 
@@ -92,44 +104,75 @@ def next_rotation(pool, index):
     return pool[index % len(pool)], (index + 1) % len(pool)
 
 
-def perform_update(opener, status, timeout, confirm=False):
+def perform_update(opener, status, timeout, confirm=False, expected_login=None):
     """Single gated send point for one rotation tick. Returns (ok, message).
 
-    Reads the profile page for its per-session CSRF token, then POSTs the new
-    status. Refuses unless confirm=True (fail closed until a live round-trip is
-    confirmed by the operator).
+    Reads the profile page, verifies the selected account nickname and provider
+    user ID, then obtains its per-session CSRF token before POSTing the status.
+    Refuses unless confirm=True and expected_login is supplied.
     """
     if not confirm:
         return False, ("update refused: endpoint captured from home.php but not "
                        "confirmed end to end yet; pass --confirm-update to send "
                        "for real (dry-run preview only).")
+    if not str(expected_login or "").strip():
+        return False, "update refused: expected Camfrog account identity is required."
     html = fetch_profile(opener, "", timeout)
+    identity = extract_profile_identity(html)
+    if identity is None:
+        return False, ("update refused: profile page did not provide a "
+                       "verifiable account identity.")
+    if identity["nickname"].casefold() != str(expected_login).strip().casefold():
+        return False, ("update refused: authenticated Camfrog account does not "
+                       "match the selected account.")
     csrf = extract_csrf(html)
     if not csrf:
         return False, ("update refused: no CSRF token on the profile page "
                        "(session expired or not signed in).")
-    reply = _post(opener, WEB_UPDATE_URL, {"status": status, "csrf": csrf}, timeout)
+    try:
+        reply = _post(opener, WEB_UPDATE_URL,
+                      {"status": status, "csrf": csrf}, timeout)
+    except Exception as exc:
+        if isinstance(exc, urllib.error.HTTPError) and 400 <= exc.code < 500:
+            return False, "update refused: profile endpoint returned HTTP {0}.".format(
+                exc.code)
+        return False, ("update outcome unknown: POST request failed ({0}); "
+                       "check the profile before retrying."
+                       .format(type(exc).__name__))
+    status_code = getattr(reply, "status_code", None)
+    if status_code is not None and status_code >= 500:
+        return False, ("update outcome unknown: profile endpoint returned HTTP "
+                       "{0}; check the profile before retrying.".format(status_code))
+    if status_code is not None and not 200 <= status_code < 300:
+        return False, "update refused: profile endpoint returned HTTP {0}.".format(
+            status_code)
     try:
         data = json.loads(reply)
     except ValueError:
-        return False, "update refused: unrecognized server reply ({0}).".format(
-            reply[:60])
+        return False, ("update outcome unknown: unrecognized server reply; "
+                       "check the profile before retrying.")
     if not isinstance(data, dict):
-        return False, "update refused: invalid server response format."
+        return False, ("update outcome unknown: invalid server response format; "
+                       "check the profile before retrying.")
     if data.get("error"):
         return False, "update refused by the server (error response)."
     # Camfrog's profile form treats a non-empty response string as success and
     # writes it back into the status field. It does not require the literal "ok".
     response = data.get("response")
     if not isinstance(response, str) or not response.strip():
-        return False, "update unconfirmed: server did not acknowledge success."
+        return False, ("update outcome unknown: server did not acknowledge the "
+                       "request; check the profile before retrying.")
     return True, "status update acknowledged by server."
 
 
 def extract_csrf(html):
     """The per-session CSRF token embedded in the logged-in profile page."""
-    match = re.search(r"var\s+csrf\s*=\s*['\"]([0-9a-fA-F]{16,})['\"]", html)
-    return match.group(1) if match else ""
+    return _profile_extract_csrf(html)
+
+
+def extract_profile_identity(html):
+    """Return the signed-in provider identity exposed by the profile page."""
+    return _profile_extract_identity(html)
 
 CAPTURE_STEPS = """\
 To capture the real status-update endpoint:
@@ -236,6 +279,18 @@ def cookie_from_paste(text):
             path="/", path_specified=True, secure=True, expires=None,
             discard=False, comment=None, comment_url=None, rest={}, rfc2109=False))
     return jar
+
+
+def environment_cookie(name, expected_cookie):
+    """Return one validated environment cookie pair without logging its value."""
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return ""
+    cookies = list(cookie_from_paste(raw))
+    if len(cookies) != 1 or cookies[0].name != expected_cookie:
+        raise ValueError("{0} must contain exactly one {1} cookie.".format(
+            name, expected_cookie))
+    return "{0}={1}".format(cookies[0].name, cookies[0].value)
 
 
 def load_cookie_jar(path):
@@ -485,10 +540,7 @@ def import_chrome_jar(user_data="", domains=CHROME_DOMAINS):
 
 def fetch_profile(opener, login, timeout):
     """The signed-in landing page: session markers plus the CSRF token."""
-    request = urllib.request.Request(HOME_URL, headers=dict(
-        BROWSER_HEADERS, Referer=HOME_URL))
-    with opener.open(request, timeout=timeout) as response:
-        return response.read().decode("utf-8", "replace")
+    return _profile_fetch(opener, timeout)
 
 
 def summarize_session(html):
@@ -511,6 +563,9 @@ def summarize_session(html):
 
 
 def _post(opener, url, fields, timeout):
+    if url == WEB_UPDATE_URL and set(fields) == {"status", "csrf"}:
+        return _profile_post_status(
+            opener, fields["status"], fields["csrf"], timeout)
     data = urllib.parse.urlencode(fields).encode("utf-8")
     request = urllib.request.Request(url, data=data, headers=dict(
         BROWSER_HEADERS, Referer=LOGIN_PAGE_URL))
@@ -562,7 +617,8 @@ def live_update(login, password, status, timeout, confirm=False):
         guidance = (" Use --confirm-update for live changes; a verified signed-in "
                     "session is also required.") if not confirm else ""
         return EXIT_BLOCKED, "status update blocked: session not confirmed signed in." + guidance
-    ok, update_message = perform_update(opener, status, timeout, confirm=confirm)
+    ok, update_message = perform_update(
+        opener, status, timeout, confirm=confirm, expected_login=login)
     return (EXIT_OK if ok else EXIT_BLOCKED), "{0}\n{1}".format(detail, update_message)
 
 
@@ -689,7 +745,12 @@ def main(argv=None):
                 jar = load_cookie_jar(args.cookies_file)
                 print("loaded session: {0}".format(cookie_summary(jar)))
             else:
-                build_parser().error("--probe requires --cookies-file or --chrome")
+                env_cookie = environment_cookie("WEBAUTH_USER", "PHPSESSID")
+                if not env_cookie:
+                    build_parser().error(
+                        "--probe requires --cookies-file, --chrome, or WEBAUTH_USER in .env")
+                jar = cookie_from_paste(env_cookie)
+                print("loaded configured session from WEBAUTH_USER (value hidden).")
         except (OSError, ValueError) as exc:
             print(exc)
             return EXIT_USAGE
@@ -706,6 +767,19 @@ def main(argv=None):
     if not args.live:
         print(build_plan(args.login, args.status))
         return EXIT_OK
+    try:
+        env_cookie = environment_cookie("WEBAUTH_USER", "PHPSESSID")
+    except ValueError as exc:
+        print(str(exc))
+        return EXIT_USAGE
+    if env_cookie:
+        jar = cookie_from_paste(env_cookie)
+        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+        ok, message = perform_update(
+            opener, args.status, args.timeout, confirm=args.confirm_update,
+            expected_login=args.login)
+        print(message)
+        return EXIT_OK if ok else EXIT_BLOCKED
     env_password = os.environ.get("CAMFROG_PASSWORD")
     if env_password:
         password = env_password  # from .env / environment; never printed or logged

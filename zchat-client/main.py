@@ -11,6 +11,7 @@ def _configure_source_paths() -> None:
     candidates = (
         root / "src",
         root.parent / "control-server" / "src",
+        root.parent / "src" / "features",
         # Shared runtime modules (camfrog_windows_runtime, ...).
         # Standalone and unified builds package the same 1:1 sources.
         root.parent / "src" / "camfrog",
@@ -22,6 +23,10 @@ def _configure_source_paths() -> None:
 
 def main() -> None:
     _configure_source_paths()
+    if "--worker" in sys.argv[1:]:
+        from status_changer_gui import main as run_status_worker
+
+        raise SystemExit(run_status_worker(sys.argv[1:]))
     if "--classic" in sys.argv:
         from zchat_client.ui import main as launch_ui
 

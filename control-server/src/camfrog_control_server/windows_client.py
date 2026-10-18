@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,8 @@ class WindowsCamfrogClientProvider:
     This adapter requires an interactive Windows user session. It does not log in, inspect the
     account, confirm room membership, or terminate processes that it did not launch itself.
     """
+
+    STARTUP_VERIFY_SECONDS = 0.1
 
     def __init__(
         self,
@@ -86,6 +89,13 @@ class WindowsCamfrogClientProvider:
             stderr=subprocess.DEVNULL,
             creationflags=flags,
         )
+        # A successful CreateProcess/Popen call is not enough: the executable can
+        # exit immediately because it is missing a runtime dependency or is rejected
+        # by Windows. Only report launch success after the owned process remains live.
+        time.sleep(self.STARTUP_VERIFY_SECONDS)
+        if self._process.poll() is not None:
+            self._process = None
+            return "failed", "execution_failed"
         return "succeeded", "ok"
 
     def _restart(self) -> tuple[str, str]:
@@ -121,8 +131,8 @@ class WindowsCamfrogClientProvider:
             return "failed", "execution_failed"
         uri = "camfrog://join_room/?name=" + quote(normalized, safe="")
         self._uri_launcher(uri)
-        # Success means the operating system accepted the URI, not that the room joined.
-        return "succeeded", "ok"
+        # The OS accepted the URI; Camfrog's resulting state is unverified.
+        return "effect_unknown", "handoff_accepted"
 
     def _open_nickname_uri(self, command: dict[str, Any], action: str) -> tuple[str, str]:
         payload = command.get("payload")
@@ -133,5 +143,5 @@ class WindowsCamfrogClientProvider:
         if any(ord(char) < 32 or ord(char) == 127 for char in nickname):
             return "failed", "execution_failed"
         self._uri_launcher(f"camfrog:{action}:{quote(nickname, safe='')}")
-        # Success means the operating system accepted the URI, not that Camfrog completed it.
-        return "succeeded", "ok"
+        # The OS accepted the URI; Camfrog's resulting state is unverified.
+        return "effect_unknown", "handoff_accepted"

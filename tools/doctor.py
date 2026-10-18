@@ -65,7 +65,7 @@ def stale_files():
 
 
 def icon_problem():
-    """app.ico must exist and be a real multi-size .ico, or the exe gets no icon."""
+    """Require the complete ZChat icon set used by Windows and packaged EXEs."""
     ico = ROOT / "app.ico"
     if not ico.exists():
         return ("app.ico not found: exe will be built WITHOUT an icon.",
@@ -74,6 +74,19 @@ def icon_problem():
     if len(d) < 22 or d[:4] != b"\x00\x00\x01\x00":
         return ("app.ico is not a valid .ico file (renamed PNG?). Re-export it as a real .ico.",
                 "app.ico ไม่ใช่ไฟล์ .ico จริง (อาจแค่เปลี่ยนนามสกุลจาก PNG) ให้ export ใหม่")
+    try:
+        reserved, kind, count = struct.unpack_from("<HHH", d)
+        sizes = {
+            (width or 256, height or 256)
+            for width, height, _colors, _reserved, _planes, _bpp, _length, _offset
+            in (struct.unpack_from("<BBBBHHII", d, 6 + i * 16) for i in range(count))
+        }
+    except struct.error:
+        reserved, kind, count, sizes = 1, 0, 0, set()
+    expected = {(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)}
+    if reserved != 0 or kind != 1 or count != len(expected) or sizes != expected:
+        return ("app.ico is incomplete; expected image sizes 16, 24, 32, 48, 64, 128, and 256 px.",
+                "app.ico มีขนาดภาพไม่ครบ ต้องมี 16, 24, 32, 48, 64, 128 และ 256 px")
     return None
 
 

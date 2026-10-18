@@ -42,7 +42,7 @@ An agent token is rotated and bound to the current account assignment; reassignm
 
 The API rate limiter is bounded and per process. It is suitable for local/single-instance development only; it does not coordinate across multiple workers or replicas. Structured request logs include only method, path, status, request id, and duration. Query strings, headers, and bodies are omitted.
 
-Commands are delivered at least once if a lease expires. A provider action may have completed just before an agent lost its lease, so providers must define idempotency and operator reconciliation. Windows URI success means the operating system accepted the handoff, not that the client completed it.
+Expired command claims become terminal `effect_unknown` outcomes and are not automatically retried, because the provider may have acted before losing connectivity. Additional commands are blocked while an account has a claimed or unknown command, preventing overlapping dispatch and preserving the account after uncertain effects. An administrator can record a manual reconciliation with an external evidence SHA-256; the resulting `operator_reconciled` state is an attestation, not provider verification. The shared JWT principal is `operator`, so audit records do not identify an individual human. The Windows URI provider reports `effect_unknown` after the OS accepts a URI; this is handoff evidence only. Internal chat messages use a separate at-least-once protocol.
 
 ## Current implementation and remaining gates
 

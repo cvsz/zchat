@@ -9,6 +9,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import camfrog_status_gui as gui  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "features"))
+import status_changer_gui as combined_gui  # noqa: E402
 
 
 class _WindowsPlatformProxy:
@@ -66,26 +68,141 @@ def test_runtime_config_disables_autoreply_and_preserves_foreground_safety():
     assert base_cfg["safety"]["require_foreground"] is True
 
 
-def test_apply_status_text_preserves_foreground_setting(tmp_path, monkeypatch):
+@pytest.mark.parametrize("mode", ["random", "marquee"])
+def test_runtime_config_enforces_strict_background_for_each_worker_mode(mode):
+    import copy
+
+    for configured_mode in ("interactive", "strict_background"):
+        cfg = copy.deepcopy(combined_gui.DEFAULTS)
+        cfg["status"]["execution_mode"] = configured_mode
+        runtime = combined_gui.runtime_config(cfg, mode)
+        assert runtime["status"]["execution_mode"] == "strict_background"
+        assert runtime["status"]["random"] is (mode == "random")
+        assert runtime["status"]["marquee"]["enabled"] is (mode == "marquee")
+
+
+def test_explicit_unverified_test_mode_uses_combo_post_without_global_input(
+    monkeypatch, capsys
+):
+    monkeypatch.setenv(combined_gui.UNVERIFIED_STATUS_TEST_ENV, "1")
+    cfg = {
+        "status": {"execution_mode": "strict_background"},
+        "autoreply": {},
+        "autoreply_im": {},
+        "stats": {},
+        "log": {},
+        "safety": {},
+    }
+    profiled = combined_gui.apply_app_profile(cfg)
+    assert profiled["status"]["execution_mode"] == "interactive"
+    assert profiled["status"]["background_enter_target"] == "combo"
+    runtime = combined_gui.runtime_config(cfg, "random")
+    assert runtime["status"]["execution_mode"] == "interactive"
+    assert runtime["status"]["background_enter_target"] == "combo"
+    assert not combined_gui._strict_status_start_blocked(
+        {"dry_run": False, "status": {"enabled": True}}
+    )
+    assert "UNVERIFIED TEST MODE" in capsys.readouterr().out
+
+    events = []
+    win = SimpleNamespace(handle=77)
+    ctrl = SimpleNamespace(
+        handle=88,
+        set_focus=lambda: events.append("focus"),
+        type_keys=lambda _keys: events.append("global-keyboard"),
+    )
+    monkeypatch.setattr(
+        combined_gui.ctypes,
+        "windll",
+        SimpleNamespace(user32=SimpleNamespace(GetForegroundWindow=lambda: 55)),
+        raising=False,
+    )
+    monkeypatch.setattr(combined_gui, "is_web", lambda _ctrl: False)
+    monkeypatch.setattr(combined_gui, "write_text", lambda *_args: True)
+    monkeypatch.setattr(
+        combined_gui,
+        "_background_enter",
+        lambda _ctrl, target: events.append(("post-message", target)),
+    )
+
+    assert combined_gui.commit(
+        win,
+        ctrl,
+        "test status",
+        False,
+        require_fg=True,
+        background_if_not_foreground=True,
+        execution_mode="interactive",
+    )
+    assert events == [("post-message", "combo")]
+
+
+def test_status_profile_remains_strict_without_explicit_test_opt_in(monkeypatch):
+    monkeypatch.delenv(combined_gui.UNVERIFIED_STATUS_TEST_ENV, raising=False)
+    cfg = {
+        "status": {"execution_mode": "interactive"},
+        "autoreply": {},
+        "autoreply_im": {},
+    }
+
+    profiled = combined_gui.apply_app_profile(cfg)
+
+    assert profiled["status"]["execution_mode"] == "strict_background"
+
+
+def test_status_changer_worker_entry_forces_strict_mode(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        combined_gui,
+        "cli_main",
+        lambda argv, **kwargs: calls.append((argv, kwargs)) or 0,
+    )
+    assert combined_gui.main(["--worker", "--config", "legacy.json", "run"]) == 0
+    assert calls == [
+        (["--config", "legacy.json", "run"], {"force_strict_background": True})
+    ]
+
+
+def test_apply_status_text_forces_strict_background_for_legacy_config(tmp_path, monkeypatch):
     config_path = tmp_path / "camfrog-status-config.json"
     config_path.write_text(
         '{"dry_run": false, "safety": {"require_foreground": true}}',
         encoding="utf-8",
     )
     calls = []
-    win, ctrl = object(), object()
-    monkeypatch.setattr(
-        gui, "get_window", lambda _config: win,
-    )
-    monkeypatch.setattr(gui, "find", lambda _win, _spec: ctrl)
-    monkeypatch.setattr(gui, "commit", lambda *args, **kwargs: calls.append(args) or True)
+    monkeypatch.setattr(gui, "commit_background",
+                        lambda text, dry=False: calls.append((text, dry)) or True)
 
     assert gui.apply_status_text(config_path, "status text") == 0
-    assert calls[0][0] is win
-    assert calls[0][1] is ctrl
-    assert calls[0][2] == "status text"
-    assert calls[0][3] is False  # live send, dry_run off
-    assert calls[0][4] is True   # focus Camfrog and use foreground Enter
+    assert calls == [("status text", False)]
+
+
+def test_standalone_defaults_to_strict_background():
+    assert gui.DEFAULTS["status"]["execution_mode"] == "strict_background"
+    runtime = gui.runtime_config({
+        "status": {"execution_mode": "interactive"},
+        "autoreply": {}, "stats": {}, "log": {}, "safety": {},
+    })
+    assert runtime["status"]["execution_mode"] == "strict_background"
+
+
+def test_live_standalone_worker_fails_before_spawn_when_strict_submit_unverified(
+        monkeypatch, tmp_path, capsys):
+    _enable_windows_mutex_api(monkeypatch)
+    monkeypatch.setattr(gui, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(gui, "running_pid", lambda _cfg: None)
+    monkeypatch.setitem(sys.modules, "camfrog_status_engine",
+                        SimpleNamespace(strict_background_submit_supported=lambda: False))
+    monkeypatch.setattr(gui.subprocess, "Popen",
+                        lambda *args, **kwargs: pytest.fail("worker must not spawn"))
+    cfg = {
+        "dry_run": False,
+        "status": {"enabled": True},
+        "log": {"file": "worker.log"},
+        "safety": {"stop_file": "stop", "pid_file": "pid"},
+    }
+    assert gui.cmd_start_worker(cfg, SimpleNamespace(config=None, lang=None)) == 2
+    assert "BACKGROUND_UNSUPPORTED" in capsys.readouterr().out
 
 
 def test_status_live_toggle_maps_to_dry_run_without_mutating_config():
@@ -122,7 +239,11 @@ def test_get_window_skips_own_tk_gui():
 
 
 def test_status_gui_own_window_titles_cover_random_and_marquee_when_class_lookup_fails():
-    for title in ("Camfrog Random Status", "Camfrog Marquee Status"):
+    for title in (
+        "ZChat Status Changer",
+        "ZChat Random Status",
+        "ZChat Marquee Status",
+    ):
         own = SimpleNamespace(
             class_name=lambda: (_ for _ in ()).throw(OSError()),
             window_text=lambda title=title: title,
@@ -290,6 +411,42 @@ def test_runner_uses_combo_target_for_status_only(tmp_path, monkeypatch):
     assert calls[1][-1] == "edit"
 
 
+def test_runner_never_uses_legacy_commit_for_strict_status(tmp_path, monkeypatch):
+    import camfrog_auto as core
+    import copy
+
+    cfg = copy.deepcopy(core.DEFAULTS)
+    cfg["status"]["messages"] = ["test"]
+    cfg["status"]["history"]["enabled"] = False
+    cfg["status"]["execution_mode"] = "strict_background"
+    monkeypatch.setattr(core, "BASE", tmp_path)
+    runner = core.Runner(cfg)
+    runner.status_edit = object()
+    strict_calls = []
+    monkeypatch.setattr(core, "commit", lambda *args: pytest.fail("legacy commit used"))
+    monkeypatch.setattr(core, "commit_strict_background_status",
+                        lambda text, dry=False: strict_calls.append((text, dry)) or True)
+
+    assert runner.send(runner.status_edit, "safe status") is True
+    assert strict_calls == [("safe status", True)]
+
+
+def test_cli_status_uses_strict_background_path(monkeypatch):
+    import camfrog_auto as core
+    import copy
+
+    cfg = copy.deepcopy(core.DEFAULTS)
+    cfg["status"]["execution_mode"] = "strict_background"
+    calls = []
+    monkeypatch.setattr(core, "commit_strict_background_status",
+                        lambda text, dry=False: calls.append((text, dry)) or True)
+    monkeypatch.setattr(core, "get_window",
+                        lambda _cfg: pytest.fail("legacy window lookup used"))
+
+    assert core.cmd_status(cfg, "safe status") == 0
+    assert calls == [("safe status", True)]
+
+
 def test_parse_interval_seconds_passes_through_valid_values():
     assert gui.parse_interval_seconds("30") == 30
     assert gui.parse_interval_seconds("90") == 90
@@ -300,6 +457,61 @@ def test_parse_interval_seconds_clamps_up_to_minimum():
     assert gui.parse_interval_seconds("0.1") == gui.RANDOM_INTERVAL_MIN
     assert gui.parse_interval_seconds("-5") == gui.RANDOM_INTERVAL_MIN
     assert gui.parse_interval_seconds("10") == 10
+    assert gui.RANDOM_INTERVAL_MIN == 10
+
+
+def test_legacy_status_config_is_clamped_to_provider_minimum(tmp_path):
+    import json
+
+    path = tmp_path / "legacy-status.json"
+    path.write_text(
+        json.dumps(
+            {
+                "status": {
+                    "interval_seconds": 1.5,
+                    "marquee": {"step_seconds": 0.5},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = combined_gui.load_cfg(path)
+
+    assert cfg["status"]["interval_seconds"] == 10
+    assert cfg["status"]["marquee"]["step_seconds"] == 10
+
+
+def test_configure_status_mode_clamps_random_and_marquee_to_ten_seconds():
+    import copy
+
+    cfg = copy.deepcopy(combined_gui.DEFAULTS)
+    combined_gui.configure_status_mode(cfg, "random", ["one"], 1)
+    assert cfg["status"]["interval_seconds"] == 10
+
+    combined_gui.configure_status_mode(
+        cfg,
+        "marquee",
+        ["one"],
+        1,
+        {"step": 0.5, "stride": 1, "scroll": True, "loop_slots": False},
+    )
+    assert cfg["status"]["interval_seconds"] == 10
+    assert cfg["status"]["marquee"]["step_seconds"] == 10
+
+
+def test_scrolling_cli_frames_are_spaced_at_least_ten_seconds(monkeypatch):
+    import copy
+
+    cfg = copy.deepcopy(combined_gui.DEFAULTS)
+    cfg["dry_run"] = True
+    cfg["status"]["execution_mode"] = "strict_background"
+    cfg["status"]["marquee"]["step_seconds"] = 0.5
+    sleeps = []
+    monkeypatch.setattr(combined_gui.time, "sleep", sleeps.append)
+
+    assert combined_gui._commit_frames(cfg, ["first", "second"]) == 0
+    assert sleeps == [10]
 
 
 def test_parse_interval_seconds_clamps_down_to_maximum():

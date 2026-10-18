@@ -22,9 +22,9 @@ Missing keys use built-in defaults. This reference covers the source CLI configu
 | `safety.restore_previous_window` | `true` | After sending, return focus to the window you were using. Set `false` to leave Camfrog's chat window in front; IM auto-reply scrolls its local reply echo into the chat viewport either way |
 | `safety.max_consecutive_failures` | `5` | Stop after N failed ticks in a row (backoff + re-attach) |
 | `status.enabled` | `true` | Rotate status |
-| `status.execution_mode` | `interactive` | `interactive` keeps legacy behavior (may focus Camfrog and use foreground input); `strict_background` routes status changes through the shared background engine with no focus stealing, no global keyboard/mouse input, no clipboard changes, and no Windows sound-setting changes, reporting success only when the applied status is verified |
+| `status.execution_mode` | `interactive` | `interactive` keeps legacy behavior and may affect foreground focus; `strict_background` fails closed with `BACKGROUND_UNSUPPORTED` before writing/submitting because the current Camfrog 8.5 submit path is not verified to preserve desktop state |
 | `status.edit` / `apply_button` | selectors / `null` | UIA selectors from `discover`; `apply_button` is invoked instead of Enter |
-| `status.background_enter_target` | `edit` | When Camfrog is not foreground, the status worker automatically posts Enter to the verified `CComboBoxTS` parent; `combo` forces this background path even while Camfrog is foreground. The Edit text is read back before submission. Camfrog must stay running in the same signed-in Windows session; a closed Camfrog process cannot be updated. |
+| `status.background_enter_target` | `edit` | Legacy submit-target setting retained for compatibility. It does not override the strict-mode capability gate. Do not use it as evidence that a no-interference background status send is supported. |
 | `status.interval_seconds` | `600` | Minimum 0.3 |
 | `status.retry_seconds` | `30` | Wait after a failed send before retrying (1–3600) |
 | `status.set_on_start` | `true` | Set first status immediately |

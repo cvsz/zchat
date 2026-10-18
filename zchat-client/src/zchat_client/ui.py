@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import queue
 import sys
 import time
@@ -1081,30 +1082,46 @@ class AgentChatWindow:
 
 SHELL_TEXT = {
     "en": {
-        "title": "ZChat Client (Unified)",
+        "title": "ZChat Client",
         "nav_agent": "Agent Chat",
         "nav_monitor": "Process Monitor",
+        "nav_private_chat": "Private Chat",
+        "nav_status": "Status Changer",
     },
     "th": {
-        "title": "ZChat Client (Unified)",
+        "title": "ZChat Client",
         "nav_agent": "แชตเอเจนต์",
         "nav_monitor": "Process Monitor",
+        "nav_private_chat": "แชตส่วนตัว",
+        "nav_status": "เปลี่ยนสถานะ",
     },
 }
 
 
 class UnifiedClientWindow:
-    """Single-window shell hosting every feature page 1:1 from shared modules.
+    """Single-window shell for agent chat, runtime monitoring, and Camfrog tools.
 
-    Pages reuse the same implementations as the standalone executables
-    (e.g. :class:`ProcessMonitorPage` uses ``camfrog_windows_runtime``
-    directly). No standalone feature executable is launched or required.
+    Private Chat and Status Changer embed their source modules; the standalone
+    feature executables are not launched by the unified client.
     """
 
-    PAGES = ("agent", "monitor")
+    PAGES = ("agent", "monitor", "private_chat", "status")
 
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(
+        self,
+        root: tk.Tk,
+        *,
+        private_chat_data_dir: Path | None = None,
+        status_data_dir: Path | None = None,
+    ) -> None:
         self.root = root
+        self.private_chat_data_dir = private_chat_data_dir
+        self.private_app = None
+        self.private_error: Exception | None = None
+        self.status_data_dir = status_data_dir
+        self.status_app = None
+        self.status_error: Exception | None = None
+        self._closing = False
         _apply_application_icon(self.root)
         self.language = tk.StringVar(value="en")
         self._set_window_title(SHELL_TEXT["en"]["title"])
@@ -1131,6 +1148,12 @@ class UnifiedClientWindow:
         self.pages["agent"] = agent_host
         self.monitor_page = ProcessMonitorPage(self.container, get_language=self.language.get)
         self.pages["monitor"] = self.monitor_page
+        # The standalone manager configures its host's background directly.
+        self.private_host = tk.Frame(self.container, background=PALETTE["background"])
+        self.pages["private_chat"] = self.private_host
+        # The shared Status Changer applies a Tk frame background directly.
+        self.status_host = tk.Frame(self.container, background=PALETTE["background"])
+        self.pages["status"] = self.status_host
 
         self.language.trace_add("write", lambda *_: self._apply_shell_language())
         self._current: str | None = None
@@ -1152,26 +1175,124 @@ class UnifiedClientWindow:
         self._set_window_title(table["title"])
         self.nav_buttons["agent"].configure(text=table["nav_agent"])
         self.nav_buttons["monitor"].configure(text=table["nav_monitor"])
+        self.nav_buttons["private_chat"].configure(text=table["nav_private_chat"])
+        self.nav_buttons["status"].configure(text=table["nav_status"])
         self.monitor_page.apply_language()
 
     def show_page(self, name: str) -> None:
         """Display one page; unknown names fail closed on the current page."""
         if name not in self.pages:
             return
+        if name == "private_chat" and self.private_app is None:
+            self._create_private_chat_page()
+        if name == "status" and self.status_app is None:
+            self._create_status_page()
         if self._current is not None:
             self.pages[self._current].pack_forget()
         self._current = name
         self.pages[name].pack(fill=tk.BOTH, expand=True)
 
-    def _close(self) -> None:
+    def _create_private_chat_page(self) -> None:
+        """Embed the read-only private-window manager with isolated app data."""
         try:
-            self.agent_page._close()
-        except Exception:
-            pass
+            if self.private_chat_data_dir is None:
+                if getattr(sys, "frozen", False):
+                    base = Path(sys.executable).resolve().parent / "zchat-client-data"
+                else:
+                    base = Path(__file__).resolve().parents[2] / "data"
+                self.private_chat_data_dir = base / "private-chat"
+            data_dir = self.private_chat_data_dir.resolve()
+            data_dir.mkdir(parents=True, exist_ok=True)
+            os.environ["CAMFROG_APP_DATA_DIR"] = str(data_dir)
+
+            # The module derives its app-local paths when imported.
+            import chat_im_private_gui
+
+            self.private_app = chat_im_private_gui.PrivateChatManager(
+                chat_im_private_gui.CONFIG_PATH,
+                parent=self.private_host,
+            )
+        except (
+            ImportError,
+            OSError,
+            RuntimeError,
+            SystemExit,
+            tk.TclError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            self.private_error = exc
+            for child in self.private_host.winfo_children():
+                child.destroy()
+            ttk.Label(
+                self.private_host,
+                text=f"Private Chat could not initialize: {type(exc).__name__}",
+                wraplength=600,
+            ).pack(anchor=tk.W, padx=16, pady=16)
+
+    def _create_status_page(self) -> None:
+        """Embed the shared Status Changer module with isolated client data."""
+        try:
+            if self.status_data_dir is None:
+                if getattr(sys, "frozen", False):
+                    base = Path(sys.executable).resolve().parent / "zchat-client-data"
+                else:
+                    base = Path(__file__).resolve().parents[2] / "data"
+                self.status_data_dir = base / "status-changer"
+            data_dir = self.status_data_dir.resolve()
+            data_dir.mkdir(parents=True, exist_ok=True)
+            os.environ["ZCFATO_DATA_DIR"] = str(data_dir)
+            os.environ["CAMFROG_APP_PROFILE"] = "status"
+
+            # The entry module selects the Camfrog status profile before the
+            # shared implementation is imported.
+            import status_changer_entry  # noqa: F401
+            import status_changer_gui
+
+            config_path = status_changer_gui.DATA_DIR / "camfrog-status-config.json"
+            self.status_app = status_changer_gui.build_app()(
+                config_path,
+                parent=self.status_host,
+                on_closed=self._finish_close,
+                on_close_failed=self._allow_close_retry,
+            )
+        except (
+            ImportError,
+            KeyError,
+            OSError,
+            RuntimeError,
+            SystemExit,
+            tk.TclError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            self.status_error = exc
+            for child in self.status_host.winfo_children():
+                child.destroy()
+            ttk.Label(
+                self.status_host,
+                text=f"Status Changer could not initialize: {type(exc).__name__}",
+                wraplength=600,
+            ).pack(anchor=tk.W, padx=16, pady=16)
+
+    def _close(self) -> None:
+        if self._closing:
+            return
+        self._closing = True
+        if self.status_app is not None:
+            self.status_app.close_app()
+            return
+        self._finish_close()
+
+    def _finish_close(self) -> None:
+        self.agent_page._close()
         try:
             self.root.destroy()
         except tk.TclError:
             pass
+
+    def _allow_close_retry(self) -> None:
+        self._closing = False
 
 
 def main_unified() -> None:

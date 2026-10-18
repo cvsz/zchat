@@ -140,7 +140,7 @@ S = {
     "no_window": ("Camfrog window not found (check window_title_regex)",
                   "ไม่พบหน้าต่าง Camfrog (ตรวจ window_title_regex)"),
     "no_ctrl": ("control not found: {spec} (matches={n})", "ไม่พบ control: {spec} (พบ {n} รายการ)"),
-    "status_set": ("status set: {text}", "ตั้ง status แล้ว: {text}"),
+    "status_set": ("status submission dispatched (provider outcome unverified): {text}", "ส่งคำสั่ง status แล้ว (ยังไม่ยืนยันผลจาก Camfrog): {text}"),
     "status_fail": ("status commit failed", "ตั้ง status ไม่สำเร็จ"),
     "reply_fail": ("reply commit failed", "ส่งข้อความตอบไม่สำเร็จ"),
     "replied": ("replied to {nick}: {text}", "ตอบ {nick} แล้ว: {text}"),
@@ -1320,6 +1320,34 @@ def commit(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply_btn=N
     return True
 
 
+def commit_strict_background_status(text: str, dry: bool = False) -> bool:
+    """Run a status mutation through the shared fail-closed background engine."""
+    if dry:
+        log.info(t("dry_send", text=shown(text)))
+        return True
+    try:
+        from camfrog_status_engine import (
+            BackgroundStatusExecutor,
+            ExecutionMode,
+            StatusResultState,
+        )
+        evidence = BackgroundStatusExecutor(
+            default_mode=ExecutionMode.STRICT_BACKGROUND,
+        ).execute_status_change(
+            status_text=text,
+            execution_mode=ExecutionMode.STRICT_BACKGROUND,
+        )
+    except Exception as exc:
+        log.error("Strict background status failed: %s", str(exc)[:160])
+        return False
+    if evidence.result_state == StatusResultState.CLIENT_STATE_CONFIRMED.value:
+        log.info("Camfrog client shows the status; external state remains unverified.")
+        return True
+    log.error("Strict background status failed (state=%s, code=%s).",
+              evidence.result_state, evidence.error_code)
+    return False
+
+
 RESET_BURST = 25  # more fresh chat lines than this in one poll = history reset, not live chat
 LINK_RE = re.compile(r"(https?://|www\.)", re.I)
 
@@ -2155,8 +2183,12 @@ class Runner:
 
     def send(self, ctrl, text, btn=None, win=None):
         s = self.cfg["safety"]
+        is_status = ctrl is getattr(self, "status_edit", None) and win is None
+        if (is_status and self.cfg.get("status", {}).get("execution_mode")
+                == "strict_background"):
+            return commit_strict_background_status(text, self.dry)
         target = (self.cfg["status"].get("background_enter_target", "edit")
-                  if ctrl is getattr(self, "status_edit", None) and win is None else "edit")
+                  if is_status else "edit")
         return commit(win or self.win, ctrl, text, self.dry, s["require_foreground"], btn,
                       s["restore_previous_window"], target)
 
@@ -3248,6 +3280,10 @@ def cmd_im_probe(cfg):
 
 
 def cmd_status(cfg, text):
+    if cfg.get("status", {}).get("execution_mode") == "strict_background":
+        ok = commit_strict_background_status(text, cfg["dry_run"])
+        print(t("ok") if ok else t("failed"))
+        return 0 if ok else 1
     win = get_window(cfg)
     st, sf = cfg["status"], cfg["safety"]
     ctrl = find(win, st["edit"])
@@ -3370,7 +3406,7 @@ def build_parser():
     return p
 
 
-def main(argv=None):
+def main(argv=None, force_strict_background=False):
     global LANG, LANG_LOCKED
     a = build_parser().parse_args(argv)
     LANG = resolve_lang(a.lang)
@@ -3397,6 +3433,8 @@ def main(argv=None):
     except Exception as e:
         print(t("cannot_load", e=e))
         return 2
+    if force_strict_background:
+        cfg.setdefault("status", {})["execution_mode"] = "strict_background"
     if not a.lang:
         LANG = resolve_lang(cfg["language"])
     if a.cmd == "check":
@@ -3407,6 +3445,18 @@ def main(argv=None):
         return cmd_state(cfg)
     if a.cmd in ("autostart-on", "autostart-off"):
         return cmd_autostart(a, a.cmd == "autostart-on")
+    if (force_strict_background and a.cmd in ("run", "start", "status")
+            and not cfg.get("dry_run", True)
+            and cfg.get("status", {}).get("enabled", True)):
+        try:
+            from camfrog_status_engine import strict_background_submit_supported
+            supported = strict_background_submit_supported()
+        except (ImportError, AttributeError):
+            supported = False
+        if not supported:
+            print("background status failed (state=BACKGROUND_UNSUPPORTED, "
+                  "code=STRICT_SUBMIT_UNVERIFIED)")
+            return 2
     errs, _ = validate(cfg)
     if errs:
         print(t("cfg_hint"), *errs, sep="\n  ")
