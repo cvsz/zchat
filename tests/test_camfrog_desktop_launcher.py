@@ -32,3 +32,31 @@ def test_launcher_reports_windows_runtime_blocker_without_touching_processes(
 
     assert launcher.main(["launch", "--exe", "Camfrog Video Chat.exe"]) == 2
     assert "BLOCKED" in capsys.readouterr().err
+
+
+def test_switch_test_returns_to_default_and_closes_desktop_handles(monkeypatch):
+    class FakeUser32:
+        def __init__(self):
+            self.switched = []
+            self.closed = []
+
+        def OpenDesktopW(self, name, _flags, _inherit, _access):
+            return {"ZChatCamfrogTest": 11, "Default": 22}[name]
+
+        def SwitchDesktop(self, handle):
+            self.switched.append(handle)
+            return 1
+
+        def CloseDesktop(self, handle):
+            self.closed.append(handle)
+
+    user32 = FakeUser32()
+    monkeypatch.setattr(launcher, "_windows_api", lambda: (user32, object()))
+    monkeypatch.setattr(launcher.time, "sleep", lambda _seconds: None)
+
+    result = launcher.switch_for_test("ZChatCamfrogTest", 5)
+
+    assert user32.switched == [11, 22]
+    assert user32.closed == [22, 11]
+    assert result["returned_to_default"] is True
+    assert result["normal_operation_verified"] is False

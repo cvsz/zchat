@@ -13,14 +13,20 @@ import ctypes
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 DESKTOP_CREATEWINDOW = 0x0002
 DESKTOP_READOBJECTS = 0x0001
 DESKTOP_WRITEOBJECTS = 0x0080
 DESKTOP_ENUMERATE = 0x0040
+DESKTOP_SWITCHDESKTOP = 0x0100
 DESKTOP_ACCESS = (
-    DESKTOP_CREATEWINDOW | DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS | DESKTOP_ENUMERATE
+    DESKTOP_CREATEWINDOW
+    | DESKTOP_READOBJECTS
+    | DESKTOP_WRITEOBJECTS
+    | DESKTOP_ENUMERATE
+    | DESKTOP_SWITCHDESKTOP
 )
 DEFAULT_DESKTOP = "Default"
 DEFAULT_ISOLATED_DESKTOP = "ZChatCamfrogTest"
@@ -67,6 +73,8 @@ def _windows_api():
     user32.GetClassNameW.restype = ctypes.c_int
     user32.CloseDesktop.argtypes = [ctypes.c_void_p]
     user32.CloseDesktop.restype = ctypes.c_int
+    user32.SwitchDesktop.argtypes = [ctypes.c_void_p]
+    user32.SwitchDesktop.restype = ctypes.c_int
     kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
     kernel32.CloseHandle.restype = ctypes.c_int
     return user32, kernel32
@@ -252,6 +260,45 @@ def inspect(desktop: str) -> dict:
     }
 
 
+def switch_for_test(desktop: str, seconds: int) -> dict:
+    """Make the named desktop interactive temporarily, then restore Default."""
+    user32, _kernel32 = _windows_api()
+    desktop = _validate_desktop_name(desktop)
+    if not 5 <= seconds <= 1800:
+        raise LauncherError("Test duration must be between 5 and 1800 seconds.")
+    target = user32.OpenDesktopW(desktop, 0, False, DESKTOP_SWITCHDESKTOP)
+    if not target:
+        raise LauncherError(
+            f"Desktop {desktop!r} is unavailable (error {ctypes.get_last_error()})."
+        )
+    default = user32.OpenDesktopW(DEFAULT_DESKTOP, 0, False, DESKTOP_SWITCHDESKTOP)
+    if not default:
+        user32.CloseDesktop(target)
+        raise LauncherError(
+            f"Default desktop is unavailable (error {ctypes.get_last_error()})."
+        )
+    try:
+        if not user32.SwitchDesktop(target):
+            raise LauncherError(
+                f"SwitchDesktop to test desktop failed (error {ctypes.get_last_error()})."
+            )
+        time.sleep(seconds)
+    finally:
+        restored = bool(user32.SwitchDesktop(default))
+        user32.CloseDesktop(default)
+        user32.CloseDesktop(target)
+    if not restored:
+        raise LauncherError(
+            f"Could not switch back to Default (error {ctypes.get_last_error()})."
+        )
+    return {
+        "desktop": desktop,
+        "interactive_seconds": seconds,
+        "returned_to_default": True,
+        "normal_operation_verified": False,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -261,12 +308,22 @@ def main(argv: list[str] | None = None) -> int:
     launch_parser.add_argument("args", nargs=argparse.REMAINDER, help="Arguments forwarded to Camfrog")
     inspect_parser = sub.add_parser("inspect", help="Count Camfrog windows on the named desktop")
     inspect_parser.add_argument("--desktop", default=DEFAULT_ISOLATED_DESKTOP)
+    switch_parser = sub.add_parser(
+        "switch-test", help="Interact with the test desktop temporarily, then return to Default"
+    )
+    switch_parser.add_argument("--desktop", default=DEFAULT_ISOLATED_DESKTOP)
+    switch_parser.add_argument("--seconds", type=int, default=180)
     args = parser.parse_args(argv)
     if sys.platform != "win32":
         print("BLOCKED: CreateDesktop can only be verified on Windows.", file=sys.stderr)
         return 2
     try:
-        result = launch(args.exe, args.desktop, args.args) if args.command == "launch" else inspect(args.desktop)
+        if args.command == "launch":
+            result = launch(args.exe, args.desktop, args.args)
+        elif args.command == "inspect":
+            result = inspect(args.desktop)
+        else:
+            result = switch_for_test(args.desktop, args.seconds)
         print(__import__("json").dumps(result, ensure_ascii=False))
         return 0
     except (LauncherError, OSError, ValueError) as exc:

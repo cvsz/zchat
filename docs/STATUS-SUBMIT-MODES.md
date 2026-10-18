@@ -26,14 +26,20 @@ python .\tools\launch_camfrog_isolated_desktop.py launch `
   --exe "C:\Users\USER\AppData\Local\Programs\Camfrog Video Chat\Camfrog Video Chat.exe"
 
 python .\tools\launch_camfrog_isolated_desktop.py inspect
+
+python .\tools\launch_camfrog_isolated_desktop.py switch-test --seconds 180
 ```
 
-The launcher does not switch desktops, sign in, send a status, or terminate the
+`launch` does not switch desktops, sign in, send a status, or terminate the
 client. A successful `launch` only proves that `CreateDesktopW` and
 `CreateProcessW` returned successfully. `inspect` can confirm that Camfrog
 windows exist on that desktop; it cannot establish successful login, normal
 client operation, status delivery, or that another account sees the change.
-Those checks require a real Windows session and a second Camfrog account.
+`switch-test` switches to the named desktop for 5–1800 seconds and then tries
+to return to `Default`, so use it when you are ready to view and manually test
+Camfrog there. The console will also be on the test desktop during the timer.
+It does not attach the ZChat status workers to that desktop. Login and provider
+delivery checks require a real Windows session and a second Camfrog account.
 
 A separate Win32 desktop isolates window activation from the visible desktop
 while it remains inactive. It is still in the same Windows session; it does not
