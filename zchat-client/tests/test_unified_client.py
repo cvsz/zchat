@@ -155,7 +155,10 @@ def test_shell_language_toggle_updates_nav_and_pages(root) -> None:
     shell.language.set("th")
     root.update()
     assert shell.nav_buttons["monitor"].cget("text") == SHELL_TEXT["th"]["nav_monitor"]
-    assert shell.nav_buttons["private_chat"].cget("text") == SHELL_TEXT["th"]["nav_private_chat"]
+    assert (
+        shell.nav_buttons["private_chat"].cget("text")
+        == SHELL_TEXT["th"]["nav_private_chat"]
+    )
     assert shell.monitor_page.refresh_button.cget("text") == PM_TEXT["th"]["refresh"]
     # Agent page shares the same language variable.
     assert shell.agent_page.language is shell.language

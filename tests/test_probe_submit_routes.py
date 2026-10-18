@@ -84,6 +84,8 @@ def test_submit_requires_shared_resource_lock_and_feature_emergency_guard(monkey
 
     assert result == 0
     assert events == [
+        ("lock_init", "camfrog_status_writer", 0.5),
+        ("lock_enter",),
         ("lock_init", "pid_1234", 3.0),
         ("lock_enter",),
         (
@@ -96,7 +98,34 @@ def test_submit_requires_shared_resource_lock_and_feature_emergency_guard(monkey
         ("submit",),
         ("stop_exit",),
         ("lock_exit",),
+        ("lock_exit",),
     ]
+
+
+def test_probe_uses_each_status_features_emergency_stop_scope(monkeypatch):
+    events = _runtime(monkeypatch)
+
+    for feature, resource_key in probe.FEATURE_RESOURCE_KEYS.items():
+        result = probe.main(
+            [
+                "--route",
+                "edit-char",
+                "--feature",
+                feature,
+                "--status",
+                "probe text",
+                "--yes",
+            ]
+        )
+        assert result == 0
+        assert (
+            "stop_init",
+            probe.EmergencyStopScope.FEATURE,
+            resource_key,
+            "Camfrog status submit probe",
+        ) in events
+
+    assert events.count(("submit",)) == len(probe.FEATURE_RESOURCE_KEYS)
 
 
 def test_probe_does_not_write_when_resource_lock_is_owned(monkeypatch, capsys):

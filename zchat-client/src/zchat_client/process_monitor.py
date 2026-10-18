@@ -59,7 +59,7 @@ PM_TEXT = {
 def _lang(get_language: Callable[[], str] | None) -> str:
     try:
         lang = get_language() if get_language else "en"
-    except Exception:
+    except Exception:  # noqa: BLE001 - a broken language callback must not break the UI.
         return "en"
     return lang if lang in PM_TEXT else "en"
 
@@ -118,14 +118,14 @@ class ProcessMonitorPage(ttk.Frame):
                 WindowsCamfrogWindowClassifier,
                 evaluate_client_runtime_state,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - this optional read-only panel fails closed.
             self._clear(self._text("status_error", detail=str(exc)[:120]))
             return
 
         try:
             discovery = WindowsCamfrogProcessDiscovery()
             identities = discovery.discover_processes()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - discovery failures are rendered in the panel.
             self._clear(self._text("status_error", detail=str(exc)[:120]))
             return
 
@@ -141,9 +141,11 @@ class ProcessMonitorPage(ttk.Frame):
             try:
                 windows = classifier.classify_process_windows(identity)
                 state = evaluate_client_runtime_state(identity, windows)
-            except Exception:
+            except Exception:  # noqa: BLE001, S112 - skip one bad process row and continue.
                 continue
-            state_text = self._text("state_running" if state.ui_visible else "state_no_ui")
+            state_text = self._text(
+                "state_running" if state.ui_visible else "state_no_ui"
+            )
             self.tree.insert(
                 "",
                 tk.END,

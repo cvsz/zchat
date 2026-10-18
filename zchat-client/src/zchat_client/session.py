@@ -45,7 +45,9 @@ class AgentChatWorker:
         if not 0.2 <= poll_interval <= 60:
             raise ValueError("Poll interval must be between 0.2 and 60 seconds.")
         if not 1 <= assignment_refresh_interval <= 300:
-            raise ValueError("Assignment refresh interval must be between 1 and 300 seconds.")
+            raise ValueError(
+                "Assignment refresh interval must be between 1 and 300 seconds."
+            )
         if not 0.01 <= retry_base <= retry_max <= 300:
             raise ValueError("Retry delays must be between 0.01 and 300 seconds.")
         self._server_url = server_url
@@ -56,7 +58,9 @@ class AgentChatWorker:
         self._retry_base = retry_base
         self._retry_max = retry_max
         self.events: queue.SimpleQueue[WorkerEvent] = queue.SimpleQueue()
-        self._commands: queue.SimpleQueue[tuple[str, str, str, str | None]] = queue.SimpleQueue()
+        self._commands: queue.SimpleQueue[tuple[str, str, str, str | None]] = (
+            queue.SimpleQueue()
+        )
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._accepted_lock = threading.Lock()
@@ -75,10 +79,14 @@ class AgentChatWorker:
         if self.is_alive:
             raise RuntimeError("Chat worker is already running.")
         if self._started:
-            raise RuntimeError("Chat worker sessions cannot be restarted; create a new session.")
+            raise RuntimeError(
+                "Chat worker sessions cannot be restarted; create a new session."
+            )
         self._started = True
         self._stop.clear()
-        self._thread = threading.Thread(target=self._run, name="zchat-agent-session", daemon=True)
+        self._thread = threading.Thread(
+            target=self._run, name="zchat-agent-session", daemon=True
+        )
         self._thread.start()
 
     def stop(self) -> None:
@@ -97,14 +105,20 @@ class AgentChatWorker:
         try:
             normalized_account_id = str(UUID(account_id))
         except (TypeError, ValueError, AttributeError) as exc:
-            raise ValueError("An assigned account is required to send a message.") from exc
+            raise ValueError(
+                "An assigned account is required to send a message."
+            ) from exc
         normalized = clean_chat_body(body)
         client_message_id = str(uuid4())
         with self._pending_send_lock:
             if self._pending_send_count >= MAX_PENDING_SENDS:
-                raise ValueError("The outgoing queue is full. Wait for pending messages to send.")
+                raise ValueError(
+                    "The outgoing queue is full. Wait for pending messages to send."
+                )
             self._pending_send_count += 1
-        self._commands.put(("send", client_message_id, normalized, normalized_account_id))
+        self._commands.put(
+            ("send", client_message_id, normalized, normalized_account_id)
+        )
         self._wake.set()
         return client_message_id
 
@@ -172,7 +186,9 @@ class AgentChatWorker:
         while not self._stop.is_set():
             while True:
                 try:
-                    kind, item_id, value, target_account_id = self._commands.get_nowait()
+                    kind, item_id, value, target_account_id = (
+                        self._commands.get_nowait()
+                    )
                 except queue.Empty:
                     break
                 if kind == "send":
@@ -237,7 +253,9 @@ class AgentChatWorker:
                         self._emit("send_canceled", message_id=message_id)
                     elif account_id is not None:
                         try:
-                            result = client.submit_chat_message(target_account_id, message_id, body)
+                            result = client.submit_chat_message(
+                                target_account_id, message_id, body
+                            )
                         except AgentTransportError as exc:
                             if exc.status_code == 401:
                                 self._emit("auth_required")
@@ -250,7 +268,9 @@ class AgentChatWorker:
                                     status_code=exc.status_code,
                                 )
                             else:
-                                pending_sends.appendleft((message_id, target_account_id, body))
+                                pending_sends.appendleft(
+                                    (message_id, target_account_id, body)
+                                )
                                 raise
                         else:
                             self._complete_send()
@@ -267,7 +287,9 @@ class AgentChatWorker:
                         message_id = str(message["id"])
                         if self._is_accepted(message_id):
                             try:
-                                client.acknowledge_chat_message(message_id, message["claim_token"])
+                                client.acknowledge_chat_message(
+                                    message_id, message["claim_token"]
+                                )
                             except AgentTransportError as exc:
                                 if exc.status_code == 401:
                                     self._emit("auth_required")
@@ -281,7 +303,9 @@ class AgentChatWorker:
                                         status_code=exc.status_code,
                                     )
                                 else:
-                                    pending_acks.appendleft((message_id, message["claim_token"]))
+                                    pending_acks.appendleft(
+                                        (message_id, message["claim_token"])
+                                    )
                                     queued_ack_ids.add(message_id)
                                     raise
                             else:
@@ -303,7 +327,9 @@ class AgentChatWorker:
                     self._emit("auth_required")
                     return
                 if self._is_terminal_client_error(exc):
-                    diagnostic = f"; Cloudflare Ray ID: {exc.cf_ray_id}" if exc.cf_ray_id else ""
+                    diagnostic = (
+                        f"; Cloudflare Ray ID: {exc.cf_ray_id}" if exc.cf_ray_id else ""
+                    )
                     self._emit(
                         "error",
                         message=(
@@ -315,7 +341,9 @@ class AgentChatWorker:
                     )
                     return
                 failures += 1
-                delay = min(self._retry_max, self._retry_base * (2 ** min(failures - 1, 10)))
+                delay = min(
+                    self._retry_max, self._retry_base * (2 ** min(failures - 1, 10))
+                )
                 self._emit("connection_error", message=str(exc), retry_seconds=delay)
             self._wake.wait(delay)
             self._wake.clear()

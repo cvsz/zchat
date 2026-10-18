@@ -59,6 +59,7 @@ def isolate_emergency_stop_store(tmp_path, monkeypatch):
 
 # ---------- StatusResourceLock Tests ----------
 
+
 def test_status_resource_lock_basic_acquire_and_release():
     lock = StatusResourceLock(resource_key="test_res_1", timeout_seconds=1.0)
     assert lock.acquire() is True
@@ -194,6 +195,7 @@ def test_windows_status_resource_lock_serializes_separate_processes():
 
 # ---------- StatusControlAdapter Non-Windows Fallback Tests ----------
 
+
 def test_status_control_adapter_linux_safety():
     adapter = StatusControlAdapter(combo_hwnd=123, edit_hwnd=456)
     # On non-Windows platforms, low-level Win32 calls safely return empty/False
@@ -292,9 +294,11 @@ def test_send_message_timeout_fails_closed_when_windows_times_out(monkeypatch):
 
 # ---------- BackgroundStatusExecutor Tests ----------
 
+
 def test_camfrog_adapter_does_not_claim_verified_strict_submit():
     adapter = StatusControlAdapter(combo_hwnd=1, edit_hwnd=2)
     assert adapter.supports_strict_background_submit() is False
+
 
 def _make_mock_resolver(current_applied="Initial Status", target_readback="New Status"):
     proc = ProcessIdentity(
@@ -339,7 +343,9 @@ def _mock_valid_target(executor):
     return executor
 
 
-def test_executor_successful_status_application():
+def test_executor_successful_status_application(monkeypatch):
+    # Keep this executor-path test independent of the real Windows desktop.
+    monkeypatch.setattr(cse, "_foreground_window_handle", lambda: 7001)
     new_status = "Available for chat"
     resolver, proc, main_win, mock_adapter = _make_mock_resolver(
         current_applied="Old Status",
@@ -486,14 +492,28 @@ def test_target_identity_validation_requires_process_window_and_controls(
     adapter.controls_are_current.assert_called_once_with(proc.pid, main_win.hwnd)
 
     adapter.controls_are_current.return_value = False
-    assert not BackgroundStatusExecutor._target_identity_is_current(proc, main_win, adapter)
+    assert not BackgroundStatusExecutor._target_identity_is_current(
+        proc, main_win, adapter
+    )
 
 
 @pytest.mark.parametrize(
     ("identity_results", "expected_state", "expected_error", "write", "submit"),
     [
-        ([True, False], StatusResultState.FAILED.value, "TARGET_IDENTITY_CHANGED", False, False),
-        ([True, True, False], StatusResultState.FAILED.value, "TARGET_IDENTITY_CHANGED", True, False),
+        (
+            [True, False],
+            StatusResultState.FAILED.value,
+            "TARGET_IDENTITY_CHANGED",
+            False,
+            False,
+        ),
+        (
+            [True, True, False],
+            StatusResultState.FAILED.value,
+            "TARGET_IDENTITY_CHANGED",
+            True,
+            False,
+        ),
         (
             [True, True, True, False],
             StatusResultState.UNKNOWN.value,
@@ -504,8 +524,10 @@ def test_target_identity_validation_requires_process_window_and_controls(
     ],
 )
 def test_executor_fails_closed_when_target_identity_changes(
-    identity_results, expected_state, expected_error, write, submit
+    identity_results, expected_state, expected_error, write, submit, monkeypatch
 ):
+    # Target identity behavior must not depend on whichever app is foreground.
+    monkeypatch.setattr(cse, "_foreground_window_handle", lambda: 7001)
     resolver, _, _, adapter = _make_mock_resolver(
         current_applied="Old Status", target_readback="New Status"
     )
@@ -521,11 +543,12 @@ def test_executor_fails_closed_when_target_identity_changes(
     assert adapter.post_background_enter.called is submit
 
 
-def test_executor_never_claims_text_write_as_applied():
+def test_executor_never_claims_text_write_as_applied(monkeypatch):
     """Text write or message dispatch alone does NOT prove Camfrog applied the status.
 
     If CComboBoxTS item 0 never updates to match, fail closed as COMMIT_NOT_VERIFIED.
     """
+    monkeypatch.setattr(cse, "_foreground_window_handle", lambda: 7001)
     new_status = "Never applied status"
     resolver, proc, main_win, mock_adapter = _make_mock_resolver(
         current_applied="Old Status",
@@ -585,7 +608,9 @@ def test_executor_write_text_failure():
 
 
 def test_executor_readback_mismatch():
-    resolver, proc, main_win, mock_adapter = _make_mock_resolver(target_readback="Mismatched Text")
+    resolver, proc, main_win, mock_adapter = _make_mock_resolver(
+        target_readback="Mismatched Text"
+    )
 
     executor = _mock_valid_target(BackgroundStatusExecutor(resolver=resolver))
     evidence = executor.execute_status_change("Expected Text", pid=5555)
@@ -594,8 +619,11 @@ def test_executor_readback_mismatch():
     assert evidence.error_code == "READBACK_MISMATCH"
 
 
-def test_executor_post_enter_failure():
-    resolver, proc, main_win, mock_adapter = _make_mock_resolver(target_readback="Valid")
+def test_executor_post_enter_failure(monkeypatch):
+    monkeypatch.setattr(cse, "_foreground_window_handle", lambda: 7001)
+    resolver, proc, main_win, mock_adapter = _make_mock_resolver(
+        target_readback="Valid"
+    )
     mock_adapter.post_background_enter.return_value = False
 
     executor = _mock_valid_target(BackgroundStatusExecutor(resolver=resolver))
@@ -606,6 +634,7 @@ def test_executor_post_enter_failure():
 
 
 # ---------- StatusScheduler Tests ----------
+
 
 def test_status_scheduler_record_and_history():
     scheduler = StatusScheduler()
@@ -638,6 +667,7 @@ def test_status_scheduler_stop_not_running():
 
 
 # ---------- Configuration Contract Validation Tests ----------
+
 
 def test_validate_status_config_defaults():
     valid, errors, normalized = validate_status_config({})

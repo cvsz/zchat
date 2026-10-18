@@ -1189,9 +1189,7 @@ class UnifiedClientWindow:
         )
         self.pages["monitor"] = self.monitor_page
         # The standalone manager configures its host's background directly.
-        self.private_host = tk.Frame(
-            self.container, background=PALETTE["background"]
-        )
+        self.private_host = tk.Frame(self.container, background=PALETTE["background"])
         self.pages["private_chat"] = self.private_host
         # The shared Status Changer applies a Tk frame background directly.
         self.status_host = tk.Frame(self.container, background=PALETTE["background"])

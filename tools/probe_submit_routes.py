@@ -67,6 +67,21 @@ ROUTES = (
     "parent-msg",
 )
 
+FEATURE_RESOURCE_KEYS = {
+    "status": "camfrog.status",
+    "status-random": "camfrog.status-random",
+    "status-marquee": "camfrog.status-marquee",
+    "status-changer": "camfrog.status-changer",
+}
+
+
+def _selected_feature(args) -> str:
+    """Return a validated feature name, preserving test/caller compatibility."""
+    feature = getattr(args, "feature", "status-changer")
+    if feature not in FEATURE_RESOURCE_KEYS:
+        raise ValueError("Unsupported status feature scope.")
+    return feature
+
 
 def _snapshot() -> dict[str, object]:
     """Capture desktop endpoint state without changing it or reading clipboard data."""
@@ -357,6 +372,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--route", choices=ROUTES, required=True)
     parser.add_argument(
+        "--feature",
+        choices=tuple(FEATURE_RESOURCE_KEYS),
+        default="status-changer",
+        help="Status feature scope whose emergency stop must permit the probe.",
+    )
+    parser.add_argument(
         "--status",
         required=True,
         help="Test status sent to Camfrog; it may remain externally applied and is never logged",
@@ -408,6 +429,7 @@ def _record_pre_submit_failure(
         "pid": process.pid,
         "window_role": window.role.value,
         "route": args.route,
+        "feature": _selected_feature(args),
         "status_length": len(args.status),
         "client_state": "SUBMIT_NOT_ACCEPTED",
         "failure_code": code,
@@ -473,7 +495,8 @@ def _submit_and_record(args, process, window, adapter) -> int:
         return 4 if restored else 8
 
     stop_registry = EmergencyStopRegistry()
-    if stop_registry.is_stopped(EmergencyStopScope.FEATURE, "camfrog.status-changer"):
+    feature_resource_key = FEATURE_RESOURCE_KEYS[_selected_feature(args)]
+    if stop_registry.is_stopped(EmergencyStopScope.FEATURE, feature_resource_key):
         restored = _restore_prior_edit_text(prior_edit_text, process, window, adapter)
         events = stop_monitor(minimum_duration=0.0)
         failure_code = (
@@ -581,6 +604,7 @@ def _submit_and_record(args, process, window, adapter) -> int:
             "pid": process.pid,
             "window_role": window.role.value,
             "route": args.route,
+            "feature": _selected_feature(args),
             "status_length": len(args.status),
             "client_state": "EFFECT_UNKNOWN",
             "failure_code": "SUBMIT_ROUTE_EXCEPTION",
@@ -607,6 +631,7 @@ def _submit_and_record(args, process, window, adapter) -> int:
         "pid": process.pid,
         "window_role": window.role.value,
         "route": args.route,
+        "feature": _selected_feature(args),
         "status_length": len(args.status),
         "route_message_dispatched": bool(sent),
         "client_state": (
@@ -700,10 +725,14 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         with (
+            # Match status-worker lock order: lifecycle writer before target PID.
+            StatusResourceLock(
+                resource_key="camfrog_status_writer", timeout_seconds=0.5
+            ),
             StatusResourceLock(resource_key=f"pid_{process.pid}", timeout_seconds=3.0),
             EmergencyStopGuard(
                 EmergencyStopScope.FEATURE,
-                resource_key="camfrog.status-changer",
+                resource_key=FEATURE_RESOURCE_KEYS[_selected_feature(args)],
                 description="Camfrog status submit probe",
             ),
         ):
@@ -717,7 +746,7 @@ def main(argv: list[str] | None = None) -> int:
                 return 3
             return _submit_and_record(args, process, window, adapter)
     except TimeoutError:
-        print("Status resource is already owned by another writer.", file=sys.stderr)
+        print("Status writer or target resource is already owned.", file=sys.stderr)
         return 6
     except StopIteration:
         print("Emergency stop is active; probe was refused.", file=sys.stderr)
