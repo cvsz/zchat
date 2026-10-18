@@ -138,8 +138,10 @@ def test_non_global_route_matrix_covers_edit_send_without_keyboard_injection():
         "combo-post",
         "combo-send",
         "edit-char",
+        "edit-char-post",
         "edit-post",
         "edit-send",
+        "engine-post",
         "parent-msg",
     )
 
@@ -159,6 +161,54 @@ def test_edit_send_uses_bounded_messages_on_edit_hwnd(monkeypatch):
         (2345, probe.WM_KEYUP, probe.VK_RETURN),
     ]
     assert all(message[4] == probe.MESSAGE_TIMEOUT_MS for message in messages)
+
+
+def test_post_enter_targets_only_the_requested_window(monkeypatch):
+    messages = []
+
+    class User32:
+        @staticmethod
+        def PostMessageW(hwnd, message, wparam, lparam):
+            messages.append((hwnd, message, wparam, lparam))
+            return 1
+
+    monkeypatch.setattr(
+        probe.ctypes,
+        "windll",
+        SimpleNamespace(user32=User32()),
+        raising=False,
+    )
+
+    assert probe._post_enter(3456) is True
+    assert messages == [
+        (3456, probe.WM_KEYDOWN, probe.VK_RETURN, probe._enter_lparam()),
+        (
+            3456,
+            probe.WM_KEYUP,
+            probe.VK_RETURN,
+            probe._enter_lparam(key_up=True),
+        ),
+    ]
+
+
+def test_edit_char_post_targets_only_the_status_edit(monkeypatch):
+    calls = []
+
+    class User32:
+        @staticmethod
+        def PostMessageW(hwnd, message, wparam, lparam):
+            calls.append((hwnd, message, wparam, lparam))
+            return 1
+
+    monkeypatch.setattr(
+        probe.ctypes,
+        "windll",
+        SimpleNamespace(user32=User32()),
+        raising=False,
+    )
+
+    assert probe._post_edit_char(2345) is True
+    assert calls == [(2345, probe.WM_CHAR, 0x0D, 0)]
 
 
 def test_probe_logs_only_sanitized_client_evidence_and_restores_edit_text(
@@ -197,7 +247,7 @@ def test_probe_logs_only_sanitized_client_evidence_and_restores_edit_text(
     process = SimpleNamespace(pid=1234, version="8.5.0.51219")
     window = SimpleNamespace(hwnd=4567, role=SimpleNamespace(value="main_directory"))
     args = SimpleNamespace(
-        route="combo-post",
+        route="engine-post",
         status="sensitive test status",
         wparam=None,
         log=tmp_path / "probe.jsonl",
@@ -275,7 +325,7 @@ def test_foreground_monitor_covers_staging_submit_and_draft_restore(
     process = SimpleNamespace(pid=1234, version="8.5.0.51219")
     window = SimpleNamespace(hwnd=4567, role=SimpleNamespace(value="main_directory"))
     args = SimpleNamespace(
-        route="combo-post",
+        route="engine-post",
         status="test status",
         wparam=None,
         log=tmp_path / "probe.jsonl",
@@ -378,7 +428,7 @@ def test_route_exception_is_logged_as_unknown_and_restores_edit_text(
     process = SimpleNamespace(pid=1234, version="8.5.0.51219")
     window = SimpleNamespace(hwnd=4567, role=SimpleNamespace(value="main_directory"))
     args = SimpleNamespace(
-        route="combo-post",
+        route="engine-post",
         status="private test text",
         wparam=None,
         log=tmp_path / "probe.jsonl",

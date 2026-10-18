@@ -60,8 +60,10 @@ ROUTES = (
     "combo-post",
     "combo-send",
     "edit-char",
+    "edit-char-post",
     "edit-post",
     "edit-send",
+    "engine-post",
     "parent-msg",
 )
 
@@ -289,6 +291,28 @@ def _send_enter(hwnd: int) -> bool:
     return up is not None
 
 
+def _post_enter(hwnd: int) -> bool:
+    """Post the same bounded VK_RETURN down/up pair used by the GUI path."""
+    try:
+        user32 = ctypes.windll.user32
+        return bool(
+            user32.PostMessageW(hwnd, WM_KEYDOWN, VK_RETURN, _enter_lparam())
+            and user32.PostMessageW(
+                hwnd, WM_KEYUP, VK_RETURN, _enter_lparam(key_up=True)
+            )
+        )
+    except Exception:  # noqa: BLE001 - platform and message errors fail closed.
+        return False
+
+
+def _post_edit_char(hwnd: int) -> bool:
+    """Post Enter as WM_CHAR to the verified Edit without global input."""
+    try:
+        return bool(ctypes.windll.user32.PostMessageW(hwnd, WM_CHAR, 0x0D, 0))
+    except Exception:  # noqa: BLE001 - platform and message errors are fail-closed.
+        return False
+
+
 def _send_parent_command(
     main_hwnd: int, combo_hwnd: int, edit_hwnd: int, wparam: int
 ) -> bool:
@@ -510,7 +534,7 @@ def _submit_and_record(args, process, window, adapter) -> int:
 
     try:
         if args.route == "combo-post":
-            sent = adapter.post_background_enter()
+            sent = _post_enter(adapter.combo_hwnd)
         elif args.route == "edit-char":
             sent = (
                 _send_message_timeout(
@@ -518,20 +542,16 @@ def _submit_and_record(args, process, window, adapter) -> int:
                 )
                 is not None
             )
+        elif args.route == "edit-char-post":
+            sent = _post_edit_char(adapter.edit_hwnd)
         elif args.route == "edit-post":
-            user32 = ctypes.windll.user32
-            sent = bool(
-                user32.PostMessageW(
-                    adapter.edit_hwnd, WM_KEYDOWN, VK_RETURN, _enter_lparam()
-                )
-                and user32.PostMessageW(
-                    adapter.edit_hwnd, WM_KEYUP, VK_RETURN, _enter_lparam(key_up=True)
-                )
-            )
+            sent = _post_enter(adapter.edit_hwnd)
         elif args.route == "edit-send":
             sent = _send_enter(adapter.edit_hwnd)
         elif args.route == "combo-send":
             sent = _send_enter(adapter.combo_hwnd)
+        elif args.route == "engine-post":
+            sent = adapter.post_background_enter()
         else:
             sent = _send_parent_command(
                 window.hwnd, adapter.combo_hwnd, adapter.edit_hwnd, args.wparam
