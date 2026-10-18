@@ -93,9 +93,12 @@ alive. The optional upstream checkout is pinned by
 `full-build.bat` calls `build.bat`, which runs `pytest windows_tests`; the GitHub
 Windows build job therefore collects these tests. The local Linux run verifies
 only process-level behavior. GUI/HWND cases are opt-in through
-`ZCHAT_RUN_WINDOWS_GUI_TESTS=1`; the GitHub Windows job sets it on its isolated
-runner, while local builds leave it unset to avoid opening fixture windows in
-the operator's active desktop.
+`ZCHAT_RUN_WINDOWS_GUI_TESTS=1`; ordinary CI and local builds leave it unset.
+The hosted Windows runner did not expose the fixture's top-level HWND to
+`EnumWindows`, despite the Tk process reporting ready. The hosted job therefore
+leaves these interactive HWND tests disabled; it still runs the process-
+identity/ownership cases. Enable the HWND cases only in a Windows session where
+fixture windows are visible and enumerable.
 
 Do **not** add `injectlib` as an application dependency or status-submit fallback
 on this evidence. Its documented backends do not match the recorded WTL client,
