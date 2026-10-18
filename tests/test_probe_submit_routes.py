@@ -24,7 +24,54 @@ class FakeForegroundEventMonitor:
             "baseline_foreground_event_count": 0,
             "other_foreground_event_count": 0,
             "unknown_foreground_event_count": 0,
+            "foreground_events": [],
+            "foreground_event_trace_truncated": False,
         }
+
+
+def test_foreground_monitor_records_bounded_sanitized_event_timeline(monkeypatch):
+    monitor = probe.ForegroundEventMonitor(target_pid=123, baseline_hwnd=456)
+    monitor._started_at = 10.0
+    clock = iter((10.010, 10.020, 10.030, 10.040, 10.050))
+    monkeypatch.setattr(probe.time, "monotonic", lambda: next(clock))
+
+    monitor._record_event(111, 123)
+    monitor._record_event(456, 789)
+    monitor._record_event(222, 789)
+    monitor._record_event(None, None)
+
+    result = monitor.stop(minimum_duration=0)
+    events = result["foreground_events"]
+    assert result["foreground_event_count"] == 4
+    assert result["target_foreground_event_count"] == 1
+    assert result["baseline_foreground_event_count"] == 1
+    assert result["other_foreground_event_count"] == 1
+    assert result["unknown_foreground_event_count"] == 1
+    assert [event["category"] for event in events] == [
+        "target",
+        "baseline",
+        "other",
+        "unknown",
+    ]
+    assert [event["offset_ms"] for event in events] == [10.0, 20.0, 30.0, 40.0]
+    assert events[0]["hwnd"] == 111 and events[0]["pid"] == 123
+    assert events[-1]["hwnd"] is None and events[-1]["pid"] is None
+    assert result["foreground_event_trace_truncated"] is False
+    assert all("title" not in event and "text" not in event for event in events)
+
+
+def test_foreground_monitor_caps_event_timeline_but_keeps_total_count(monkeypatch):
+    monitor = probe.ForegroundEventMonitor(target_pid=123, baseline_hwnd=456)
+    monitor._started_at = 1.0
+    monkeypatch.setattr(probe.time, "monotonic", lambda: 2.0)
+
+    for index in range(probe.MAX_FOREGROUND_EVENT_TRACE + 1):
+        monitor._record_event(1000 + index, 789)
+
+    assert monitor._counts["foreground_event_count"] == (
+        probe.MAX_FOREGROUND_EVENT_TRACE + 1
+    )
+    assert len(monitor._events) == probe.MAX_FOREGROUND_EVENT_TRACE
 
 
 def _runtime(monkeypatch, *, lock_error=None, stop_error=None):

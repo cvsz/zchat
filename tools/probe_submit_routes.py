@@ -48,6 +48,7 @@ EN_CHANGE = 0x0300
 CBN_SELCHANGE = 0xFFFF
 CBN_SELENDOK = 0xFFF7
 MESSAGE_TIMEOUT_MS = 1000
+MAX_FOREGROUND_EVENT_TRACE = 64
 EVENT_SYSTEM_FOREGROUND = 0x0003
 WINEVENT_OUTOFCONTEXT = 0x0000
 WM_QUIT = 0x0012
@@ -116,9 +117,11 @@ class ForegroundEventMonitor:
             "other_foreground_event_count": 0,
             "unknown_foreground_event_count": 0,
         }
+        self._events: list[dict[str, object]] = []
         self._started_at: float | None = None
 
     def start(self) -> None:
+        self._started_at = time.monotonic()
         self._thread = threading.Thread(
             target=self._run, name="zchat-foreground-event-monitor", daemon=True
         )
@@ -128,7 +131,6 @@ class ForegroundEventMonitor:
             raise RuntimeError("foreground event monitor did not initialize")
         if self._error_type or not self._hook_installed:
             raise RuntimeError("foreground event monitor initialization failed")
-        self._started_at = time.monotonic()
 
     def _run(self) -> None:
         try:
@@ -165,17 +167,7 @@ class ForegroundEventMonitor:
                 process_id = wintypes.DWORD()
                 if hwnd:
                     user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
-                with self._lock:
-                    self._counts["foreground_event_count"] += 1
-                    if not hwnd or not process_id.value:
-                        key = "unknown_foreground_event_count"
-                    elif process_id.value == self.target_pid:
-                        key = "target_foreground_event_count"
-                    elif hwnd == self.baseline_hwnd:
-                        key = "baseline_foreground_event_count"
-                    else:
-                        key = "other_foreground_event_count"
-                    self._counts[key] += 1
+                self._record_event(hwnd, process_id.value)
             except Exception:  # noqa: BLE001 - observer errors must not escape a WinEvent callback.
                 with self._lock:
                     self._error_type = "ForegroundCallbackError"
@@ -245,6 +237,41 @@ class ForegroundEventMonitor:
                     self._error_type = self._error_type or "UnhookWinEventError"
             self._ready.set()
 
+    def _record_event(self, hwnd: int | None, process_id: int | None) -> None:
+        """Record sanitized foreground metadata without window titles or contents."""
+        hwnd_value = int(hwnd or 0)
+        pid_value = int(process_id or 0)
+        if not hwnd_value or not pid_value:
+            category = "unknown"
+        elif pid_value == self.target_pid:
+            category = "target"
+        elif hwnd_value == self.baseline_hwnd:
+            category = "baseline"
+        else:
+            category = "other"
+
+        observed_at = time.monotonic()
+        started_at = self._started_at
+        with self._lock:
+            self._counts["foreground_event_count"] += 1
+            self._counts[f"{category}_foreground_event_count"] += 1
+            if len(self._events) < MAX_FOREGROUND_EVENT_TRACE:
+                self._events.append(
+                    {
+                        "offset_ms": round(
+                            max(
+                                0.0,
+                                observed_at
+                                - (started_at if started_at is not None else observed_at),
+                            ) * 1000,
+                            1,
+                        ),
+                        "hwnd": hwnd_value or None,
+                        "pid": pid_value or None,
+                        "category": category,
+                    }
+                )
+
     def stop(self, *, minimum_duration: float = 2.0) -> dict[str, object]:
         if self._started_at is not None:
             remaining = minimum_duration - (time.monotonic() - self._started_at)
@@ -255,8 +282,13 @@ class ForegroundEventMonitor:
             self._thread.join(timeout=3.0)
         with self._lock:
             counts = dict(self._counts)
+            events = list(self._events)
         counts.update(
             {
+                "foreground_events": events,
+                "foreground_event_trace_truncated": (
+                    counts["foreground_event_count"] > len(events)
+                ),
                 "foreground_monitor": "win_event_hook",
                 "foreground_monitor_stopped": bool(
                     self._thread and not self._thread.is_alive()
