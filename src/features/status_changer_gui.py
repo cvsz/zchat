@@ -82,6 +82,12 @@ BASE = (
 
 APP_PROFILE = "status"
 APP_PROFILES = {"full", "room", "im_reply", "status", "music"}
+UNVERIFIED_STATUS_TEST_ENV = "ZCHAT_STATUS_TEST_UNVERIFIED_SUBMIT"
+
+
+def _unverified_status_test_submit_enabled():
+    """Enable the opt-in local test route without changing strict capability claims."""
+    return os.environ.get(UNVERIFIED_STATUS_TEST_ENV, "").strip() == "1"
 
 # Standalone executables can pin runtime state to their own directory. Status
 # workers use ZCFATO_DATA_DIR, which takes precedence over the GUI app directory.
@@ -645,8 +651,14 @@ def apply_app_profile(cfg):
     elif APP_PROFILE == "status":
         result["autoreply"]["enabled"] = False
         result["autoreply_im"]["enabled"] = False
-        # This standalone worker must never inherit legacy foreground-input mode.
-        result.setdefault("status", {})["execution_mode"] = "strict_background"
+        status = result.setdefault("status", {})
+        if _unverified_status_test_submit_enabled():
+            # Keep the explicit local test route consistent across parent and worker.
+            status["execution_mode"] = "interactive"
+            status["background_enter_target"] = "edit"
+        else:
+            # Normal standalone workers remain fail-closed.
+            status["execution_mode"] = "strict_background"
     elif APP_PROFILE == "music":
         result["status"]["enabled"] = False
         result["autoreply_im"]["enabled"] = False
@@ -1459,8 +1471,10 @@ def commit(
     # If Camfrog is not foreground, write to its verified Edit and submit via
     # its verified CComboBoxTS parent. Explicit combo mode uses the same path
     # even while Camfrog is foreground (useful on builds that beep on Edit Enter).
+    unverified_test_submit = _unverified_status_test_submit_enabled()
     background_submit = apply_btn is None and (
-        background_enter_target == "combo"
+        (unverified_test_submit and background_if_not_foreground)
+        or background_enter_target == "combo"
         or not require_fg
         or (background_if_not_foreground and not window_is_foreground)
     )
@@ -1469,7 +1483,7 @@ def commit(
     # posting Enter directly to the child Edit control triggers a Windows ding
     # sound on Camfrog builds that don't handle Enter in the Edit — regardless
     # of whether Camfrog is currently the foreground window.
-    if background_submit and submit_target == "edit":
+    if background_submit and submit_target == "edit" and not unverified_test_submit:
         submit_target = "combo"
     needs_foreground = require_fg and apply_btn is None and not background_submit
     prev = foreground if restore and needs_foreground else 0
@@ -1482,6 +1496,8 @@ def commit(
             log.error(t("not_fg"))
             return False
     if not write_text(ctrl, text):
+        if unverified_test_submit:
+            log.error("STATUS_SUBMIT=FAILED stage=edit_write")
         log.error(t("mismatch"))
         return False
 
@@ -1499,7 +1515,20 @@ def commit(
             # trigger a Windows ding on every marquee frame on some builds.
             ctrl.type_keys("{ENTER}")
         else:
-            _background_enter(ctrl, submit_target)
+            try:
+                _background_enter(ctrl, submit_target)
+            except Exception as exc:
+                if unverified_test_submit:
+                    log.error(
+                        "STATUS_SUBMIT=DISPATCH_FAILED route=edit-post error=%s",
+                        type(exc).__name__,
+                    )
+                raise
+            if unverified_test_submit:
+                log.warning(
+                    "STATUS_SUBMIT=DISPATCHED_UNVERIFIED route=edit-post; "
+                    "verify in another Camfrog account's friend list"
+                )
     if (
         prev
         and prev != win.handle
@@ -2929,6 +2958,11 @@ class Runner:
         except Exception as e:
             log.warning(f"Initial resolve failed ({e}); entering retry loop.")
         log.info(t("running", dry=self.dry, stop=self.stop_file.name))
+        log.info(
+            "STATUS_WORKER_MODE execution_mode=%s unverified_test_mode=%s",
+            self.cfg["status"].get("execution_mode", "interactive"),
+            _unverified_status_test_submit_enabled(),
+        )
         self.im_summary()
         fails = 0
         try:
@@ -2998,6 +3032,12 @@ class Runner:
 def _strict_status_start_blocked(cfg, emit=print):
     """Fail closed before a status worker starts when live submit is unverified."""
     if cfg.get("dry_run", True) or not cfg.get("status", {}).get("enabled", True):
+        return False
+    if _unverified_status_test_submit_enabled():
+        emit(
+            "UNVERIFIED TEST MODE: status submissions will be dispatched through "
+            "edit-post; verify the result in another Camfrog account's friend list."
+        )
         return False
     try:
         from camfrog_status_engine import strict_background_submit_supported
@@ -3881,7 +3921,11 @@ def cli_main(argv=None, force_strict_background=False):
         return cmd_init(cfg_path, a.force)
     try:
         cfg = apply_app_profile(load_cfg(cfg_path))
-        if force_strict_background and APP_PROFILE == "status":
+        if (
+            force_strict_background
+            and APP_PROFILE == "status"
+            and not _unverified_status_test_submit_enabled()
+        ):
             cfg.setdefault("status", {})["execution_mode"] = "strict_background"
     except Exception as e:
         print(t("cannot_load", e=e))
@@ -4584,9 +4628,13 @@ def runtime_config(config, mode="random"):
         raise ValueError("mode must be random or marquee")
     runtime = copy.deepcopy(config)
     status = runtime.setdefault("status", {})
-    # This executable owns a hidden background worker. Never carry the legacy
-    # interactive mode into that process: it can focus Camfrog and inject keys.
-    status["execution_mode"] = "strict_background"
+    # Normal workers fail closed in strict mode. An explicit local test flag
+    # opts into a targeted Edit-message route that remains externally unverified.
+    if _unverified_status_test_submit_enabled():
+        status["execution_mode"] = "interactive"
+        status["background_enter_target"] = "edit"
+    else:
+        status["execution_mode"] = "strict_background"
     status["random"] = mode == "random"
     status.setdefault("marquee", {})["enabled"] = mode == "marquee"
     if mode == "marquee":
@@ -5383,7 +5431,10 @@ def build_app():
             self.root.configure(background=STATUS_CHANGER_THEME["background"])
             self.app_name = "Status Changer"
             if not self.embedded:
-                self.root.title(f"ZChat {self.app_name}")
+                title = f"ZChat {self.app_name}"
+                if _unverified_status_test_submit_enabled():
+                    title += " [UNVERIFIED TEST MODE]"
+                self.root.title(title)
                 self.root.geometry("520x700")
                 self.root.minsize(480, 640)
                 self.root.resizable(True, True)
@@ -5479,6 +5530,12 @@ def build_app():
             self._build()
             self.clean_logs_at_noon()
             self._log_activity("Application opened", "app")
+            if _unverified_status_test_submit_enabled():
+                self._log_activity(
+                    "UNVERIFIED TEST MODE enabled: edit-post dispatch only; "
+                    "friend-list PASS/FAIL must be recorded separately",
+                    "app",
+                )
             self.clipboard_controller = ClipboardController(
                 self.root,
                 translate=self._translate_clipboard,

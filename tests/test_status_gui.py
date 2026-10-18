@@ -81,6 +81,75 @@ def test_runtime_config_enforces_strict_background_for_each_worker_mode(mode):
         assert runtime["status"]["marquee"]["enabled"] is (mode == "marquee")
 
 
+def test_explicit_unverified_test_mode_uses_edit_post_without_global_input(
+    monkeypatch, capsys
+):
+    monkeypatch.setenv(combined_gui.UNVERIFIED_STATUS_TEST_ENV, "1")
+    cfg = {
+        "status": {"execution_mode": "strict_background"},
+        "autoreply": {},
+        "autoreply_im": {},
+        "stats": {},
+        "log": {},
+        "safety": {},
+    }
+    profiled = combined_gui.apply_app_profile(cfg)
+    assert profiled["status"]["execution_mode"] == "interactive"
+    assert profiled["status"]["background_enter_target"] == "edit"
+    runtime = combined_gui.runtime_config(cfg, "random")
+    assert runtime["status"]["execution_mode"] == "interactive"
+    assert runtime["status"]["background_enter_target"] == "edit"
+    assert not combined_gui._strict_status_start_blocked(
+        {"dry_run": False, "status": {"enabled": True}}
+    )
+    assert "UNVERIFIED TEST MODE" in capsys.readouterr().out
+
+    events = []
+    win = SimpleNamespace(handle=77)
+    ctrl = SimpleNamespace(
+        handle=88,
+        set_focus=lambda: events.append("focus"),
+        type_keys=lambda _keys: events.append("global-keyboard"),
+    )
+    monkeypatch.setattr(
+        combined_gui.ctypes,
+        "windll",
+        SimpleNamespace(user32=SimpleNamespace(GetForegroundWindow=lambda: 55)),
+        raising=False,
+    )
+    monkeypatch.setattr(combined_gui, "is_web", lambda _ctrl: False)
+    monkeypatch.setattr(combined_gui, "write_text", lambda *_args: True)
+    monkeypatch.setattr(
+        combined_gui,
+        "_background_enter",
+        lambda _ctrl, target: events.append(("post-message", target)),
+    )
+
+    assert combined_gui.commit(
+        win,
+        ctrl,
+        "test status",
+        False,
+        require_fg=True,
+        background_if_not_foreground=True,
+        execution_mode="interactive",
+    )
+    assert events == [("post-message", "edit")]
+
+
+def test_status_profile_remains_strict_without_explicit_test_opt_in(monkeypatch):
+    monkeypatch.delenv(combined_gui.UNVERIFIED_STATUS_TEST_ENV, raising=False)
+    cfg = {
+        "status": {"execution_mode": "interactive"},
+        "autoreply": {},
+        "autoreply_im": {},
+    }
+
+    profiled = combined_gui.apply_app_profile(cfg)
+
+    assert profiled["status"]["execution_mode"] == "strict_background"
+
+
 def test_status_changer_worker_entry_forces_strict_mode(monkeypatch):
     calls = []
     monkeypatch.setattr(
