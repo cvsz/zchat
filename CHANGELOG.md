@@ -7,6 +7,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+- Interactive status, marquee and chat sends no longer take over the mouse and keyboard while the user is working: `UserActivityGuard` defers input injection until the desktop has been idle (2 s, `ZCHAT_USER_IDLE_MS`) and skips the send after 120 s of continuous activity. Background modes are unaffected.
+
 ### Added
 - Added an opt-in `best_effort_background` status mode to Status Changer, Random Status, and Marquee Status. It uses `combo-post`, warns that Camfrog may activate or flash, and keeps provider outcomes explicitly unverified; see `docs/STATUS-SUBMIT-MODES.md`.
 - Added a Windows-only CreateDesktop Camfrog launcher for manual isolation testing. Native Camfrog behavior remains unverified until tested in a Windows session.

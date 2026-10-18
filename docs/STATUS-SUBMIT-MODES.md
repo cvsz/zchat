@@ -13,6 +13,22 @@ mode is used by its worker. To stop a worker, use its Stop control. Check the
 sanitized worker log and verify the resulting status through another Camfrog
 account's friend list. Local control readback is not provider verification.
 
+## Yielding the desktop to the user
+
+Modes that must inject real input (`interactive`: focus, mouse click, real Enter;
+the web chat box; the Apply button fallback) are gated by `UserActivityGuard`.
+Before each send it waits until the user has been idle for 2 seconds
+(`GetLastInputInfo`; override with `ZCHAT_USER_IDLE_MS`, `0` disables). Input
+produced by the app's own injection is not counted as user activity. If the user
+stays active for 120 seconds the send is skipped with a `Deferred` log line rather
+than taking over the mouse or keyboard. For a marquee this means frames pause
+while you work and resume when you stop.
+
+`strict_background` and `best_effort_background` never use global input and are
+not gated. Evidence: guard logic is unit-tested with injected clocks
+(`VERIFIED`); behavior against a live Camfrog on Windows is `UNVERIFIED`.
+For fully hands-free use pick `best_effort_background`.
+
 ## Separate desktop launcher
 
 `tools/launch_camfrog_isolated_desktop.py` is a Windows-only manual test tool.

@@ -1245,7 +1245,133 @@ def _background_enter(ctrl, target="edit"):
         raise RuntimeError("Could not post Enter key-up to status control")
 
 
-def commit(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply_btn=None,
+# --- user-activity guard (kept identical in every self-contained module) ---
+class UserActivityGuard:
+    """Yield the desktop to the human before any command that injects global input.
+
+    Commands that move the mouse, steal focus or send real keystrokes must not run
+    while the user is working. Wait (bounded) until the user has been idle for
+    `idle_ms`; input produced by our own injection is not counted as user activity.
+    Windows only: elsewhere `user_idle_ms()` is None and the guard never blocks.
+    """
+
+    def __init__(self, idle_ms=None, poll=0.25, max_wait=120.0, tick=None,
+                 last_input=None, sleep=None, clock=None):
+        if idle_ms is None:
+            try:
+                idle_ms = int(os.environ.get("ZCHAT_USER_IDLE_MS", "2000"))
+            except ValueError:
+                idle_ms = 2000
+        self.idle_ms = max(0, idle_ms)
+        self.poll = poll
+        self.max_wait = max_wait
+        self._tick = tick or self._win_tick
+        self._last_input = last_input or self._win_last_input
+        self._sleep = sleep or time.sleep
+        self._clock = clock or time.monotonic
+        self._own = None  # (start_tick, end_tick) of our latest injection
+        self._user_tick = None
+
+    @staticmethod
+    def _win_tick():
+        return ctypes.windll.kernel32.GetTickCount() & 0xFFFFFFFF
+
+    @staticmethod
+    def _win_last_input():
+        if os.name != "nt":
+            return None
+
+        class LASTINPUTINFO(ctypes.Structure):
+            _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+
+        info = LASTINPUTINFO()
+        info.cbSize = ctypes.sizeof(info)
+        if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+            return None
+        return info.dwTime
+
+    def mark_own(self, start, end, slack=400):
+        self._own = (start, (end + slack) & 0xFFFFFFFF)
+
+    def _is_own(self, last):
+        if not self._own:
+            return False
+        start, end = self._own
+        return ((last - start) & 0xFFFFFFFF) <= ((end - start) & 0xFFFFFFFF)
+
+    def user_idle_ms(self):
+        """Milliseconds since the last *user* input, or None when unknown."""
+        try:
+            last = self._last_input()
+            if last is None:
+                return None
+            if not self._is_own(last):
+                self._user_tick = last
+            if self._user_tick is None:
+                return 10 ** 9  # only our own input seen so far
+            return (self._tick() - self._user_tick) & 0xFFFFFFFF
+        except Exception:
+            return None
+
+    def wait_until_idle(self):
+        """True once the user is idle (or activity cannot be measured); False on timeout."""
+        if self.idle_ms <= 0:
+            return True
+        deadline = self._clock() + self.max_wait
+        noted = False
+        while True:
+            idle = self.user_idle_ms()
+            if idle is None or idle >= self.idle_ms:
+                return True
+            if self._clock() >= deadline:
+                return False
+            if not noted:
+                log.info("User is active; deferring input injection until the desktop is idle")
+                noted = True
+            self._sleep(self.poll)
+
+    def run(self, func, *args, **kwargs):
+        start = self._tick() if os.name == "nt" else 0
+        try:
+            return func(*args, **kwargs)
+        finally:
+            if os.name == "nt":
+                self.mark_own(start, self._tick())
+
+
+USER_GUARD = UserActivityGuard()
+_BACKGROUND_MODES = ("strict_background", "best_effort_background")
+
+
+def _injects_global_input(bound) -> bool:
+    if bound.get("dry"):
+        return False
+    if bound.get("execution_mode", "interactive") in _BACKGROUND_MODES:
+        return False
+    if is_web(bound.get("ctrl")):
+        return True
+    if bound.get("apply_btn") is not None:
+        return True
+    if bound.get("background_enter_target") == "combo" or not bound.get("require_fg", True):
+        return False
+    return True
+
+
+def commit(*args, **kwargs) -> bool:
+    """Gate `_commit_impl` so input-injecting sends never run while the user is active."""
+    import inspect
+    bound = inspect.signature(_commit_impl).bind(*args, **kwargs)
+    bound.apply_defaults()
+    if not _injects_global_input(bound.arguments):
+        return _commit_impl(*args, **kwargs)
+    if not USER_GUARD.wait_until_idle():
+        log.error("Deferred: user stayed active; not taking over mouse/keyboard")
+        return False
+    return USER_GUARD.run(_commit_impl, *args, **kwargs)
+# --- end user-activity guard ---
+
+
+def _commit_impl(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply_btn=None,
            restore: bool = False, background_enter_target: str = "edit") -> bool:
     """Write text, verify read-back, confirm Camfrog is foreground, send, restore focus."""
     if dry:
