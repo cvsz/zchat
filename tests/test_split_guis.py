@@ -240,6 +240,212 @@ def test_profiles_and_modes_are_pinned():
 
 
 @pytest.mark.parametrize("name", ["status_random_gui", "status_marquee_gui"])
+@pytest.mark.parametrize("entry", ["cmd_start", "cmd_start_worker"])
+def test_split_status_start_waits_for_worker_pid_registration(
+    name, entry, monkeypatch, tmp_path
+):
+    mod = load(name)
+    monkeypatch.setattr(mod, "BASE", tmp_path)
+    monkeypatch.setattr(mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(mod, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(mod, "_strict_status_start_blocked", lambda *_a, **_k: False)
+    monkeypatch.setattr(mod, "child_env", lambda: {})
+    monkeypatch.setattr(mod, "child_cmd", lambda _args: ["status-worker.exe"])
+    monkeypatch.setattr(mod, "worker_cmd", lambda _args: ["status-worker.exe", "--worker"])
+    states = iter([None, None, 321, 321])
+    monkeypatch.setattr(mod, "running_pid", lambda _cfg: next(states))
+    monkeypatch.setattr(mod, "read_pid", lambda _cfg: 321)
+    monkeypatch.setattr(mod, "pid_alive", lambda _pid: False)
+    clock = [0.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        mod.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+
+    class Child:
+        pid = 321
+        returncode = None
+
+        @staticmethod
+        def poll():
+            return None
+
+    child = Child()
+    launch = {}
+
+    def start_child(*args, **kwargs):
+        launch.update(kwargs)
+        return child
+
+    monkeypatch.setattr(mod.subprocess, "Popen", start_child)
+    cfg = copy.deepcopy(mod.DEFAULTS)
+    cfg["dry_run"] = True
+    args = SimpleNamespace(config=None, lang=None)
+    messages = []
+
+    if entry == "cmd_start":
+        rc = mod.cmd_start(cfg, args)
+    else:
+        rc = mod.cmd_start_worker(cfg, args, report=messages.append)
+
+    assert rc == 0
+    assert clock[0] >= 0.1
+    assert "PID 321" in ("\n".join(messages) if messages else "") or entry == "cmd_start"
+    gate = mod.worker_start_gate_path(cfg)
+    assert gate.exists()
+    assert launch["env"]["ZCFATO_WORKER_START_GATE"] == str(gate)
+
+
+@pytest.mark.parametrize("name", ["status_random_gui", "status_marquee_gui"])
+@pytest.mark.parametrize("entry", ["cmd_start", "cmd_start_worker"])
+def test_split_status_accepts_registered_inner_pid_from_onefile_launcher(
+    name, entry, monkeypatch, tmp_path, capsys
+):
+    mod = load(name)
+    monkeypatch.setattr(mod, "BASE", tmp_path)
+    monkeypatch.setattr(mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(mod, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(mod, "_strict_status_start_blocked", lambda *_a, **_k: False)
+    monkeypatch.setattr(mod, "child_env", lambda: {})
+    monkeypatch.setattr(mod, "child_cmd", lambda _args: ["status-worker.exe"])
+    monkeypatch.setattr(mod, "worker_cmd", lambda _args: ["status-worker.exe", "--worker"])
+    states = iter([None, 654, 654])
+    monkeypatch.setattr(mod, "running_pid", lambda _cfg: next(states))
+    monkeypatch.setattr(mod, "read_pid", lambda _cfg: 654)
+    monkeypatch.setattr(mod, "pid_alive", lambda _pid: False)
+
+    class Launcher:
+        pid = 321
+        returncode = None
+
+        @staticmethod
+        def poll():
+            return None
+
+    monkeypatch.setattr(mod.subprocess, "Popen", lambda *_a, **_k: Launcher())
+    cfg = copy.deepcopy(mod.DEFAULTS)
+    cfg["dry_run"] = True
+    args = SimpleNamespace(config=None, lang=None)
+    reports = []
+    if entry == "cmd_start_worker":
+        rc = mod.cmd_start_worker(cfg, args, report=reports.append)
+        output = "\n".join(reports)
+    else:
+        rc = mod.cmd_start(cfg, args)
+        output = capsys.readouterr().out
+
+    assert rc == 0
+    assert "PID 654" in output
+
+
+@pytest.mark.parametrize("name", ["status_random_gui", "status_marquee_gui"])
+@pytest.mark.parametrize("entry", ["cmd_start", "cmd_start_worker"])
+def test_split_status_accepts_registration_after_launcher_exits(
+    name, entry, monkeypatch, tmp_path, capsys
+):
+    mod = load(name)
+    monkeypatch.setattr(mod, "BASE", tmp_path)
+    monkeypatch.setattr(mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(mod, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(mod, "_strict_status_start_blocked", lambda *_a, **_k: False)
+    monkeypatch.setattr(mod, "child_env", lambda: {})
+    monkeypatch.setattr(mod, "child_cmd", lambda _args: ["status-worker.exe"])
+    monkeypatch.setattr(mod, "worker_cmd", lambda _args: ["status-worker.exe", "--worker"])
+    clock = [0.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        mod.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+    monkeypatch.setattr(
+        mod, "running_pid", lambda _cfg: 654 if clock[0] >= 0.5 else None
+    )
+    monkeypatch.setattr(mod, "read_pid", lambda _cfg: 654)
+    monkeypatch.setattr(mod, "pid_alive", lambda _pid: False)
+
+    class ExitedLauncher:
+        pid = 321
+        returncode = 0
+
+        @staticmethod
+        def poll():
+            return 0
+
+    monkeypatch.setattr(
+        mod.subprocess, "Popen", lambda *_args, **_kwargs: ExitedLauncher()
+    )
+    cfg = copy.deepcopy(mod.DEFAULTS)
+    cfg["dry_run"] = True
+    args = SimpleNamespace(config=None, lang=None)
+    reports = []
+
+    if entry == "cmd_start":
+        rc = mod.cmd_start(cfg, args)
+        output = capsys.readouterr().out
+    else:
+        rc = mod.cmd_start_worker(cfg, args, report=reports.append)
+        output = "\n".join(reports)
+
+    assert rc == 0
+    assert clock[0] >= 0.5
+    assert "PID 654" in output
+
+
+@pytest.mark.parametrize("name", ["status_random_gui", "status_marquee_gui"])
+@pytest.mark.parametrize("entry", ["cmd_start", "cmd_start_worker"])
+def test_split_status_start_stops_child_that_never_registers_pid(
+    name, entry, monkeypatch, tmp_path, capsys
+):
+    mod = load(name)
+    monkeypatch.setattr(mod, "BASE", tmp_path)
+    monkeypatch.setattr(mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(mod, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(mod, "_strict_status_start_blocked", lambda *_a, **_k: False)
+    monkeypatch.setattr(mod, "child_env", lambda: {})
+    monkeypatch.setattr(mod, "child_cmd", lambda _args: ["status-worker.exe"])
+    monkeypatch.setattr(mod, "worker_cmd", lambda _args: ["status-worker.exe", "--worker"])
+    monkeypatch.setattr(mod, "running_pid", lambda _cfg: None)
+    monkeypatch.setattr(mod, "system_taskkill_path", lambda: "taskkill.exe")
+    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_k: SimpleNamespace(returncode=0))
+    clock = [0.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        mod.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+
+    class Child:
+        pid = 321
+        returncode = None
+        terminated = False
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            return 0
+
+    child = Child()
+    monkeypatch.setattr(mod.subprocess, "Popen", lambda *_a, **_k: child)
+    cfg = copy.deepcopy(mod.DEFAULTS)
+    cfg["dry_run"] = True
+    args = SimpleNamespace(config=None, lang=None)
+    messages = []
+
+    if entry == "cmd_start":
+        rc = mod.cmd_start(cfg, args)
+    else:
+        rc = mod.cmd_start_worker(cfg, args, report=messages.append)
+
+    assert rc == 1
+    assert child.terminated is True
+    assert clock[0] >= mod.WORKER_START_TIMEOUT_SECONDS
+    output = "\n".join(messages)
+    assert "did not register its PID" in (output or capsys.readouterr().out)
+
+
+@pytest.mark.parametrize("name", ["status_random_gui", "status_marquee_gui"])
 def test_split_status_worker_entry_forces_strict_background(name, monkeypatch):
     mod = load(name)
     calls = []
@@ -250,6 +456,94 @@ def test_split_status_worker_entry_forces_strict_background(name, monkeypatch):
     assert calls == [
         (["--config", "legacy.json", "run"], {"force_strict_background": True})
     ]
+
+
+@pytest.mark.parametrize(
+    "name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"]
+)
+def test_worker_start_gate_releases_only_after_parent_authorization(
+    name, monkeypatch, tmp_path
+):
+    mod = load(name)
+    gate = tmp_path / "worker.start"
+    monkeypatch.setenv("ZCFATO_WORKER_START_GATE", str(gate))
+    monkeypatch.setattr(mod, "WORKER_START_GATE_TIMEOUT_SECONDS", 1)
+    clock = [0.0]
+
+    def sleep(seconds):
+        clock[0] += seconds
+        if clock[0] >= 0.1:
+            gate.write_text("start\n", encoding="ascii")
+
+    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(mod.time, "sleep", sleep)
+
+    assert mod.wait_for_worker_start_gate() is True
+    assert not gate.exists()
+
+
+@pytest.mark.parametrize(
+    "name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"]
+)
+def test_worker_start_gate_times_out_without_authorization(name, monkeypatch, tmp_path):
+    mod = load(name)
+    gate = tmp_path / "worker.start"
+    monkeypatch.setenv("ZCFATO_WORKER_START_GATE", str(gate))
+    monkeypatch.setattr(mod, "WORKER_START_GATE_TIMEOUT_SECONDS", 0.2)
+    clock = [0.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        mod.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+
+    assert mod.wait_for_worker_start_gate() is False
+    assert not gate.exists()
+
+
+@pytest.mark.parametrize(
+    "name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"]
+)
+def test_run_guarded_does_not_enter_runner_without_start_authorization(
+    name, monkeypatch, tmp_path
+):
+    mod = load(name)
+    import camfrog_status_engine as engine
+
+    monkeypatch.setattr(mod, "BASE", tmp_path)
+    monkeypatch.setattr(mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(mod, "_strict_status_start_blocked", lambda *_a, **_k: False)
+    monkeypatch.setattr(mod, "running_pid", lambda _cfg: None)
+    monkeypatch.setattr(mod, "WORKER_START_GATE_TIMEOUT_SECONDS", 0.2)
+    gate = tmp_path / "worker.start"
+    monkeypatch.setenv("ZCFATO_WORKER_START_GATE", str(gate))
+    clock = [0.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        mod.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+
+    class WriterLock:
+        def __init__(self, **_kwargs):
+            self.released = False
+
+        def acquire(self):
+            return True
+
+        def release(self):
+            self.released = True
+
+    lock = WriterLock()
+    monkeypatch.setattr(engine, "StatusResourceLock", lambda **_kwargs: lock)
+    monkeypatch.setattr(
+        mod, "Runner", lambda *_a, **_k: pytest.fail("Runner must remain gated")
+    )
+
+    result = mod.run_guarded(copy.deepcopy(mod.DEFAULTS))
+
+    assert result == 4
+    assert not gate.exists()
+    assert mod.read_pid(copy.deepcopy(mod.DEFAULTS)) is None
+    assert lock.released is True
 
 
 @pytest.mark.parametrize(
@@ -558,7 +852,51 @@ def test_status_changer_combo_submit_does_not_focus_or_type_keys(monkeypatch):
 
     assert mod.commit(SimpleNamespace(handle=123), ctrl, "status", False,
                       require_fg=True, background_enter_target="combo")
-    assert posted == [(77, 0x0100, 0x0D, 0), (77, 0x0101, 0x0D, 0)]
+    assert posted == [
+        (77, 0x0100, 0x0D, 0x001C0001),
+        (77, 0x0101, 0x0D, 0xC01C0001),
+    ]
+
+
+@pytest.mark.parametrize("name", ["status_random_gui", "status_marquee_gui"])
+def test_standalone_status_startup_discovers_controls(name):
+    app_class = load(name).build_app()
+    app = object.__new__(app_class)
+    app.close_requested = False
+    discovered = []
+    app.discover = lambda: discovered.append(True)
+
+    app._discover_controls_on_start()
+    assert discovered == [True]
+
+    app.close_requested = True
+    app._discover_controls_on_start()
+    assert discovered == [True]
+
+
+def test_combined_status_startup_saves_and_discovers_both_modes(monkeypatch):
+    mod = load("status_changer_gui")
+    app = object.__new__(mod.build_app())
+    app.embedded = False
+    app.close_requested = False
+    app.busy = False
+    app.config_paths = {"random": "random.json", "marquee": "marquee.json"}
+    app.config_path = "random.json"
+    saved = []
+    app.save_settings = lambda: saved.append(True) or {}
+    tasks = []
+    app.run_task = lambda function, *_args, **_kwargs: tasks.append(function)
+    app._tr = lambda en, _th: en
+    discoveries = []
+    monkeypatch.setattr(mod, "run_control_discovery", discoveries.append)
+    monkeypatch.setattr(mod, "load_cfg", lambda path: {"loaded": path})
+
+    app._discover_controls_on_start()
+    assert saved == [True]
+    assert len(tasks) == 1
+    assert tasks[0]() == 0
+    assert discoveries == ["random.json", "marquee.json"]
+    assert app.config == {"loaded": "random.json"}
 
 
 def test_status_logs_clear_at_local_noon_once_per_day(tmp_path):
@@ -903,13 +1241,13 @@ def test_marquee_runner_scrolls_frames_and_rotates_lines(monkeypatch):
     cfg["status"]["marquee"].update(enabled=True, scroll=True, width=10, stride=2,
                                     step_seconds=10, cycles=1, max_frames=80)
     assert m.validate(cfg)[0] == []
+    clock = [0.0]
+    monkeypatch.setattr(m.time, "monotonic", lambda: clock[0])
     r = m.Runner(cfg)
     r.status_edit, r.apply_btn, r.win = object(), None, object()
     sent = []
     monkeypatch.setattr(r, "send", lambda ctrl, text, btn=None, win=None:
                         sent.append(text) or True)
-    clock = [0.0]
-    monkeypatch.setattr(m.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(m.time, "sleep", lambda s: None)
     for _ in range(400):
         clock[0] += 10
@@ -933,15 +1271,14 @@ def test_marquee_slot_loop_advances_after_finishing_scroll_frames(monkeypatch):
         cycles=1, max_frames=5, loop_slots=True, infinite_loop=False)
     assert m.validate(cfg)[0] == []
 
+    clock = [0.0]
+    monkeypatch.setattr(m.time, "monotonic", lambda: clock[0])
     r = m.Runner(cfg)
     r.status_edit, r.apply_btn, r.win = object(), None, object()
     sent = []
     monkeypatch.setattr(r, "send", lambda ctrl, text, btn=None, win=None:
                         sent.append(text) or True)
-    clock = [0.0]
-    monkeypatch.setattr(m.time, "monotonic", lambda: clock[0])
-
-    for instant in (0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0):
+    for instant in (10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0):
         clock[0] = instant
         r.do_status(instant)
 
@@ -968,14 +1305,13 @@ def test_marquee_without_scroll_uses_frame_delay_not_legacy_interval(name, monke
         enabled=True, scroll=False, loop_slots=True, infinite_loop=False,
         step_seconds=10,
     )
+    clock = [0.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
     runner = mod.Runner(cfg)
     runner.status_edit, runner.apply_btn, runner.win = object(), None, object()
     sent = []
     runner.send = lambda _ctrl, text, btn=None: sent.append(text) or True
-    clock = [0.0]
-    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
-
-    for instant in (0.0, 9.99, 10.0, 19.99, 20.0, 29.99, 30.0):
+    for instant in (0.0, 9.99, 10.0, 19.99, 20.0, 29.99, 30.0, 39.99, 40.0):
         clock[0] = instant
         runner.do_status(instant)
 
@@ -1163,7 +1499,10 @@ def test_status_submit_never_imports_or_mutates_windows_sound_registry(name, mon
 
     mod._background_enter(edit, "combo")
 
-    assert sent == [(77, 0x0100, 0x0D, 0), (77, 0x0101, 0x0D, 0)]
+    assert sent == [
+        (77, 0x0100, 0x0D, 0x001C0001),
+        (77, 0x0101, 0x0D, 0xC01C0001),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1323,11 +1662,11 @@ def test_marquee_submits_frames_only_after_configured_step(name, monkeypatch):
     sent_at = []
     runner.send = lambda _ctrl, _text, btn=None: sent_at.append(clock[0]) or True
 
-    for instant in (0.0, 9.99, 10.0, 19.99, 20.0):
+    for instant in (0.0, 9.99, 10.0, 19.99, 20.0, 29.99, 30.0):
         clock[0] = instant
         runner.do_status(instant)
 
-    assert sent_at == [0.0, 10.0, 20.0]
+    assert sent_at == [10.0, 20.0, 30.0]
 
 
 @pytest.mark.parametrize(
@@ -1347,6 +1686,8 @@ def test_status_retry_never_bypasses_ten_second_minimum(name, monkeypatch):
     cfg["status"]["history"]["enabled"] = False
     cfg["status"]["marquee"]["enabled"] = name == "status_marquee_gui"
     cfg["status"]["marquee"]["scroll"] = False
+    clock = [90.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
     runner = mod.Runner(cfg)
     runner.status_edit, runner.apply_btn, runner.win = object(), None, object()
     sends = []
@@ -1356,12 +1697,63 @@ def test_status_retry_never_bypasses_ten_second_minimum(name, monkeypatch):
 
     with pytest.raises(RuntimeError):
         runner.do_status(100)
-    assert runner.last_status == 100
 
     runner.do_status(109.99)
     assert len(sends) == 1
     runner.do_status(110)
     assert len(sends) == 2
+
+
+@pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_random_gui", "status_marquee_gui"]
+)
+def test_status_startup_waits_ten_seconds_before_first_change(name, monkeypatch):
+    mod = load(name)
+    cfg = copy.deepcopy(mod.DEFAULTS)
+    cfg["dry_run"] = True
+    cfg["status"].update(
+        enabled=True,
+        random=name == "status_random_gui",
+        messages=["Startup delay status"],
+        interval_seconds=600,
+        set_on_start=True,
+    )
+    cfg["status"]["history"]["enabled"] = False
+    cfg["status"]["marquee"].update(
+        enabled=name != "status_random_gui", step_seconds=0.5, scroll=False
+    )
+    clock = [100.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
+    runner = mod.Runner(cfg)
+    runner.status_edit, runner.apply_btn, runner.win = object(), None, object()
+    sends = []
+    runner.send = lambda *_args, **_kwargs: sends.append(clock[0]) or True
+
+    runner.do_status(clock[0])
+    clock[0] = 109.99
+    runner.do_status(clock[0])
+    assert sends == []
+    clock[0] = 110.0
+    runner.do_status(clock[0])
+    assert sends == [110.0]
+
+
+@pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_random_gui", "status_marquee_gui"]
+)
+def test_marquee_step_minimum_is_point_three_seconds_in_every_standalone(name, tmp_path):
+    mod = load(name)
+    config_path = tmp_path / f"{name}.json"
+    config_path.write_text(
+        json.dumps({"status": {"marquee": {"step_seconds": 0.2}}}),
+        encoding="utf-8",
+    )
+
+    cfg = mod.load_cfg(config_path)
+
+    assert mod.MARQUEE_STEP_MIN == 0.3
+    assert cfg["status"]["marquee"]["step_seconds"] == 0.3
+    assert mod.DEFAULTS["status"]["marquee"]["step_seconds"] == 0.5
 
 
 @pytest.mark.parametrize("name", ["status_changer_gui", "status_marquee_gui"])
@@ -1385,13 +1777,13 @@ def test_marquee_uses_each_slot_once_then_wraps_only_when_loop_is_enabled(
         enabled=True, scroll=scroll, width=8, stride=2, step_seconds=10,
         cycles=1, max_frames=3, loop_slots=loop_slots, infinite_loop=False)
     caplog.set_level("INFO")
+    clock = [0.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
     runner = mod.Runner(cfg)
     runner.hist.pick = lambda *_args, **_kwargs: "HISTORY OVERRIDE"
     runner.status_edit, runner.apply_btn, runner.win = object(), None, object()
     runner.send = lambda _ctrl, _text, btn=None: True
 
-    clock = [0.0]
-    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
     completed = []
     previous_count = 0
     expected = messages + messages[:1] if loop_slots else messages

@@ -73,7 +73,7 @@ Each app writes logs beside its own config. The source CLI uses `camfrog_auto.lo
 
 ## Scrolling status + history switch
 
-- **Marquee** (`status.marquee`): long statuses scroll across a window of `width` characters, one frame every `step_seconds` (minimum 0.3 s). Each populated slot finishes its frames before advancing to the next slot. **Loop slots** starts again at slot 1 after the last populated slot; with it off, the sequence stops after the last slot. The default advances 2 Thai-safe clusters every 0.5 seconds; the runner wakes at each frame deadline without an extra random delay after sending.
+- **Marquee** (`status.marquee`): long statuses scroll across a window of `width` characters, one frame every `step_seconds` (minimum 0.3 s; the GUI adjusts in 0.1 s steps). Each populated slot finishes its frames before advancing to the next slot. **Loop slots** starts again at slot 1 after the last populated slot; with it off, the sequence stops after the last slot. The default advances 2 Thai-safe clusters every 0.5 seconds; the runner wakes at each frame deadline without an extra random delay after sending.
 - **History switch** (`status.history`): every status you set is saved to `status_history.json`. With `use_as_source: true` the next status is picked from that history (`rotate` = round-robin, `random`, `most_used`). Your `status.messages` are seeded into it automatically.
 - **TH/EN auto switch** (`status.language_cycle: ["th","en"]`): alternates Thai, English, Thai, English… each time the status changes. Works with history and with plain messages.
 - **Safety:** every frame is a real status change on Camfrog, so frames are rate-limited (`step_seconds >= 0.3`). Keep `interval_seconds` generous for Random mode and start with `dry_run: true`.

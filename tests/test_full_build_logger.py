@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import io
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Self
 
 from tools import full_build_logger
 
@@ -15,7 +18,7 @@ class _Child:
         self.stdout = io.BytesIO(output)
         self.return_code = return_code
 
-    def __enter__(self) -> _Child:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *_args: object) -> None:
@@ -25,7 +28,9 @@ class _Child:
         return self.return_code
 
 
-def test_logger_streams_and_saves_full_child_output(monkeypatch, tmp_path: Path) -> None:
+def test_logger_streams_and_saves_full_child_output(
+    monkeypatch, tmp_path: Path
+) -> None:
     batch = tmp_path / "full build.bat"
     batch.write_bytes(b"@echo off\r\n")
     output = b"build output\r\n"
@@ -63,3 +68,21 @@ def test_logger_requires_a_local_log_directory(monkeypatch, tmp_path: Path) -> N
     monkeypatch.delenv("TEMP", raising=False)
 
     assert full_build_logger.main([str(batch)]) == 2
+
+
+def test_build_estimate_uses_median_of_successful_logs(tmp_path: Path) -> None:
+    now = dt.datetime.now().astimezone()
+    for seconds in (500, 700, 900):
+        started = now - dt.timedelta(seconds=seconds)
+        name = started.strftime("full-build-%Y%m%d-%H%M%S-%f-1234.log")
+        log = tmp_path / name
+        log.write_text("FULL BUILD COMPLETE\n", encoding="ascii")
+        os.utime(log, (now.timestamp(), now.timestamp()))
+
+    assert full_build_logger._estimate_duration_seconds(tmp_path) == 700
+
+
+def test_build_estimate_falls_back_and_formats_countdown(tmp_path: Path) -> None:
+    assert full_build_logger._estimate_duration_seconds(tmp_path) == 600
+    assert full_build_logger._format_estimate(599) == "09:59"
+    assert full_build_logger._format_estimate(0) == "00:00"

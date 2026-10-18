@@ -77,7 +77,10 @@ jobs:
           python -m pip install 'pip-audit>=2.7,<3'
           python -m pip_audit -r line/requirements-build.txt
           python -m pip_audit -r zchat-client/requirements-build.txt
-      - run: .\full-build.bat
+      - name: Build and run Windows integration tests
+        env:
+          ZCHAT_RUN_WINDOWS_GUI_TESTS: "1"
+        run: .\full-build.bat
         shell: cmd
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

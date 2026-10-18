@@ -13,6 +13,15 @@ mode is used by its worker. To stop a worker, use its Stop control. Check the
 sanitized worker log and verify the resulting status through another Camfrog
 account's friend list. Local control readback is not provider verification.
 
+### Worker startup handshake
+
+Hidden status workers write their PID and wait for the launching GUI to verify
+it before entering the status loop. If registration is not verified, the
+parent does not authorize status work and the child exits after its bounded
+startup wait. This prevents a worker from submitting while the GUI reports a
+startup failure. It does not make `best_effort_background` non-activating or
+prove delivery to Camfrog's servers.
+
 ## Separate desktop launcher
 
 `tools/launch_camfrog_isolated_desktop.py` is a Windows-only manual test tool.
@@ -50,7 +59,10 @@ than falling back to global keyboard or mouse input.
 
 ## Logging
 
-Best-effort submissions log route and outcome state only, not status text.
+The `STATUS_SUBMIT=DISPATCHED_UNVERIFIED` warning records route and outcome
+state only. Other worker log entries can include status text when
+`log_message_text` is enabled (the default); disable that setting to keep
+status text out of worker logs.
 `STATUS_SUBMIT=DISPATCHED_UNVERIFIED` means the message was dispatched; it is
 not a success result. Provider verification requires checking the account from
 another client or device. The desktop launcher's JSON also marks login and

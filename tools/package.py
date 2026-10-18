@@ -42,6 +42,16 @@ COMPANION_EXECUTABLES = frozenset(
         "zchat-client-verified/zchat-client.exe",
     }
 )
+_RETAINED_CI_DIRECTORY = re.compile(r"ci-[0-9]+\Z")
+
+
+def _is_retained_ci_artifact(dist: Path, path: Path) -> bool:
+    """Keep downloaded CI snapshots outside the active package input set."""
+    try:
+        relative = path.relative_to(dist)
+    except ValueError:
+        return False
+    return bool(relative.parts and _RETAINED_CI_DIRECTORY.fullmatch(relative.parts[0]))
 
 
 def sha256_file(path: Path | str) -> str:
@@ -64,7 +74,9 @@ def validate_package_name(name: str) -> str:
 def write_sums(dist: Path | str, name: str) -> Path:
     dist = Path(dist)
     name = validate_package_name(name)
-    executables = list(dist.rglob("*.exe"))
+    executables = [
+        path for path in dist.rglob("*.exe") if not _is_retained_ci_artifact(dist, path)
+    ]
     symlinks = [p for p in executables if p.is_symlink()]
     if symlinks:
         raise ValueError(

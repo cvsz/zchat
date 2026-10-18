@@ -150,7 +150,7 @@ class StatusControlAdapter:
                     return False
                 if (
                     win32gui.GetDlgCtrlID(hwnd) != control_id
-                    and win32gui.GetClassName(hwnd) not in classes
+                    or win32gui.GetClassName(hwnd) not in classes
                 ):
                     return False
             return True

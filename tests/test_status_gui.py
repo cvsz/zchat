@@ -163,6 +163,341 @@ def test_status_changer_worker_entry_forces_strict_mode(monkeypatch):
     ]
 
 
+@pytest.mark.parametrize(
+    ("configured_mode", "expected_mode"),
+    [
+        ("best_effort_background", "best_effort_background"),
+        ("interactive", "strict_background"),
+        ("strict_background", "strict_background"),
+    ],
+)
+def test_hidden_worker_only_preserves_explicit_best_effort_mode(
+    configured_mode, expected_mode, monkeypatch, tmp_path
+):
+    monkeypatch.delenv(combined_gui.UNVERIFIED_STATUS_TEST_ENV, raising=False)
+    monkeypatch.setattr(combined_gui, "BASE", tmp_path)
+    monkeypatch.setattr(combined_gui, "profile_command_error", lambda *_args: None)
+    monkeypatch.setattr(combined_gui, "validate", lambda _cfg: ([], []))
+    monkeypatch.setattr(combined_gui, "setup_logging", lambda _cfg: None)
+    captured = {}
+    monkeypatch.setattr(
+        combined_gui,
+        "run_guarded",
+        lambda cfg, _path=None: (
+            captured.update(mode=cfg["status"]["execution_mode"]) or 0
+        ),
+    )
+    cfg = {
+        "language": "en",
+        "status": {"execution_mode": configured_mode},
+        "autoreply": {},
+        "autoreply_im": {},
+    }
+    monkeypatch.setattr(combined_gui, "load_cfg", lambda _path: cfg)
+
+    assert combined_gui.cli_main(
+        ["--config", "worker-config.json", "run"], force_strict_background=True
+    ) == 0
+    assert captured["mode"] == expected_mode
+
+
+def test_status_changer_start_waits_for_worker_pid_registration(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(combined_gui, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(combined_gui, "os", _WindowsPlatformProxy(combined_gui.os))
+    monkeypatch.setattr(combined_gui, "child_env", lambda: {})
+    monkeypatch.setattr(combined_gui, "worker_cmd", lambda _args: ["status-changer.exe"])
+    states = iter([None, None, 123, 123])
+    monkeypatch.setattr(combined_gui, "running_pid", lambda _cfg: next(states))
+    monkeypatch.setattr(combined_gui, "read_pid", lambda _cfg: 123)
+    monkeypatch.setattr(combined_gui, "pid_alive", lambda _pid: False)
+
+    class Child:
+        pid = 123
+        returncode = None
+
+        @staticmethod
+        def poll():
+            return None
+
+    child = Child()
+    launch = {}
+
+    def start_child(*args, **kwargs):
+        launch.update(kwargs)
+        return child
+
+    monkeypatch.setattr(
+        combined_gui.subprocess, "Popen", start_child
+    )
+    cfg = {
+        "dry_run": False,
+        "status": {"enabled": True, "execution_mode": "best_effort_background"},
+        "log": {"file": "worker.log"},
+        "safety": {"pid_file": "worker.pid"},
+    }
+    messages = []
+
+    assert combined_gui.cmd_start_worker(
+        cfg, SimpleNamespace(config=None, lang=None), report=messages.append
+    ) == 0
+    assert any("PID 123" in message for message in messages)
+    gate = combined_gui.worker_start_gate_path(cfg)
+    assert gate.exists()
+    assert launch["env"]["ZCFATO_WORKER_START_GATE"] == str(gate)
+
+
+def test_status_changer_accepts_onefile_inner_worker_pid(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(combined_gui, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(combined_gui, "os", _WindowsPlatformProxy(combined_gui.os))
+    monkeypatch.setattr(combined_gui, "child_env", lambda: {})
+    monkeypatch.setattr(combined_gui, "worker_cmd", lambda _args: ["status-changer.exe"])
+    states = iter([None, 456, 456])
+    monkeypatch.setattr(combined_gui, "running_pid", lambda _cfg: next(states))
+    monkeypatch.setattr(combined_gui, "read_pid", lambda _cfg: 456)
+    monkeypatch.setattr(combined_gui, "pid_alive", lambda _pid: False)
+
+    class Launcher:
+        pid = 123
+        returncode = None
+
+        @staticmethod
+        def poll():
+            return None
+
+    monkeypatch.setattr(combined_gui.subprocess, "Popen", lambda *_a, **_k: Launcher())
+    cfg = {
+        "dry_run": True,
+        "status": {"enabled": False, "execution_mode": "best_effort_background"},
+        "log": {"file": "worker.log"},
+        "safety": {"pid_file": "worker.pid"},
+    }
+    messages = []
+
+    assert combined_gui.cmd_start_worker(
+        cfg, SimpleNamespace(config=None, lang=None), report=messages.append
+    ) == 0
+    assert any("PID 456" in message for message in messages)
+
+
+def test_status_changer_start_stops_unregistered_child_on_timeout(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(combined_gui, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(combined_gui, "os", _WindowsPlatformProxy(combined_gui.os))
+    monkeypatch.setattr(combined_gui, "child_env", lambda: {})
+    monkeypatch.setattr(combined_gui, "worker_cmd", lambda _args: ["status-changer.exe"])
+    monkeypatch.setattr(combined_gui, "system_taskkill_path", lambda: "taskkill.exe")
+    monkeypatch.setattr(combined_gui.subprocess, "run", lambda *_a, **_k: SimpleNamespace(returncode=0))
+    clock = [0.0]
+    monkeypatch.setattr(combined_gui.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(combined_gui.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+    monkeypatch.setattr(combined_gui, "running_pid", lambda _cfg: None)
+
+    class Child:
+        pid = 123
+        returncode = None
+        terminated = False
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            return 0
+
+    child = Child()
+    monkeypatch.setattr(
+        combined_gui.subprocess, "Popen", lambda *_args, **_kwargs: child
+    )
+    cfg = {
+        "dry_run": False,
+        "status": {"enabled": True, "execution_mode": "best_effort_background"},
+        "log": {"file": "worker.log"},
+        "safety": {"pid_file": "worker.pid"},
+    }
+    messages = []
+
+    assert combined_gui.cmd_start_worker(
+        cfg, SimpleNamespace(config=None, lang=None), report=messages.append
+    ) == 1
+    assert child.terminated
+    assert any("did not register" in message for message in messages)
+
+
+def test_status_changer_cli_start_requires_worker_pid_registration(
+    monkeypatch, tmp_path, capsys
+):
+    monkeypatch.setattr(combined_gui, "BASE", tmp_path)
+    monkeypatch.setattr(combined_gui, "os", _WindowsPlatformProxy(combined_gui.os))
+    monkeypatch.setattr(
+        combined_gui, "_strict_status_start_blocked", lambda _cfg, emit=print: False
+    )
+    monkeypatch.setattr(combined_gui, "running_pid", lambda _cfg: None)
+    monkeypatch.setattr(combined_gui, "child_cmd", lambda _args: ["status-changer.exe"])
+    monkeypatch.setattr(combined_gui, "child_env", lambda: {})
+    monkeypatch.setattr(combined_gui, "system_taskkill_path", lambda: "taskkill.exe")
+    monkeypatch.setattr(combined_gui.subprocess, "run", lambda *_a, **_k: SimpleNamespace(returncode=0))
+    clock = [0.0]
+    monkeypatch.setattr(combined_gui.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        combined_gui.time,
+        "sleep",
+        lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+    )
+
+    class Child:
+        pid = 234
+        returncode = None
+        terminated = False
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            return 0
+
+    child = Child()
+    monkeypatch.setattr(
+        combined_gui.subprocess, "Popen", lambda *_args, **_kwargs: child
+    )
+    cfg = {
+        "dry_run": True,
+        "status": {"enabled": False, "execution_mode": "best_effort_background"},
+        "log": {"file": "worker.log"},
+        "safety": {"pid_file": "worker.pid"},
+    }
+
+    result = combined_gui.cmd_start(cfg, SimpleNamespace(config=None, lang=None))
+
+    assert result == 1
+    assert child.terminated
+    assert "did not register" in capsys.readouterr().out
+
+
+def test_status_changer_cli_start_accepts_delayed_worker_registration(
+    monkeypatch, tmp_path, capsys
+):
+    monkeypatch.setattr(combined_gui, "BASE", tmp_path)
+    monkeypatch.setattr(combined_gui, "os", _WindowsPlatformProxy(combined_gui.os))
+    monkeypatch.setattr(combined_gui, "_strict_status_start_blocked", lambda _cfg: False)
+    clock = [0.0]
+    monkeypatch.setattr(combined_gui.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        combined_gui.time,
+        "sleep",
+        lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+    )
+    monkeypatch.setattr(
+        combined_gui,
+        "running_pid",
+        lambda _cfg: 234 if clock[0] >= 2.6 else None,
+    )
+    monkeypatch.setattr(combined_gui, "read_pid", lambda _cfg: 234)
+    monkeypatch.setattr(combined_gui, "pid_alive", lambda _pid: False)
+    monkeypatch.setattr(combined_gui, "child_cmd", lambda _args: ["status-changer.exe"])
+    monkeypatch.setattr(combined_gui, "child_env", lambda: {})
+
+    class Child:
+        pid = 234
+        returncode = None
+        terminated = False
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            self.terminated = True
+
+    child = Child()
+    monkeypatch.setattr(
+        combined_gui.subprocess, "Popen", lambda *_args, **_kwargs: child
+    )
+    cfg = {
+        "dry_run": True,
+        "status": {"enabled": False, "execution_mode": "best_effort_background"},
+        "log": {"file": "worker.log"},
+        "safety": {"pid_file": "worker.pid"},
+    }
+
+    result = combined_gui.cmd_start(cfg, SimpleNamespace(config=None, lang=None))
+
+    assert result == 0
+    assert not child.terminated
+    assert "PID 234" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("entry", ["cmd_start", "cmd_start_worker"])
+def test_status_changer_accepts_registration_after_launcher_exits(
+    entry, monkeypatch, tmp_path, capsys
+):
+    monkeypatch.setattr(combined_gui, "BASE", tmp_path)
+    monkeypatch.setattr(combined_gui, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(combined_gui, "os", _WindowsPlatformProxy(combined_gui.os))
+    monkeypatch.setattr(
+        combined_gui, "_strict_status_start_blocked", lambda _cfg, emit=print: False
+    )
+    monkeypatch.setattr(combined_gui, "child_env", lambda: {})
+    monkeypatch.setattr(combined_gui, "child_cmd", lambda _args: ["status-changer.exe"])
+    monkeypatch.setattr(combined_gui, "worker_cmd", lambda _args: ["status-changer.exe", "--worker"])
+    monkeypatch.setattr(combined_gui, "read_pid", lambda _cfg: 654)
+    monkeypatch.setattr(combined_gui, "pid_alive", lambda _pid: False)
+    clock = [0.0]
+    monkeypatch.setattr(combined_gui.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        combined_gui.time,
+        "sleep",
+        lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+    )
+    monkeypatch.setattr(
+        combined_gui,
+        "running_pid",
+        lambda _cfg: 654 if clock[0] >= 0.5 else None,
+    )
+
+    class ExitedLauncher:
+        pid = 321
+        returncode = 0
+
+        @staticmethod
+        def poll():
+            return 0
+
+    monkeypatch.setattr(
+        combined_gui.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: ExitedLauncher(),
+    )
+    cfg = {
+        "dry_run": True,
+        "status": {"enabled": False, "execution_mode": "best_effort_background"},
+        "log": {"file": "worker.log"},
+        "safety": {"pid_file": "worker.pid"},
+    }
+    reports = []
+
+    if entry == "cmd_start":
+        result = combined_gui.cmd_start(cfg, SimpleNamespace(config=None, lang=None))
+        output = capsys.readouterr().out
+    else:
+        result = combined_gui.cmd_start_worker(
+            cfg, SimpleNamespace(config=None, lang=None), report=reports.append
+        )
+        output = "\n".join(reports)
+
+    assert result == 0
+    assert clock[0] >= 0.5
+    assert "PID 654" in output
+
+
 def test_apply_status_text_forces_strict_background_for_legacy_config(tmp_path, monkeypatch):
     config_path = tmp_path / "camfrog-status-config.json"
     config_path.write_text(
@@ -460,7 +795,7 @@ def test_parse_interval_seconds_clamps_up_to_minimum():
     assert gui.RANDOM_INTERVAL_MIN == 10
 
 
-def test_legacy_status_config_is_clamped_to_provider_minimum(tmp_path):
+def test_legacy_status_config_clamps_random_interval_but_preserves_marquee_step(tmp_path):
     import json
 
     path = tmp_path / "legacy-status.json"
@@ -479,10 +814,10 @@ def test_legacy_status_config_is_clamped_to_provider_minimum(tmp_path):
     cfg = combined_gui.load_cfg(path)
 
     assert cfg["status"]["interval_seconds"] == 10
-    assert cfg["status"]["marquee"]["step_seconds"] == 10
+    assert cfg["status"]["marquee"]["step_seconds"] == 0.5
 
 
-def test_configure_status_mode_clamps_random_and_marquee_to_ten_seconds():
+def test_configure_status_mode_keeps_random_and_marquee_timing_separate():
     import copy
 
     cfg = copy.deepcopy(combined_gui.DEFAULTS)
@@ -497,10 +832,10 @@ def test_configure_status_mode_clamps_random_and_marquee_to_ten_seconds():
         {"step": 0.5, "stride": 1, "scroll": True, "loop_slots": False},
     )
     assert cfg["status"]["interval_seconds"] == 10
-    assert cfg["status"]["marquee"]["step_seconds"] == 10
+    assert cfg["status"]["marquee"]["step_seconds"] == 0.5
 
 
-def test_scrolling_cli_frames_are_spaced_at_least_ten_seconds(monkeypatch):
+def test_scrolling_cli_frames_follow_the_configured_step(monkeypatch):
     import copy
 
     cfg = copy.deepcopy(combined_gui.DEFAULTS)
@@ -511,7 +846,7 @@ def test_scrolling_cli_frames_are_spaced_at_least_ten_seconds(monkeypatch):
     monkeypatch.setattr(combined_gui.time, "sleep", sleeps.append)
 
     assert combined_gui._commit_frames(cfg, ["first", "second"]) == 0
-    assert sleeps == [10]
+    assert sleeps == [0.5]
 
 
 def test_parse_interval_seconds_clamps_down_to_maximum():

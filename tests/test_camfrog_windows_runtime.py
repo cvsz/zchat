@@ -370,17 +370,26 @@ def test_classify_ambiguous_and_unknown_windows_fail_closed():
 def test_classify_ignores_own_zchat_gui_windows():
     classifier = WindowsCamfrogWindowClassifier()
 
-    # TkTopLevel class
+    # Generic toolkit classes do not prove that a window belongs to ZChat.
     win_tk = MockWindow(handle=60, title="Camfrog Helper", class_name="TkTopLevel")
-    assert classifier.is_own_gui_window(win_tk) is True
+    assert classifier.is_own_gui_window(win_tk) is False
+    classified_tk = classifier.classify_window(win_tk)
+    assert classified_tk.role == WindowRole.UNKNOWN
+    assert "unrecognized_window_structure" in classified_tk.signatures
 
     # Title prefix matching ZChat GUI
-    win_title = MockWindow(handle=61, title="Camfrog Status Changer v2")
+    win_title = MockWindow(
+        handle=61, title="Camfrog Status Changer v2", class_name="TkTopLevel"
+    )
     assert classifier.is_own_gui_window(win_title) is True
 
     classified = classifier.classify_window(win_tk)
     assert classified.role == WindowRole.UNKNOWN
-    assert "zchat_own_gui" in classified.signatures
+    assert "unrecognized_window_structure" in classified.signatures
+
+    classified_title = classifier.classify_window(win_title)
+    assert classified_title.role == WindowRole.UNKNOWN
+    assert "zchat_own_gui" in classified_title.signatures
 
 
 # ---------- Revalidation and Anti-Targeting Tests ----------

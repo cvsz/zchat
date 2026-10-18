@@ -8,6 +8,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 ### Added
+- Added process-level runtime-adapter regression tests for identity revalidation and ownership, plus Windows-only GUI/HWND cases using a controlled fixture process.
+- Added an approximate build countdown to the full-build logger, calibrated from the median duration of recent successful builds with a ten-minute fallback.
 - Added an opt-in `best_effort_background` status mode to Status Changer, Random Status, and Marquee Status. It uses `combo-post`, warns that Camfrog may activate or flash, and keeps provider outcomes explicitly unverified; see `docs/STATUS-SUBMIT-MODES.md`.
 - Added a Windows-only CreateDesktop Camfrog launcher for manual isolation testing. Native Camfrog behavior remains unverified until tested in a Windows session.
 - Added repository structure and Markdown-link validation to the main GitHub CI job.
@@ -32,6 +34,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Added a read-only Camfrog public presence probe that fingerprints bounded GIF responses and persists raw evidence locally while classifying every observation as UNKNOWN.
 
 ### Fixed
+- Status workers now wait for parent authorization after PID registration before entering the status loop. A failed or delayed PID check therefore cannot let a hidden worker submit statuses while the GUI reports startup failure.
+- Status worker startup accepts the registered runtime PID when a PyInstaller one-file launcher PID differs; timeout cleanup terminates the launcher process tree.
+- Status Changer, Random Status, and Marquee Status now save their loaded settings and discover Camfrog controls automatically after the standalone window opens.
+- Status workers now wait 10 seconds before the first automatic status change after start; later changes keep the configured interval.
+- Preserve an explicitly selected `best_effort_background` mode in the hidden Status Changer worker, and wait for worker PID registration during frozen executable startup instead of failing after a short fixed delay.
+- Use the probe-validated Enter key scan code and transition flags for best-effort status submissions in Status Changer, Random Status, and Marquee Status.
+- Require both the expected Win32 control ID and class when revalidating Camfrog status HWNDs, rejecting recycled handles that only match one identifier.
 - Camfrog window selection now fails closed when the configured title filter spans multiple or unverifiable processes instead of choosing the first matching client.
 - Release publishing now uploads the flat checksum manifest as `SHA256SUMS.txt`, matching the name expected by existing app updaters.
 - Fixed `validate_repo.py` performance and exclusion list with `os.walk` directory pruning, reducing scan execution time by 98%.
