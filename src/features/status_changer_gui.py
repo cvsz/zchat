@@ -5109,6 +5109,7 @@ def cmd_start(cfg, args):
     if not cfg["log"]["file"]:
         print(t("bg_needs_log"))
         return 2
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     registered = read_pid(cfg)
     if registered and pid_alive(registered):
         print(f"Existing worker PID {registered} is alive but could not be verified; refusing another start.")
@@ -5207,6 +5208,7 @@ def cmd_start_worker(cfg, args, report=None):
     if not cfg["log"]["file"]:
         emit(t("bg_needs_log"))
         return 2
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     registered = read_pid(cfg)
     if registered and pid_alive(registered):
         emit(f"Existing worker PID {registered} is alive but could not be verified; refusing another start.")
@@ -5216,7 +5218,6 @@ def cmd_start_worker(cfg, args, report=None):
     start_gate.unlink(missing_ok=True)
     logf = DATA_DIR / cfg["log"]["file"]
     flags = 0x08000000 | 0x00000200  # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
     env = child_env()
     env["ZCFATO_DATA_DIR"] = str(DATA_DIR)
     env["ZCFATO_STATUS_MODE"] = STATUS_MODE

@@ -387,7 +387,10 @@ def test_status_changer_cli_start_accepts_delayed_worker_registration(
     monkeypatch, tmp_path, capsys
 ):
     monkeypatch.setattr(combined_gui, "BASE", tmp_path)
+    worker_data_dir = tmp_path / "status-data"
+    monkeypatch.setattr(combined_gui, "DATA_DIR", worker_data_dir)
     monkeypatch.setattr(combined_gui, "os", _WindowsPlatformProxy(combined_gui.os))
+    monkeypatch.setattr(combined_gui, "system_taskkill_path", lambda: "taskkill.exe")
     monkeypatch.setattr(combined_gui, "_strict_status_start_blocked", lambda _cfg: False)
     clock = [0.0]
     monkeypatch.setattr(combined_gui.time, "monotonic", lambda: clock[0])
@@ -431,6 +434,7 @@ def test_status_changer_cli_start_accepts_delayed_worker_registration(
     result = combined_gui.cmd_start(cfg, SimpleNamespace(config=None, lang=None))
 
     assert result == 0
+    assert worker_data_dir.is_dir()
     assert not child.terminated
     assert "PID 234" in capsys.readouterr().out
 
