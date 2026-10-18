@@ -86,4 +86,5 @@ jobs:
             dist/
             camfrog-features-windows.zip
             line/dist/line-status-changer.exe
+            line/dist/SHA256SUMS.txt
           if-no-files-found: error

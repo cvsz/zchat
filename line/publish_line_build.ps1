@@ -10,6 +10,22 @@ $mutex = [System.Threading.Mutex]::new($false, 'Local\LINEStatusChanger')
 $ownsMutex = $false
 $movedOldDist = $false
 
+function Test-LineBuildManifest([string]$Directory) {
+    $exePath = Join-Path $Directory 'line-status-changer.exe'
+    $manifestPath = Join-Path $Directory 'SHA256SUMS.txt'
+    if (-not (Test-Path -LiteralPath $exePath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        return $false
+    }
+    $lines = @(Get-Content -LiteralPath $manifestPath -Encoding ASCII)
+    if ($lines.Count -ne 1 -or $lines[0] -notmatch '^([0-9a-fA-F]{64})  line-status-changer\.exe$') {
+        return $false
+    }
+    $expected = $Matches[1]
+    $actual = (Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash
+    return $actual.Equals($expected, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
 try {
     try { $ownsMutex = $mutex.WaitOne(0) }
     catch [System.Threading.AbandonedMutexException] { $ownsMutex = $true }
@@ -21,8 +37,9 @@ try {
     $stagedConfig = Join-Path $stagePath 'line_config.json'
     if (-not (Test-Path -LiteralPath $stagedExe -PathType Leaf) -or
         (Get-Item -LiteralPath $stagedExe).Length -lt 1MB -or
+        -not (Test-LineBuildManifest $stagePath) -or
         -not (Test-Path -LiteralPath $stagedConfig -PathType Leaf)) {
-        throw 'Staged EXE or config is missing or incomplete; existing dist was not changed.'
+        throw 'Staged EXE, checksum manifest, or config is missing, invalid, or incomplete; existing dist was not changed.'
     }
 
     $targets = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='line-status-changer.exe'" |
@@ -71,7 +88,7 @@ try {
     }
     try {
         Move-Item -LiteralPath $stagePath -Destination $distPath -ErrorAction Stop
-        if (-not (Test-Path -LiteralPath (Join-Path $distPath 'line-status-changer.exe') -PathType Leaf) -or
+        if (-not (Test-LineBuildManifest $distPath) -or
             -not (Test-Path -LiteralPath (Join-Path $distPath 'line_config.json') -PathType Leaf)) {
             throw 'Published output verification failed.'
         }
@@ -91,7 +108,7 @@ try {
         try { Remove-Item -LiteralPath $previousPath -Recurse -Force }
         catch { Write-Warning "New build is published; old dist backup could not be removed: $_" }
     }
-    Write-Host 'Published LINE Status Changer build.'
+    Write-Host 'Published LINE Status Changer build; executable SHA-256 manifest verified.'
 }
 finally {
     if ($ownsMutex) { $mutex.ReleaseMutex() }

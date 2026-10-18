@@ -113,6 +113,10 @@ if not exist line\dist\line-status-changer.exe (
     echo ERROR: line\dist\line-status-changer.exe not found
     exit /b 1
 )
+if not exist line\dist\SHA256SUMS.txt (
+    echo ERROR: line\dist\SHA256SUMS.txt not found
+    exit /b 1
+)
 if not exist line\dist\line_config.json (
     echo ERROR: line\dist\line_config.json not found
     exit /b 1
@@ -183,6 +187,7 @@ echo   camfrog-features-windows.zip
 echo   dist\SHA256SUMS.txt
 echo   dist\BUILD_SOURCE.txt
 echo   line\dist\line-status-changer.exe
+echo   line\dist\SHA256SUMS.txt
 echo   line\dist\line_config.json
 echo.
 echo Build only: no Git staging, commit, or push is performed.
