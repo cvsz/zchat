@@ -1013,18 +1013,29 @@ def get_status_window(cfg, desktop_factory):
     windows = [win for win in windows if _window_process_id(win) != os.getpid()]
     if not windows:
         raise RuntimeError(t("no_window"))
-    _require_single_window_process(windows)
-
     desktop = desktop_factory(backend="uia")
     selector = cfg.get("status", {}).get("edit", {})
+    matches = []
     for native_window in windows:
         try:
             window = desktop.window(handle=native_window.handle).wrapper_object()
             if selector:
                 find(window, selector)
-            return window
+            matches.append((native_window, window))
         except Exception:
             continue
+
+    if matches:
+        # Broad title filters may include other Camfrog clients or auxiliary
+        # windows. First identify windows that actually own the configured
+        # status control, then fail closed only if that target remains
+        # ambiguous across processes.
+        _require_single_window_process([native for native, _window in matches])
+        return matches[0][1]
+
+    # Keep setup/detection useful when the saved selector no longer matches,
+    # but only when the title filter still identifies one verified process.
+    _require_single_window_process(windows)
 
     # Preserve the old setup behavior: let detection inspect the first Camfrog
     # candidate and report that the saved selector may need replacing.
@@ -2323,7 +2334,16 @@ class Runner:
         LOG_TEXT = new["log"]["log_message_text"]
         if not LANG_LOCKED:
             LANG = resolve_lang(new["language"])
-        self.resolve()
+        try:
+            self.resolve()
+        except Exception as e:
+            # A config reload can coincide with Camfrog closing, restarting,
+            # or becoming ambiguous. Keep the worker alive, but never keep
+            # using an HWND/control from the previous attachment.
+            self.win = self.status_edit = self.apply_btn = None
+            self.marq = None
+            log.warning("Config reloaded but Camfrog re-attach failed: %s", e)
+            return
         log.info(t("reloaded"))
 
     def write_stats(self, now, force=False):
@@ -2390,6 +2410,9 @@ class Runner:
     def _do_resolve(self):
         cfg = self.cfg
         st, ar = cfg["status"], cfg["autoreply"]
+        # Invalidate any prior handles before discovery. If discovery fails,
+        # callers must not accidentally submit through a stale HWND.
+        self.win = self.status_edit = self.apply_btn = None
         self.win = get_window(cfg)
         self.status_edit, self.apply_btn = None, None
         self.status_edit = find(self.win, st["edit"]) if st["enabled"] else None

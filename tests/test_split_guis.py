@@ -1170,6 +1170,64 @@ def test_status_window_discovery_includes_hidden_windows(monkeypatch):
     assert calls == [{"title_re": ".*Camfrog.*", "visible_only": False}]
 
 
+def test_status_window_discovery_uses_matching_status_control_to_disambiguate_processes(
+        monkeypatch):
+    mod = load("status_changer_gui")
+    windows = [
+        SimpleNamespace(handle=77, process_id=lambda: 101,
+                        class_name=lambda: "#32770", window_text=lambda: "Camfrog one"),
+        SimpleNamespace(handle=88, process_id=lambda: 202,
+                        class_name=lambda: "#32770", window_text=lambda: "Camfrog two"),
+    ]
+    wrappers = {77: SimpleNamespace(handle=77), 88: SimpleNamespace(handle=88)}
+
+    class NativeDesktop:
+        def windows(self, **_kwargs):
+            return windows
+
+    class UiaDesktop:
+        def window(self, handle):
+            return SimpleNamespace(wrapper_object=lambda: wrappers[handle])
+
+    monkeypatch.setattr(
+        mod, "find", lambda win, _selector: (
+            object() if win.handle == 88 else (_ for _ in ()).throw(LookupError("no control"))))
+
+    def desktop_factory(**kwargs):
+        return NativeDesktop() if kwargs["backend"] == "win32" else UiaDesktop()
+
+    cfg = {"window_title_regex": ".*Camfrog.*", "status": {"edit": {"class_name": "Edit"}}}
+    assert mod.get_status_window(cfg, desktop_factory) is wrappers[88]
+
+
+def test_status_window_discovery_fails_when_status_control_matches_multiple_processes(
+        monkeypatch):
+    mod = load("status_changer_gui")
+    windows = [
+        SimpleNamespace(handle=77, process_id=lambda: 101,
+                        class_name=lambda: "#32770", window_text=lambda: "Camfrog one"),
+        SimpleNamespace(handle=88, process_id=lambda: 202,
+                        class_name=lambda: "#32770", window_text=lambda: "Camfrog two"),
+    ]
+
+    class NativeDesktop:
+        def windows(self, **_kwargs):
+            return windows
+
+    class UiaDesktop:
+        def window(self, handle):
+            return SimpleNamespace(wrapper_object=lambda: SimpleNamespace(handle=handle))
+
+    monkeypatch.setattr(mod, "find", lambda _win, _selector: object())
+
+    def desktop_factory(**kwargs):
+        return NativeDesktop() if kwargs["backend"] == "win32" else UiaDesktop()
+
+    cfg = {"window_title_regex": ".*Camfrog.*", "status": {"edit": {"class_name": "Edit"}}}
+    with pytest.raises(RuntimeError, match="processes match"):
+        mod.get_status_window(cfg, desktop_factory)
+
+
 @pytest.mark.parametrize("name", ["status_changer_gui", "status_marquee_gui"])
 def test_marquee_submits_frames_only_after_configured_step(name, monkeypatch):
     mod = load(name)
@@ -1392,3 +1450,52 @@ def test_strict_background_failure_does_not_fall_back_to_uia_discovery(
     apply = m.apply_status_scrolling if scrolling else m.apply_status_text
     with pytest.raises(RuntimeError, match="STRICT_SUBMIT_UNVERIFIED"):
         apply("dummy.json", "strict background test")
+
+
+def test_status_changer_reload_attach_failure_clears_stale_status_handles(
+        monkeypatch, tmp_path, caplog):
+    import logging
+
+    import status_changer_gui as m
+
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text("{}", encoding="utf-8")
+    cfg = copy.deepcopy(m.DEFAULTS)
+    cfg["reload_config"] = True
+    runner = object.__new__(m.Runner)
+    runner.cfg_path = cfg_path
+    runner._mtime = 0
+    runner._next_reload = 0
+    runner.cfg = cfg
+    runner.win = runner.status_edit = runner.apply_btn = object()
+    runner.marq = {"raw": "stale"}
+    runner.apply_cfg = lambda _cfg: None
+    runner.resolve = lambda: (_ for _ in ()).throw(
+        RuntimeError("multiple or unverifiable Camfrog processes"))
+
+    monkeypatch.setattr(m, "apply_app_profile", lambda cfg: cfg)
+    monkeypatch.setattr(m, "load_cfg", lambda _path: cfg)
+    monkeypatch.setattr(m, "validate", lambda _cfg: ([], []))
+    monkeypatch.setattr(m, "LANG_LOCKED", True)
+    caplog.set_level(logging.WARNING, logger="camfrog_status")
+
+    runner.maybe_reload(1)
+
+    assert runner.win is runner.status_edit is runner.apply_btn is runner.marq is None
+    assert "Config reloaded but Camfrog re-attach failed" in caplog.text
+    assert "Traceback" not in caplog.text
+
+
+def test_status_changer_resolve_invalidates_stale_handles_before_discovery(monkeypatch):
+    import status_changer_gui as m
+
+    runner = object.__new__(m.Runner)
+    runner.cfg = {"status": {"enabled": True}, "autoreply": {"enabled": False}}
+    runner.win = runner.status_edit = runner.apply_btn = object()
+    monkeypatch.setattr(m, "get_window", lambda _cfg: (_ for _ in ()).throw(
+        RuntimeError("ambiguous Camfrog process")))
+
+    with pytest.raises(RuntimeError, match="ambiguous Camfrog process"):
+        runner._do_resolve()
+
+    assert runner.win is runner.status_edit is runner.apply_btn is None
