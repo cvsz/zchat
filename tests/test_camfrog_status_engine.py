@@ -203,6 +203,28 @@ def test_status_control_adapter_linux_safety():
     assert adapter.post_background_enter() is False
 
 
+def test_post_background_enter_targets_edit_post_route_parameters(monkeypatch):
+    calls = []
+    user32 = SimpleNamespace(
+        PostMessageW=lambda *args: calls.append(args) or 1,
+    )
+    monkeypatch.setattr(cse.sys, "platform", "win32")
+    monkeypatch.setattr(
+        cse.ctypes,
+        "windll",
+        SimpleNamespace(user32=user32),
+        raising=False,
+    )
+    adapter = StatusControlAdapter(combo_hwnd=123, edit_hwnd=456)
+    monkeypatch.setattr(adapter, "controls_are_current", lambda: True)
+
+    assert adapter.post_background_enter() is True
+    assert calls == [
+        (456, 0x0100, 0x0D, 0x001C0001),
+        (456, 0x0101, 0x0D, 0xC01C0001),
+    ]
+
+
 def test_status_control_adapter_rejects_stale_or_recycled_control_handles(monkeypatch):
     import sys
 

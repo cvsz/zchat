@@ -2,8 +2,9 @@
 
 This tool can change the current Camfrog status. It requires --yes and logs only
 sanitized metadata. It does not restore the prior provider status. Endpoint
-foreground snapshots cannot rule out transient focus changes, and combo readback
-is not independent provider verification.
+snapshots are supplemented with EVENT_SYSTEM_FOREGROUND notifications during the
+submit window. A WinEvent monitor cannot prove that every system event was
+delivered, and combo readback is not independent provider verification.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import ctypes.wintypes
 import json
 import os
 import sys
+import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -46,6 +48,10 @@ EN_CHANGE = 0x0300
 CBN_SELCHANGE = 0xFFFF
 CBN_SELENDOK = 0xFFF7
 MESSAGE_TIMEOUT_MS = 1000
+EVENT_SYSTEM_FOREGROUND = 0x0003
+WINEVENT_OUTOFCONTEXT = 0x0000
+WM_QUIT = 0x0012
+PM_NOREMOVE = 0x0000
 
 ROUTES = ("combo-post", "edit-char", "edit-post", "combo-send", "parent-msg")
 
@@ -62,6 +68,192 @@ def _snapshot() -> dict[str, object]:
         "cursor": [cursor.x, cursor.y] if cursor_ok else None,
         "keyboard_state_sha256": _sha256(bytes(keyboard)) if keyboard_ok else None,
     }
+
+
+class ForegroundEventMonitor:
+    """Observe foreground changes on a dedicated WinEvent message-pump thread."""
+
+    def __init__(self, target_pid: int, baseline_hwnd: int | None):
+        self.target_pid = target_pid
+        self.baseline_hwnd = baseline_hwnd
+        self._ready = threading.Event()
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self._thread_id: int | None = None
+        self._error_type: str | None = None
+        self._hook_installed = False
+        self._counts = {
+            "foreground_event_count": 0,
+            "target_foreground_event_count": 0,
+            "baseline_foreground_event_count": 0,
+            "other_foreground_event_count": 0,
+            "unknown_foreground_event_count": 0,
+        }
+        self._started_at: float | None = None
+
+    def start(self) -> None:
+        self._thread = threading.Thread(
+            target=self._run, name="zchat-foreground-event-monitor", daemon=True
+        )
+        self._thread.start()
+        if not self._ready.wait(timeout=3.0):
+            self._request_stop()
+            raise RuntimeError("foreground event monitor did not initialize")
+        if self._error_type or not self._hook_installed:
+            raise RuntimeError("foreground event monitor initialization failed")
+        self._started_at = time.monotonic()
+
+    def _run(self) -> None:
+        try:
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            wintypes = ctypes.wintypes
+            kernel32.GetCurrentThreadId.restype = wintypes.DWORD
+            user32.GetWindowThreadProcessId.argtypes = [
+                wintypes.HWND,
+                ctypes.POINTER(wintypes.DWORD),
+            ]
+            user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+            callback_type = ctypes.WINFUNCTYPE(
+                None,
+                wintypes.HANDLE,
+                wintypes.DWORD,
+                wintypes.HWND,
+                wintypes.LONG,
+                wintypes.LONG,
+                wintypes.DWORD,
+                wintypes.DWORD,
+            )
+        except Exception as exc:  # noqa: BLE001 - observer setup must report failure.
+            self._error_type = type(exc).__name__
+            self._ready.set()
+            return
+        message = wintypes.MSG()
+        hook = None
+
+        def on_foreground(_hook, event, hwnd, _object_id, _child_id, _thread, _time):
+            if event != EVENT_SYSTEM_FOREGROUND:
+                return
+            try:
+                process_id = wintypes.DWORD()
+                if hwnd:
+                    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
+                with self._lock:
+                    self._counts["foreground_event_count"] += 1
+                    if not hwnd or not process_id.value:
+                        key = "unknown_foreground_event_count"
+                    elif process_id.value == self.target_pid:
+                        key = "target_foreground_event_count"
+                    elif hwnd == self.baseline_hwnd:
+                        key = "baseline_foreground_event_count"
+                    else:
+                        key = "other_foreground_event_count"
+                    self._counts[key] += 1
+            except Exception:  # noqa: BLE001 - observer errors must not escape a WinEvent callback.
+                with self._lock:
+                    self._error_type = "ForegroundCallbackError"
+
+        callback = callback_type(on_foreground)
+        try:
+            self._thread_id = kernel32.GetCurrentThreadId()
+            user32.PeekMessageW.argtypes = [
+                ctypes.POINTER(wintypes.MSG),
+                wintypes.HWND,
+                wintypes.UINT,
+                wintypes.UINT,
+                wintypes.UINT,
+            ]
+            # Create this thread's message queue before posting WM_QUIT to stop it.
+            user32.PeekMessageW(ctypes.byref(message), None, 0, 0, PM_NOREMOVE)
+            user32.SetWinEventHook.argtypes = [
+                wintypes.DWORD,
+                wintypes.DWORD,
+                wintypes.HANDLE,
+                callback_type,
+                wintypes.DWORD,
+                wintypes.DWORD,
+                wintypes.DWORD,
+            ]
+            user32.SetWinEventHook.restype = wintypes.HANDLE
+            hook = user32.SetWinEventHook(
+                EVENT_SYSTEM_FOREGROUND,
+                EVENT_SYSTEM_FOREGROUND,
+                None,
+                callback,
+                0,
+                0,
+                WINEVENT_OUTOFCONTEXT,
+            )
+            if not hook:
+                self._error_type = "SetWinEventHookError"
+                return
+            self._hook_installed = True
+            self._ready.set()
+            user32.GetMessageW.argtypes = [
+                ctypes.POINTER(wintypes.MSG),
+                wintypes.HWND,
+                wintypes.UINT,
+                wintypes.UINT,
+            ]
+            user32.GetMessageW.restype = ctypes.c_int
+            user32.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
+            user32.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
+            user32.UnhookWinEvent.argtypes = [wintypes.HANDLE]
+            user32.UnhookWinEvent.restype = wintypes.BOOL
+            while True:
+                result = user32.GetMessageW(ctypes.byref(message), None, 0, 0)
+                if result <= 0:
+                    if result == -1:
+                        self._error_type = "GetMessageError"
+                    break
+                user32.TranslateMessage(ctypes.byref(message))
+                user32.DispatchMessageW(ctypes.byref(message))
+        except Exception as exc:  # noqa: BLE001 - fail closed if monitoring cannot start.
+            self._error_type = type(exc).__name__
+        finally:
+            if hook:
+                try:
+                    user32.UnhookWinEvent(hook)
+                except Exception:  # noqa: BLE001 - surface cleanup failure in monitor evidence.
+                    self._error_type = self._error_type or "UnhookWinEventError"
+            self._ready.set()
+
+    def stop(self, *, minimum_duration: float = 2.0) -> dict[str, object]:
+        if self._started_at is not None:
+            remaining = minimum_duration - (time.monotonic() - self._started_at)
+            if remaining > 0:
+                time.sleep(remaining)
+        self._request_stop()
+        if self._thread:
+            self._thread.join(timeout=3.0)
+        with self._lock:
+            counts = dict(self._counts)
+        counts.update(
+            {
+                "foreground_monitor": "win_event_hook",
+                "foreground_monitor_stopped": bool(
+                    self._thread and not self._thread.is_alive()
+                ),
+                "foreground_monitor_error": self._error_type,
+            }
+        )
+        return counts
+
+    def _request_stop(self) -> None:
+        if self._thread and self._thread.is_alive() and self._thread_id:
+            try:
+                user32 = ctypes.windll.user32
+                user32.PostThreadMessageW.argtypes = [
+                    ctypes.wintypes.DWORD,
+                    ctypes.wintypes.UINT,
+                    ctypes.wintypes.WPARAM,
+                    ctypes.wintypes.LPARAM,
+                ]
+                user32.PostThreadMessageW.restype = ctypes.wintypes.BOOL
+                if not user32.PostThreadMessageW(self._thread_id, WM_QUIT, 0, 0):
+                    self._error_type = "PostThreadMessageError"
+            except Exception:  # noqa: BLE001 - preserve the action outcome for the caller.
+                self._error_type = "PostThreadMessageError"
 
 
 def _sha256(value: bytes) -> str:
@@ -168,24 +360,29 @@ def _restore_prior_edit_text(prior_text: str, process, window, adapter) -> bool:
 
 
 def _record_pre_submit_failure(
-    args, process, window, code: str, restored: bool
+    args,
+    process,
+    window,
+    code: str,
+    restored: bool,
+    extra: dict[str, object] | None = None,
 ) -> None:
-    _append_log(
-        args.log,
-        {
-            "captured_at": datetime.now(UTC).isoformat(),
-            "provider": "camfrog",
-            "provider_version": process.version,
-            "pid": process.pid,
-            "window_role": window.role.value,
-            "route": args.route,
-            "status_length": len(args.status),
-            "client_state": "SUBMIT_NOT_ACCEPTED",
-            "failure_code": code,
-            "prior_edit_text_restored": restored,
-            "provider_state_verified": False,
-        },
-    )
+    record = {
+        "captured_at": datetime.now(UTC).isoformat(),
+        "provider": "camfrog",
+        "provider_version": process.version,
+        "pid": process.pid,
+        "window_role": window.role.value,
+        "route": args.route,
+        "status_length": len(args.status),
+        "client_state": "SUBMIT_NOT_ACCEPTED",
+        "failure_code": code,
+        "prior_edit_text_restored": restored,
+        "provider_state_verified": False,
+    }
+    if extra:
+        record.update(extra)
+    _append_log(args.log, record)
 
 
 def _submit_and_record(args, process, window, adapter) -> int:
@@ -243,6 +440,44 @@ def _submit_and_record(args, process, window, adapter) -> int:
         print("Target identity changed before submit.", file=sys.stderr)
         return 3
 
+    monitor = ForegroundEventMonitor(process.pid, before["foreground_hwnd"])
+    try:
+        monitor.start()
+    except Exception as exc:  # noqa: BLE001 - no submit without an active observer.
+        restored = _restore_prior_edit_text(prior_edit_text, process, window, adapter)
+        _record_pre_submit_failure(
+            args,
+            process,
+            window,
+            "FOREGROUND_MONITOR_UNAVAILABLE",
+            restored,
+            {
+                "foreground_monitor": "win_event_hook",
+                "foreground_monitor_error": type(exc).__name__,
+            },
+        )
+        print(
+            "Foreground event monitoring is unavailable; no submit route was sent.",
+            file=sys.stderr,
+        )
+        return 9 if restored else 8
+    if (
+        not revalidate_process_identity(process)
+        or not revalidate_window_identity(window, process)
+        or not adapter.controls_are_current(process.pid, window.hwnd)
+    ):
+        events = monitor.stop(minimum_duration=0.0)
+        restored = _restore_prior_edit_text(prior_edit_text, process, window, adapter)
+        _record_pre_submit_failure(
+            args,
+            process,
+            window,
+            "TARGET_IDENTITY_CHANGED",
+            restored,
+            events,
+        )
+        return 3 if restored else 8
+
     try:
         if args.route == "combo-post":
             sent = adapter.post_background_enter()
@@ -275,8 +510,10 @@ def _submit_and_record(args, process, window, adapter) -> int:
         while readback != args.status and time.monotonic() < deadline:
             time.sleep(0.05)
             readback = adapter.read_applied_status()
+        foreground_events = monitor.stop()
         after = _snapshot()
     except Exception as exc:  # noqa: BLE001 - an interrupted submit has an unknown outcome.
+        foreground_events = monitor.stop()
         edit_text_restored = _restore_prior_edit_text(
             prior_edit_text, process, window, adapter
         )
@@ -295,7 +532,8 @@ def _submit_and_record(args, process, window, adapter) -> int:
             "foreground_same_at_endpoints": None,
             "cursor_same_at_endpoints": None,
             "keyboard_state_same_at_endpoints": None,
-            "endpoint_snapshots_only": True,
+            "endpoint_snapshots_only": False,
+            **foreground_events,
             "provider_state_verified": False,
         }
         _append_log(args.log, record)
@@ -316,7 +554,7 @@ def _submit_and_record(args, process, window, adapter) -> int:
         "window_role": window.role.value,
         "route": args.route,
         "status_length": len(args.status),
-        "submit_message_accepted": bool(sent),
+        "route_message_dispatched": bool(sent),
         "client_state": (
             "CLIENT_STATE_CONFIRMED"
             if readback == args.status
@@ -340,15 +578,24 @@ def _submit_and_record(args, process, window, adapter) -> int:
             and after["keyboard_state_sha256"] is not None
             else None
         ),
-        "endpoint_snapshots_only": True,
+        "endpoint_snapshots_only": False,
+        **foreground_events,
         "provider_state_verified": False,
     }
     _append_log(args.log, record)
     print(json.dumps(record, sort_keys=True))
     print(f"Sanitized log: {args.log}")
-    print(
-        "A matching endpoint snapshot does not prove absence of transient focus changes."
-    )
+    if foreground_events["target_foreground_event_count"]:
+        print("Camfrog foreground activation was observed during the probe.")
+    elif (
+        foreground_events["foreground_monitor_error"]
+        or not foreground_events["foreground_monitor_stopped"]
+    ):
+        print("Foreground event monitoring was incomplete; isolation is unverified.")
+    else:
+        print(
+            "No Camfrog foreground event was observed during the WinEvent monitor window; this is not provider verification."
+        )
     if not edit_text_restored:
         return 8
     return 0 if sent and readback == args.status else 5

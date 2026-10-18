@@ -94,6 +94,11 @@ class StatusControlAdapter:
     """Low-level interface to Camfrog's CComboBoxTS and Edit controls."""
 
     MESSAGE_TIMEOUT_MS = 1000
+    WM_KEYDOWN = 0x0100
+    WM_KEYUP = 0x0101
+    VK_RETURN = 0x0D
+    RETURN_LPARAM_DOWN = 0x001C0001
+    RETURN_LPARAM_UP = 0xC01C0001
 
     def __init__(
         self,
@@ -110,9 +115,9 @@ class StatusControlAdapter:
     def supports_strict_background_submit(self) -> bool:
         """Whether this adapter has a submit path proven to preserve desktop state.
 
-        The current Camfrog 8.5 adapter submits with targeted Enter key messages.
-        Those messages avoid system-wide input injection, but live evidence showed
-        foreground activation, so they cannot satisfy the strict isolation contract.
+        The current Camfrog 8.5 adapter submits with targeted Enter key messages
+        to the status Edit control. A live WinEvent probe observed Camfrog
+        foreground activation on this route, so it cannot satisfy strict isolation.
         """
         return strict_background_submit_supported()
 
@@ -251,10 +256,11 @@ class StatusControlAdapter:
             return ""
 
     def post_background_enter(self) -> bool:
-        """Post legacy Enter key messages to CComboBoxTS without global injection.
+        """Post Enter key messages to the status Edit control without global input.
 
-        This method is not a strict-background capability: Camfrog may activate a
-        window while handling the messages. The strict executor refuses this path.
+        This method is not a strict-background capability: a live WinEvent probe
+        observed Camfrog foreground activation while handling these messages.
+        The strict executor refuses this path.
         """
         if sys.platform != "win32":
             return False
@@ -263,11 +269,18 @@ class StatusControlAdapter:
             if not self.controls_are_current():
                 return False
             user32 = ctypes.windll.user32
-            # Scan code for VK_RETURN (0x0D) is 0x1C
-            lparam_down = 0x001C0001
-            lparam_up = 0xC01C0001
-            res_down = user32.PostMessageW(self.combo_hwnd, 0x0100, 0x0D, lparam_down)
-            res_up = user32.PostMessageW(self.combo_hwnd, 0x0101, 0x0D, lparam_up)
+            res_down = user32.PostMessageW(
+                self.edit_hwnd,
+                self.WM_KEYDOWN,
+                self.VK_RETURN,
+                self.RETURN_LPARAM_DOWN,
+            )
+            res_up = user32.PostMessageW(
+                self.edit_hwnd,
+                self.WM_KEYUP,
+                self.VK_RETURN,
+                self.RETURN_LPARAM_UP,
+            )
             return bool(res_down and res_up)
         except Exception:
             return False

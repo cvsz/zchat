@@ -6,6 +6,27 @@ from types import SimpleNamespace
 from tools import probe_submit_routes as probe
 
 
+class FakeForegroundEventMonitor:
+    def __init__(self, _target_pid, _baseline_hwnd):
+        self.started = False
+
+    def start(self):
+        self.started = True
+
+    def stop(self, *, minimum_duration=2.0):
+        assert self.started
+        return {
+            "foreground_monitor": "win_event_hook",
+            "foreground_monitor_stopped": True,
+            "foreground_monitor_error": None,
+            "foreground_event_count": 0,
+            "target_foreground_event_count": 0,
+            "baseline_foreground_event_count": 0,
+            "other_foreground_event_count": 0,
+            "unknown_foreground_event_count": 0,
+        }
+
+
 def _runtime(monkeypatch, *, lock_error=None, stop_error=None):
     events = []
     process = SimpleNamespace(pid=1234)
@@ -154,6 +175,7 @@ def test_probe_logs_only_sanitized_client_evidence_and_restores_edit_text(
         log=tmp_path / "probe.jsonl",
     )
     monkeypatch.setattr(probe, "EmergencyStopRegistry", FakeRegistry)
+    monkeypatch.setattr(probe, "ForegroundEventMonitor", FakeForegroundEventMonitor)
     monkeypatch.setattr(probe, "revalidate_process_identity", lambda _: True)
     monkeypatch.setattr(probe, "revalidate_window_identity", lambda *_: True)
     monkeypatch.setattr(
@@ -169,7 +191,10 @@ def test_probe_logs_only_sanitized_client_evidence_and_restores_edit_text(
     assert result == 0
     assert adapter.edit_text == "prior draft"
     assert record["client_state"] == "CLIENT_STATE_CONFIRMED"
+    assert record["route_message_dispatched"] is True
     assert record["provider_state_verified"] is False
+    assert record["foreground_monitor"] == "win_event_hook"
+    assert record["target_foreground_event_count"] == 0
     assert "sensitive test status" not in args.log.read_text(encoding="utf-8")
 
 
@@ -207,6 +232,7 @@ def test_partial_stage_failure_restores_the_original_edit_text(monkeypatch, tmp_
         log=tmp_path / "probe.jsonl",
     )
     monkeypatch.setattr(probe, "EmergencyStopRegistry", FakeRegistry)
+    monkeypatch.setattr(probe, "ForegroundEventMonitor", FakeForegroundEventMonitor)
     monkeypatch.setattr(probe, "revalidate_process_identity", lambda _: True)
     monkeypatch.setattr(probe, "revalidate_window_identity", lambda *_: True)
     monkeypatch.setattr(probe, "_snapshot", lambda: {"foreground_hwnd": 9})
@@ -257,6 +283,7 @@ def test_route_exception_is_logged_as_unknown_and_restores_edit_text(
         log=tmp_path / "probe.jsonl",
     )
     monkeypatch.setattr(probe, "EmergencyStopRegistry", FakeRegistry)
+    monkeypatch.setattr(probe, "ForegroundEventMonitor", FakeForegroundEventMonitor)
     monkeypatch.setattr(probe, "revalidate_process_identity", lambda _: True)
     monkeypatch.setattr(probe, "revalidate_window_identity", lambda *_: True)
     monkeypatch.setattr(probe, "_snapshot", lambda: {"foreground_hwnd": 9})
@@ -270,4 +297,65 @@ def test_route_exception_is_logged_as_unknown_and_restores_edit_text(
     assert record["client_state"] == "EFFECT_UNKNOWN"
     assert record["failure_code"] == "SUBMIT_ROUTE_EXCEPTION"
     assert record["exception_type"] == "OSError"
+    assert record["foreground_monitor_stopped"] is True
     assert "private test text" not in content
+
+
+def test_probe_refuses_to_submit_when_foreground_observer_cannot_start(
+    monkeypatch, tmp_path, capsys
+):
+    class FakeRegistry:
+        def is_stopped(self, *_):
+            return False
+
+    class FakeAdapter:
+        edit_hwnd = 2345
+        combo_hwnd = 3456
+
+        def __init__(self):
+            self.edit_text = "prior draft"
+            self.applied_text = "previous status"
+
+        def controls_are_current(self, *_):
+            return True
+
+        def read_edit_text(self):
+            return self.edit_text
+
+        def write_text_no_focus(self, value):
+            self.edit_text = value
+            return True
+
+        def read_applied_status(self):
+            return self.applied_text
+
+    class UnavailableMonitor:
+        def __init__(self, *_):
+            pass
+
+        def start(self):
+            raise OSError("monitor unavailable")
+
+    adapter = FakeAdapter()
+    process = SimpleNamespace(pid=1234, version="8.5.0.51219")
+    window = SimpleNamespace(hwnd=4567, role=SimpleNamespace(value="main_directory"))
+    args = SimpleNamespace(
+        route="combo-post",
+        status="test status",
+        wparam=None,
+        log=tmp_path / "probe.jsonl",
+    )
+    monkeypatch.setattr(probe, "EmergencyStopRegistry", FakeRegistry)
+    monkeypatch.setattr(probe, "ForegroundEventMonitor", UnavailableMonitor)
+    monkeypatch.setattr(probe, "revalidate_process_identity", lambda _: True)
+    monkeypatch.setattr(probe, "revalidate_window_identity", lambda *_: True)
+    monkeypatch.setattr(probe, "_snapshot", lambda: {"foreground_hwnd": 9})
+
+    result = probe._submit_and_record(args, process, window, adapter)
+
+    assert result == 9
+    assert adapter.edit_text == "prior draft"
+    record = json.loads(args.log.read_text(encoding="utf-8"))
+    assert record["failure_code"] == "FOREGROUND_MONITOR_UNAVAILABLE"
+    assert record["foreground_monitor_error"] == "OSError"
+    assert "Foreground event monitoring is unavailable" in capsys.readouterr().err
