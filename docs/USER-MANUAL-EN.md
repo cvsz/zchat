@@ -18,10 +18,10 @@ Apps: `room-control`, `chat-im-private`, `status-random`, `status-marquee`, `sta
 ## 2. First run
 
 1. Open Camfrog and join a room (not tray-minimized).
-2. Open the app and use **Setup → Auto-detect** (room/im apps) or **Discover controls** (status/private-chat/web apps). This fills the control selectors automatically.
+2. Open the app. Standalone status apps save their loaded settings and attempt control discovery automatically; other apps use **Setup → Auto-detect** or **Discover controls** when needed. This fills the control selectors.
    Keep only the intended Camfrog client process within the configured window-title filter. If matching windows belong to multiple or unverifiable processes, the desktop apps stop instead of guessing which account to control.
 3. Keep `dry_run` ON while checking behavior. Dry-run only logs what *would* be sent.
-4. Keep dry-run enabled while checking behavior. Status Changer, Random, and Marquee live background workers currently return `BACKGROUND_UNSUPPORTED` before submitting because strict desktop-isolated submission is not verified. `web-status.exe` is a separate website-based feature.
+4. Keep dry-run enabled while checking behavior. Strict status submission returns `BACKGROUND_UNSUPPORTED`. The opt-in `best_effort_background` route may activate or flash Camfrog and does not verify provider delivery. Interactive submission waits for user inactivity before using desktop input. `web-status.exe` is a separate website-based feature; see `docs/STATUS-SUBMIT-MODES.md`.
 
 ## 3. Room Control
 
@@ -123,7 +123,7 @@ This feature configures Camfrog's server-installed plugins; it does not create o
 - Room/IM: GUI **Save & Start** / **Stop**, or CLI `start` / `state` / `stop` (hidden, no window). Status apps: own **Start**/**Stop** + bundled worker.
 - Each app writes logs beside its own config (`camfrog_auto.log` for source CLI). Hot reload: editing `config.json` while running applies valid changes in ~3 s; invalid edits are rejected and logged.
 - The combined Status Changer Activity Log includes GUI actions and worker output. Completed status text appears when `log_message_text` is enabled. Its activity and worker logs are cleared daily at 12:00 local time while the app is running; if closed then, cleanup runs on the next launch.
-- Status Changer, Random, and Marquee show a disabled **Strict background (currently unsupported)** control. Their current Camfrog 8.5 submit path is not verified to preserve desktop state, so strict mode returns `BACKGROUND_UNSUPPORTED` before writing or submitting a status. Interactive sends may affect foreground focus.
+- Strict background submission remains unsupported and returns `BACKGROUND_UNSUPPORTED`. The opt-in `best_effort_background` mode posts Enter to the status combo but may activate or flash Camfrog; provider state remains unverified. Interactive paths wait for 2 seconds of user inactivity (`ZCHAT_USER_IDLE_MS` overrides this; 0 disables the wait) and defer after 120 seconds of continued activity. Status worker startup creates the data folder and waits for verified PID authorization before entering its loop.
 - Other status sends may require Camfrog in the foreground. Camfrog must be open (minimized is OK only if controls are still reachable — verify with Discover).
 
 ## 12. Troubleshooting
@@ -133,7 +133,7 @@ This feature configures Camfrog's server-installed plugins; it does not create o
 | `pywin32 ... no matching distribution` | Install CPython 3.12 64-bit, delete `.venv`, rerun `build.bat`. |
 | Auto-detect finds nothing | Open a chat room (not tray-minimized) and retry; then Discover controls. |
 | Old `requirements.txt (line 1)` pywinauto-only error | You run an older copy — extract the newest zip into a new empty folder. |
-| Status background worker refuses a live request | Expected while strict submission is unverified: it returns `BACKGROUND_UNSUPPORTED` before writing or submitting. Keep dry-run enabled; do not switch to interactive submission when desktop isolation is required. |
+| Status worker refuses a live request | Strict mode is expected to return `BACKGROUND_UNSUPPORTED`. Choose `best_effort_background` only if possible Camfrog activation is acceptable; provider delivery remains unverified. Interactive mode waits for user inactivity but can still affect focus. |
 | Error sound on every status change | Try **combo Enter (test)** in dry-run mode first. Review the activity log before enabling live status changes. |
 | Wrong/old window driven | Fix **Window title regex**, re-run Auto-detect. |
 | Explorer shows old icon after rebuild | Windows icon cache: rename/move the exe or restart Explorer. |

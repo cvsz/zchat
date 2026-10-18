@@ -7,6 +7,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+- Create each status app data directory before clearing PID/start-gate files or launching its worker, so a fresh install can register and authorize the worker instead of leaving an unverified child running.
+- Document the current status submit trade-offs, interactive user-activity wait, automatic standalone status-app setup, and worker startup handshake consistently across the English and Thai guides.
+
 ### Added
 - Added process-level runtime-adapter regression tests for identity revalidation and ownership, plus Windows-only GUI/HWND cases using a controlled fixture process.
 - Added an approximate build countdown to the full-build logger, calibrated from the median duration of recent successful builds with a ten-minute fallback.

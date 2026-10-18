@@ -22,7 +22,7 @@
 
 หน้า **Bot Manager** ของ Web Status ควบคุมคิวใน `music-dj.exe` แยกตัวผ่านไฟล์ในเครื่อง และอ่าน/ควบคุม vMix บนเครื่องเดียวกันได้ Music DJ รับ URL หรือ ID YouTube เข้าคิว เปิด player มาตรฐานที่มองเห็นได้ และเลื่อนคิวตาม event เล่น/จบเพลง ดูขอบเขตและรายการตรวจรับ Windows ที่ [`docs/zBOT-Youtube-MUSIC-DJ.md`](docs/zBOT-Youtube-MUSIC-DJ.md)
 
-Room Control และ IM Auto-reply ใช้ `config.json` แยกกัน ส่วน Chat IM Private ใช้ `private-chat-config.json` และ Random/Marquee ใช้ `camfrog-status-config.json` ในโฟลเดอร์ข้อมูลคนละชุด แต่ละแอปแยก pool, log, ประวัติ และ worker ปุ่ม **Start** จะบันทึกค่าและเริ่ม worker ของแอปนั้น
+Room Control และ IM Auto-reply ใช้ `config.json` แยกกัน ส่วน Chat IM Private ใช้ `private-chat-config.json` และ Random/Marquee ใช้ `camfrog-status-config.json` ในโฟลเดอร์ข้อมูลคนละชุด แต่ละแอปแยก pool, log, ประวัติ และ worker แอปสถานะแบบ standalone จะบันทึกค่าที่โหลดและลองค้นหา control เมื่อเปิดโปรแกรม ปุ่ม **Start** สร้างโฟลเดอร์ข้อมูล เปิด worker และรอการลงทะเบียน/อนุญาต PID ก่อนเริ่มส่งสถานะ
 
 ## สร้าง exe
 
@@ -46,7 +46,7 @@ Room Control และ IM Auto-reply ใช้ `config.json` แยกกัน 
 1. เปิด Camfrog แล้วเข้าห้อง สำหรับ Camfrog 8.x เปิด `room-control.exe` แล้วใช้ **Setup → Auto-detect** ผลวิเคราะห์: `docs/CAMFROG-8.5-FINDINGS.md`
 2. แก้ `config.json` ของแอปนั้น ตั้งนิค ตั้งกฎตอบ คง `dry_run` ไว้ขณะทดสอบ
 3. ใช้ `im-autoreply.exe` สำหรับตอบ IM ส่วนตัว config และ log แยกจาก Room Control
-4. ใช้ `status-random.exe` หรือ `status-marquee.exe` สำหรับแอปแยก หรือ `status-changer.exe` สำหรับหน้ารวมพร้อม Activity Log แต่ละแอปเก็บข้อมูลของตัวเอง ให้คงโหมดทดลองไว้ก่อน: การส่งจริงผ่าน worker เบื้องหลังจะหยุดด้วย `BACKGROUND_UNSUPPORTED` เพราะเส้นทางส่งของ Camfrog ยังไม่ผ่านการยืนยันว่าไม่รบกวน desktop ส่วน `web-status.exe` เป็นฟีเจอร์แยกที่ใช้เว็บไซต์
+4. ใช้ `status-random.exe` หรือ `status-marquee.exe` สำหรับแอปแยก หรือ `status-changer.exe` สำหรับหน้ารวมพร้อม Activity Log แต่ละแอปเก็บข้อมูลของตัวเอง โหมด strict background ยังหยุดด้วย `BACKGROUND_UNSUPPORTED` ส่วน `best_effort_background` จะโพสต์ Enter ไปยัง combo สถานะ แต่ Camfrog อาจดึงหน้าต่างขึ้นหรือกะพริบ และยังไม่ยืนยันผลจากผู้ให้บริการ โหมด interactive จะรอให้ผู้ใช้หยุดใช้งาน desktop ก่อนส่ง ดู [`docs/STATUS-SUBMIT-MODES.md`](docs/STATUS-SUBMIT-MODES.md) ส่วน `web-status.exe` เป็นฟีเจอร์แยก
 5. เปิดแชทส่วนตัวใน Camfrog แล้วใช้ `chat-im-private.exe` refresh และโฟกัสหน้าต่าง ปุ่ม **Discover controls** ดึงรายการ control ลง `controls.txt` เพื่อตั้ง selector เหมือนแอปอื่น
 
 คำสั่ง `python camfrog_auto.py ...` ยังใช้เป็น CLI สำหรับพัฒนา โดยใช้ `config.json` ในเครื่องซึ่ง Git จะไม่ติดตาม สร้างได้ด้วย `python camfrog_auto.py init --config config.json` หรือคัดลอกจาก `config.example.json` ส่วน CI และ build ตรวจด้วยตัวอย่างที่ปลอดภัย CLI นี้ไม่ใช่หนึ่งในแปดแอปที่ build คำสั่งใน `extras\*.bat` เป็นทางลัด ยกเว้น `extras\gui.bat` ที่เปิด `dist\room-control\room-control.exe` ที่ build แล้ว
@@ -69,7 +69,7 @@ Room Control และ IM Auto-reply มีปุ่ม **Save & Start** กั�
 
 แต่ละแอปบันทึก log ในโฟลเดอร์ของ config ตัวเอง ส่วน source CLI ใช้ `camfrog_auto.log` ในโฟลเดอร์ repository
 
-**ส่งสถานะเบื้องหลังแบบเข้มงวด:** Status Changer, Random และ Marquee ค้นหา control ของ Camfrog ได้ แต่ยังยืนยันไม่ได้ว่าเส้นทางส่งสถานะของ Camfrog 8.5 รักษาสภาพ desktop โดยไม่รบกวนผู้ใช้ โหมด strict จึงคืน `BACKGROUND_UNSUPPORTED` ก่อนเขียนหรือส่งสถานะ การค้นพบหน้าต่างหรือการย่อหน้าต่างไม่ได้ยืนยันว่ารองรับการอัปเดตเบื้องหลัง โหมด interactive อาจเปลี่ยนโฟกัสหน้าต่าง การตอบแชทในห้องใช้ช่องกรอกอีกชนิดหนึ่งและต้องให้หน้าต่างห้องอยู่หน้าสุด
+**การส่งสถานะ:** โหมด strict background คืน `BACKGROUND_UNSUPPORTED` ก่อนเขียนหรือส่ง เพราะยังไม่มีเส้นทาง Camfrog 8.5 ที่ยืนยันว่าไม่ activate หน้าต่าง โหมด `best_effort_background` โพสต์ Enter ไปยัง combo สถานะโดยไม่ใช้อินพุตเมาส์/คีย์บอร์ดทั่วระบบ แต่ Camfrog อาจดึงหน้าต่างขึ้นหรือกะพริบ และการส่ง/อ่านค่ากลับในเครื่องไม่ยืนยันว่าผู้ให้บริการได้รับสถานะ เส้นทาง interactive ที่ใช้โฟกัส เมาส์ หรือปุ่มจริงจะรอให้ไม่มีการใช้งาน 2 วินาที (ปรับด้วย `ZCHAT_USER_IDLE_MS`; 0 ปิดการรอ) และเลื่อนการส่งหากผู้ใช้ยังทำงานต่อเนื่องเกิน 120 วินาที วิธีนี้ลดการชนกับผู้ใช้ แต่ไม่ได้ทำให้การส่งไม่ activate หน้าต่าง การเริ่ม worker สร้างโฟลเดอร์ข้อมูลและรอการอนุญาต PID ก่อนเข้าลูป ส่วนการตอบแชทในห้องใช้ช่องกรอกอีกชนิดหนึ่งและต้องให้หน้าต่างห้องอยู่หน้าสุด
 
 ## สถานะเลื่อน + สลับจากประวัติ
 
@@ -77,8 +77,8 @@ Room Control และ IM Auto-reply มีปุ่ม **Save & Start** กั�
 - **สลับจากประวัติ** (`status.history`): ทุก status ที่ตั้งถูกเก็บลง `status_history.json` ถ้าเปิด `use_as_source` จะสลับเลือกจากประวัติให้อัตโนมัติ (`rotate` = วนรอบ, `random`, `most_used`) ข้อความใน `status.messages` ถูกใส่เข้าไปอัตโนมัติ
 - **สลับไทย-อังกฤษอัตโนมัติ** (`status.language_cycle: ["th","en"]`): สลับไทย→อังกฤษ→ไทย… ทุกครั้งที่เปลี่ยน status ใช้ได้ทั้งประวัติและข้อความปกติ
 - **ความปลอดภัย:** ทุกเฟรมคือการเปลี่ยน status จริง จึงจำกัดความถี่ขั้นต่ำ 0.3 วินาที ควรตั้งช่วงเวลาให้เหมาะสมและเริ่มด้วย `dry_run: true`
-- **ส่งสถานะจริง:** แอปสถานะเริ่มในโหมดทดลอง ปุ่ม **Save Data** บันทึกค่าเท่านั้น คำสั่ง **Start** แบบ live จะคืน `BACKGROUND_UNSUPPORTED` ก่อนเปลี่ยนสถานะ เพราะเส้นทางส่งยังไม่ผ่านข้อกำหนดห้ามรบกวน desktop อย่าใช้โหมด interactive หากต้องรักษา desktop ไว้ เพราะอาจเปลี่ยนโฟกัส `web-status.exe` ใช้เส้นทางเว็บไซต์แยกต่างหากและมีข้อจำกัดด้านการยืนยันตัวตน/ผลลัพธ์แยกกัน
-- **ตัวเลือก background status:** ช่อง **Strict background (currently unsupported)** ถูกปิดไว้เพื่อแจ้งข้อจำกัด และยังไม่สามารถส่งสถานะได้ ดู `status.execution_mode` ใน `CONFIG-TH.md`
+- **ส่งสถานะจริง:** แอปสถานะเริ่มในโหมดทดลอง ปุ่ม **Save Data** บันทึกค่าเท่านั้น โหมด strict คืน `BACKGROUND_UNSUPPORTED`; `best_effort_background` ต้องเลือกใช้เองและอาจดึงหน้าต่าง Camfrog ขึ้นมา โดยผลจากผู้ให้บริการยังไม่ยืนยัน โหมด interactive รอให้ desktop ว่างก่อนใช้โฟกัสหรืออินพุตจริง `web-status.exe` ใช้เส้นทางเว็บไซต์แยกต่างหาก
+- **ตัวเลือก background status:** เลือก `strict_background` เพื่อปฏิเสธแบบ fail-closed หรือเลือก `best_effort_background` เพื่อโพสต์ Enter ไปยัง combo โดยยอมรับว่า Camfrog อาจ activate หน้าต่าง ดู `status.execution_mode` ใน `CONFIG-TH.md` และ `docs/STATUS-SUBMIT-MODES.md`
 
 ดูตัวอย่างโดยไม่ต้องเปิด Camfrog:
 ```

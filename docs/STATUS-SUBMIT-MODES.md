@@ -13,14 +13,24 @@ mode is used by its worker. To stop a worker, use its Stop control. Check the
 sanitized worker log and verify the resulting status through another Camfrog
 account's friend list. Local control readback is not provider verification.
 
+Interactive submission can focus Camfrog, click controls, or send real
+keystrokes. Before these input-injecting paths, the app waits for 2 seconds of
+user inactivity (`ZCHAT_USER_IDLE_MS` overrides the delay; `0` disables the
+wait). If input continues for 120 seconds, that attempt is deferred. This
+reduces collisions with active use; it does not guarantee that Camfrog will not
+activate or flash. `strict_background` and `best_effort_background` use
+targeted window messages rather than global keyboard or mouse input.
+
 ### Worker startup handshake
 
 Hidden status workers write their PID and wait for the launching GUI to verify
 it before entering the status loop. If registration is not verified, the
 parent does not authorize status work and the child exits after its bounded
 startup wait. This prevents a worker from submitting while the GUI reports a
-startup failure. It does not make `best_effort_background` non-activating or
-prove delivery to Camfrog's servers.
+startup failure. The launcher creates the app's data directory before touching
+PID or gate files, including on first run. Standalone status apps save loaded
+settings and attempt control discovery on open. This does not make
+`best_effort_background` non-activating or prove delivery to Camfrog's servers.
 
 ## Separate desktop launcher
 
