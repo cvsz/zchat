@@ -133,6 +133,34 @@ def test_probe_refuses_live_route_without_explicit_confirmation(monkeypatch, cap
     assert "Refusing to submit" in capsys.readouterr().out
 
 
+def test_non_global_route_matrix_covers_edit_send_without_keyboard_injection():
+    assert probe.ROUTES == (
+        "combo-post",
+        "combo-send",
+        "edit-char",
+        "edit-post",
+        "edit-send",
+        "parent-msg",
+    )
+
+
+def test_edit_send_uses_bounded_messages_on_edit_hwnd(monkeypatch):
+    messages = []
+
+    def send(hwnd, message, wparam, lparam, timeout):
+        messages.append((hwnd, message, wparam, lparam, timeout))
+        return 1
+
+    monkeypatch.setattr(probe, "_send_message_timeout", send)
+
+    assert probe._send_enter(2345) is True
+    assert [message[:3] for message in messages] == [
+        (2345, probe.WM_KEYDOWN, probe.VK_RETURN),
+        (2345, probe.WM_KEYUP, probe.VK_RETURN),
+    ]
+    assert all(message[4] == probe.MESSAGE_TIMEOUT_MS for message in messages)
+
+
 def test_probe_logs_only_sanitized_client_evidence_and_restores_edit_text(
     monkeypatch, tmp_path
 ):
@@ -196,6 +224,79 @@ def test_probe_logs_only_sanitized_client_evidence_and_restores_edit_text(
     assert record["foreground_monitor"] == "win_event_hook"
     assert record["target_foreground_event_count"] == 0
     assert "sensitive test status" not in args.log.read_text(encoding="utf-8")
+
+
+def test_foreground_monitor_covers_staging_submit_and_draft_restore(
+    monkeypatch, tmp_path
+):
+    events = []
+
+    class FakeRegistry:
+        def is_stopped(self, *_):
+            return False
+
+    class RecordingMonitor(FakeForegroundEventMonitor):
+        def start(self):
+            events.append("monitor_start")
+            super().start()
+
+        def stop(self, *, minimum_duration=2.0):
+            events.append("monitor_stop")
+            return super().stop(minimum_duration=minimum_duration)
+
+    class FakeAdapter:
+        edit_hwnd = 2345
+        combo_hwnd = 3456
+
+        def __init__(self):
+            self.edit_text = "prior draft"
+            self.applied_text = "previous status"
+
+        def controls_are_current(self, *_):
+            return True
+
+        def read_edit_text(self):
+            return self.edit_text
+
+        def write_text_no_focus(self, value):
+            events.append("restore" if value == "prior draft" else "stage")
+            self.edit_text = value
+            return True
+
+        def read_applied_status(self):
+            return self.applied_text
+
+        def post_background_enter(self):
+            events.append("submit")
+            self.applied_text = self.edit_text
+            return True
+
+    adapter = FakeAdapter()
+    process = SimpleNamespace(pid=1234, version="8.5.0.51219")
+    window = SimpleNamespace(hwnd=4567, role=SimpleNamespace(value="main_directory"))
+    args = SimpleNamespace(
+        route="combo-post",
+        status="test status",
+        wparam=None,
+        log=tmp_path / "probe.jsonl",
+    )
+    monkeypatch.setattr(probe, "EmergencyStopRegistry", FakeRegistry)
+    monkeypatch.setattr(probe, "ForegroundEventMonitor", RecordingMonitor)
+    monkeypatch.setattr(probe, "revalidate_process_identity", lambda _: True)
+    monkeypatch.setattr(probe, "revalidate_window_identity", lambda *_: True)
+    monkeypatch.setattr(
+        probe,
+        "_snapshot",
+        lambda: {"foreground_hwnd": 9, "cursor": [1, 2], "keyboard_state_sha256": "x"},
+    )
+    monkeypatch.setattr(probe.time, "sleep", lambda _: None)
+
+    result = probe._submit_and_record(args, process, window, adapter)
+
+    assert result == 0
+    assert events.index("monitor_start") < events.index("stage")
+    assert events.index("submit") < events.index("restore")
+    assert events.index("restore") < events.index("monitor_stop")
 
 
 def test_partial_stage_failure_restores_the_original_edit_text(monkeypatch, tmp_path):

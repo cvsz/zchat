@@ -53,7 +53,17 @@ WINEVENT_OUTOFCONTEXT = 0x0000
 WM_QUIT = 0x0012
 PM_NOREMOVE = 0x0000
 
-ROUTES = ("combo-post", "edit-char", "edit-post", "combo-send", "parent-msg")
+# Matrix of non-global-input paths found in the Status Changer source: posted or
+# synchronous Enter to the status Edit/combo, WM_CHAR, and observed-shape parent
+# WM_COMMAND notifications. Do not add global key/mouse injection here.
+ROUTES = (
+    "combo-post",
+    "combo-send",
+    "edit-char",
+    "edit-post",
+    "edit-send",
+    "parent-msg",
+)
 
 
 def _snapshot() -> dict[str, object]:
@@ -388,6 +398,38 @@ def _record_pre_submit_failure(
 def _submit_and_record(args, process, window, adapter) -> int:
     before = _snapshot()
     prior_edit_text = adapter.read_edit_text()
+    monitor = ForegroundEventMonitor(process.pid, before["foreground_hwnd"])
+    try:
+        # Start observing before any mutating control message. Monitoring only
+        # from the Enter dispatch misses activation caused by WM_SETTEXT or the
+        # subsequent EN_CHANGE notification.
+        monitor.start()
+    except Exception as exc:  # noqa: BLE001 - never mutate without an observer.
+        _record_pre_submit_failure(
+            args,
+            process,
+            window,
+            "FOREGROUND_MONITOR_UNAVAILABLE",
+            True,
+            {
+                "foreground_monitor": "win_event_hook",
+                "foreground_monitor_error": type(exc).__name__,
+            },
+        )
+        print(
+            "Foreground event monitoring is unavailable; no status control was changed.",
+            file=sys.stderr,
+        )
+        return 9
+
+    foreground_events: dict[str, object] | None = None
+
+    def stop_monitor(*, minimum_duration: float = 2.0) -> dict[str, object]:
+        nonlocal foreground_events
+        if foreground_events is None:
+            foreground_events = monitor.stop(minimum_duration=minimum_duration)
+        return foreground_events
+
     try:
         staged = adapter.write_text_no_focus(args.status)
         staged_readback = adapter.read_edit_text()
@@ -396,20 +438,26 @@ def _submit_and_record(args, process, window, adapter) -> int:
         staged_readback = ""
     if not staged or staged_readback != args.status:
         restored = _restore_prior_edit_text(prior_edit_text, process, window, adapter)
+        events = stop_monitor(minimum_duration=0.0)
         print(
             "Could not stage and read back the status text; no submit route was sent.",
             file=sys.stderr,
         )
-        _record_pre_submit_failure(args, process, window, "TEXT_STAGE_FAILED", restored)
+        _record_pre_submit_failure(
+            args, process, window, "TEXT_STAGE_FAILED", restored, events
+        )
         return 4 if restored else 8
 
     stop_registry = EmergencyStopRegistry()
     if stop_registry.is_stopped(EmergencyStopScope.FEATURE, "camfrog.status-changer"):
         restored = _restore_prior_edit_text(prior_edit_text, process, window, adapter)
+        events = stop_monitor(minimum_duration=0.0)
         failure_code = (
             "EMERGENCY_STOP_ACTIVE" if restored else "EMERGENCY_STOP_RESTORE_FAILED"
         )
-        _record_pre_submit_failure(args, process, window, failure_code, restored)
+        _record_pre_submit_failure(
+            args, process, window, failure_code, restored, events
+        )
         if not restored:
             print(
                 "Emergency stop is active; restoring the prior edit text failed.",
@@ -427,10 +475,13 @@ def _submit_and_record(args, process, window, adapter) -> int:
         or not adapter.controls_are_current(process.pid, window.hwnd)
     ):
         restored = _restore_prior_edit_text(prior_edit_text, process, window, adapter)
+        events = stop_monitor(minimum_duration=0.0)
         failure_code = (
             "TARGET_IDENTITY_CHANGED" if restored else "TARGET_RESTORE_FAILED"
         )
-        _record_pre_submit_failure(args, process, window, failure_code, restored)
+        _record_pre_submit_failure(
+            args, process, window, failure_code, restored, events
+        )
         if not restored:
             print(
                 "Target changed before submit; restoring the prior edit text failed.",
@@ -440,34 +491,13 @@ def _submit_and_record(args, process, window, adapter) -> int:
         print("Target identity changed before submit.", file=sys.stderr)
         return 3
 
-    monitor = ForegroundEventMonitor(process.pid, before["foreground_hwnd"])
-    try:
-        monitor.start()
-    except Exception as exc:  # noqa: BLE001 - no submit without an active observer.
-        restored = _restore_prior_edit_text(prior_edit_text, process, window, adapter)
-        _record_pre_submit_failure(
-            args,
-            process,
-            window,
-            "FOREGROUND_MONITOR_UNAVAILABLE",
-            restored,
-            {
-                "foreground_monitor": "win_event_hook",
-                "foreground_monitor_error": type(exc).__name__,
-            },
-        )
-        print(
-            "Foreground event monitoring is unavailable; no submit route was sent.",
-            file=sys.stderr,
-        )
-        return 9 if restored else 8
     if (
         not revalidate_process_identity(process)
         or not revalidate_window_identity(window, process)
         or not adapter.controls_are_current(process.pid, window.hwnd)
     ):
-        events = monitor.stop(minimum_duration=0.0)
         restored = _restore_prior_edit_text(prior_edit_text, process, window, adapter)
+        events = stop_monitor(minimum_duration=0.0)
         _record_pre_submit_failure(
             args,
             process,
@@ -498,6 +528,8 @@ def _submit_and_record(args, process, window, adapter) -> int:
                     adapter.edit_hwnd, WM_KEYUP, VK_RETURN, _enter_lparam(key_up=True)
                 )
             )
+        elif args.route == "edit-send":
+            sent = _send_enter(adapter.edit_hwnd)
         elif args.route == "combo-send":
             sent = _send_enter(adapter.combo_hwnd)
         else:
@@ -510,13 +542,18 @@ def _submit_and_record(args, process, window, adapter) -> int:
         while readback != args.status and time.monotonic() < deadline:
             time.sleep(0.05)
             readback = adapter.read_applied_status()
-        foreground_events = monitor.stop()
-        after = _snapshot()
-    except Exception as exc:  # noqa: BLE001 - an interrupted submit has an unknown outcome.
-        foreground_events = monitor.stop()
+        # Restore the local draft before ending observation so recovery itself
+        # is also covered by the foreground-event record.
         edit_text_restored = _restore_prior_edit_text(
             prior_edit_text, process, window, adapter
         )
+        foreground_events = stop_monitor()
+        after = _snapshot()
+    except Exception as exc:  # noqa: BLE001 - an interrupted submit has an unknown outcome.
+        edit_text_restored = _restore_prior_edit_text(
+            prior_edit_text, process, window, adapter
+        )
+        foreground_events = stop_monitor(minimum_duration=0.0)
         record = {
             "captured_at": datetime.now(UTC).isoformat(),
             "provider": "camfrog",
@@ -541,9 +578,6 @@ def _submit_and_record(args, process, window, adapter) -> int:
         print(f"Sanitized log: {args.log}")
         return 5 if edit_text_restored else 8
 
-    edit_text_restored = _restore_prior_edit_text(
-        prior_edit_text, process, window, adapter
-    )
     if not edit_text_restored:
         print("Probe ended; restoring the prior edit text failed.", file=sys.stderr)
     record = {
