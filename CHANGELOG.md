@@ -8,6 +8,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 ### Added
+- Added an opt-in `best_effort_background` status mode to Status Changer, Random Status, and Marquee Status. It uses `combo-post`, warns that Camfrog may activate or flash, and keeps provider outcomes explicitly unverified; see `docs/STATUS-SUBMIT-MODES.md`.
+- Added a Windows-only CreateDesktop Camfrog launcher for manual isolation testing. Native Camfrog behavior remains unverified until tested in a Windows session.
 - Added repository structure and Markdown-link validation to the main GitHub CI job.
 - Added the LINE unit suite to the fast Linux CI job as well as its Windows packaging gate.
 - Added ZChat client and LINE unit suites to the cross-platform `make test` target.

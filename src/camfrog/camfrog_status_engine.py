@@ -1023,8 +1023,12 @@ def validate_status_config(cfg: Dict[str, Any]) -> Tuple[bool, List[str], Dict[s
     safety_sec.setdefault("allow_system_sound_changes", False)
 
     mode = status_sec.get("execution_mode")
-    if mode not in ("strict_background", "interactive"):
-        errors.append(f"Invalid status.execution_mode: {mode!r} (must be 'strict_background' or 'interactive')")
+    if mode not in ("strict_background", "best_effort_background", "interactive"):
+        errors.append(
+            "Invalid status.execution_mode: "
+            f"{mode!r} (must be 'strict_background', "
+            "'best_effort_background', or 'interactive')"
+        )
 
     target = status_sec.get("background_enter_target")
     if target not in ("combo", "edit"):

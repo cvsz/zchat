@@ -656,7 +656,7 @@ def apply_app_profile(cfg):
             # Keep the explicit local test route consistent across parent and worker.
             status["execution_mode"] = "interactive"
             status["background_enter_target"] = "combo"
-        else:
+        elif status.get("execution_mode") != "best_effort_background":
             # Normal standalone workers remain fail-closed.
             status["execution_mode"] = "strict_background"
     elif APP_PROFILE == "music":
@@ -798,9 +798,11 @@ def _validate(cfg, errs, warns):
         if st.get("execution_mode", "interactive") not in (
             "interactive",
             "strict_background",
+            "best_effort_background",
         ):
             errs.append(
-                "status.execution_mode must be interactive or strict_background"
+                "status.execution_mode must be interactive, strict_background, "
+                "or best_effort_background"
             )
         mq, hs = st["marquee"], st["history"]
         try:
@@ -1499,13 +1501,15 @@ def commit(
     # its verified CComboBoxTS parent. Explicit combo mode uses the same path
     # even while Camfrog is foreground (useful on builds that beep on Edit Enter).
     unverified_test_submit = _unverified_status_test_submit_enabled()
+    best_effort = execution_mode == "best_effort_background"
     background_submit = apply_btn is None and (
-        (unverified_test_submit and background_if_not_foreground)
+        best_effort
+        or (unverified_test_submit and background_if_not_foreground)
         or background_enter_target == "combo"
         or not require_fg
         or (background_if_not_foreground and not window_is_foreground)
     )
-    submit_target = background_enter_target
+    submit_target = "combo" if best_effort else background_enter_target
     # Always submit through the verified combo parent. Posting Enter directly
     # to Camfrog's child Edit can produce a Windows ding on supported builds.
     # Combo submission has independently observed foreground activation, so it
@@ -1552,11 +1556,11 @@ def commit(
                         type(exc).__name__,
                     )
                 raise
-            if unverified_test_submit:
+            if unverified_test_submit or best_effort:
                 log.warning(
                     "STATUS_SUBMIT=DISPATCHED_UNVERIFIED route=%s; "
-                    "the combo route may activate Camfrog; verify in another "
-                    "Camfrog account's friend list",
+                    "best-effort combo-post may activate or flash Camfrog; "
+                    "verify in another Camfrog account's friend list",
                     f"{submit_target}-post",
                 )
     if (
@@ -3076,6 +3080,12 @@ class Runner:
 def _strict_status_start_blocked(cfg, emit=print):
     """Fail closed before a status worker starts when live submit is unverified."""
     if cfg.get("dry_run", True) or not cfg.get("status", {}).get("enabled", True):
+        return False
+    if cfg.get("status", {}).get("execution_mode") == "best_effort_background":
+        emit(
+            "BEST_EFFORT_BACKGROUND: combo-post may activate or flash Camfrog; "
+            "provider outcome remains unverified."
+        )
         return False
     if _unverified_status_test_submit_enabled():
         emit(
@@ -4679,6 +4689,8 @@ def runtime_config(config, mode="random"):
     if _unverified_status_test_submit_enabled():
         status["execution_mode"] = "interactive"
         status["background_enter_target"] = "combo"
+    elif status.get("execution_mode") == "best_effort_background":
+        status["background_enter_target"] = "combo"
     else:
         status["execution_mode"] = "strict_background"
     status["random"] = mode == "random"
@@ -5550,12 +5562,10 @@ def build_app():
             self.scroll_frames = tk.BooleanVar(
                 value=bool(self.config["status"]["marquee"].get("scroll", False))
             )
-            self.combo_enter = tk.BooleanVar(
-                value=(
-                    self.config["status"].get("background_enter_target", "edit")
-                    == "combo"
-                )
-            )
+            initial_submit_mode = self.config["status"].get("execution_mode", "strict_background")
+            if initial_submit_mode not in ("strict_background", "best_effort_background"):
+                initial_submit_mode = "strict_background"
+            self.execution_mode = tk.StringVar(value=initial_submit_mode)
             self.live_send = tk.BooleanVar(value=not self.config.get("dry_run", True))
             try:
                 self._load_fields()
@@ -5570,7 +5580,7 @@ def build_app():
                 self.random_fields
                 + self.marquee_fields
                 + list(self.intervals.values())
-                + [self.step, self.stride, self.live_send]
+                + [self.step, self.stride, self.live_send, self.execution_mode]
             ):
                 variable.trace_add("write", self.schedule_save)
             self._build()
@@ -5623,9 +5633,11 @@ def build_app():
                 self.config_path = self.config_paths[mode]
                 self.config = load_cfg(self.config_path)
                 self.live_send.set(not self.config.get("dry_run", True))
-                self.combo_enter.set(
-                    self.config["status"].get("background_enter_target", "edit")
-                    == "combo"
+                submit_mode = self.config["status"].get("execution_mode", "strict_background")
+                self.execution_mode.set(
+                    submit_mode if submit_mode in (
+                        "strict_background", "best_effort_background"
+                    ) else "strict_background"
                 )
                 status = self.config["status"]
                 if mode == "random":
@@ -5953,11 +5965,22 @@ def build_app():
             ).pack(side="left")
             ttk.Checkbutton(
                 options,
-                text=self._tr("Strict background (currently unsupported)", "โหมดเบื้องหลังเข้มงวด (ยังไม่รองรับ)"),
-                variable=self.combo_enter,
-                command=self.schedule_save,
-                state="disabled",
-            ).pack(side="left", padx=(8, 0))
+                text=self._tr("Submit mode", "โหมดส่งสถานะ"),
+                style="Hint.TLabel",
+            ).pack(side="left", padx=(8, 3))
+            ttk.Combobox(
+                options, textvariable=self.execution_mode, state="readonly", width=24,
+                values=("strict_background", "best_effort_background"),
+            ).pack(side="left")
+            self.execution_mode.trace_add("write", self.schedule_save)
+            ttk.Label(
+                outer,
+                text=self._tr(
+                    "Best-effort uses combo-post; Camfrog may flash or take focus. Strict currently refuses.",
+                    "Best-effort ใช้ combo-post; Camfrog อาจกระพริบหรือแย่งโฟกัส ส่วน Strict ยังปฏิเสธการส่ง",
+                ),
+                style="Hint.TLabel", wraplength=420,
+            ).pack(fill="x", pady=(0, 5))
             self._build_actions(outer)
             ttk.Label(
                 outer,
@@ -6385,8 +6408,9 @@ def build_app():
             )
             config["language"] = self.language_preference
             st = config["status"]
+            st["execution_mode"] = self.execution_mode.get()
             st["background_enter_target"] = (
-                "combo" if self.combo_enter.get() else "edit"
+                "combo" if st["execution_mode"] == "best_effort_background" else "edit"
             )
             if mode == "random":
                 try:

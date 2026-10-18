@@ -415,8 +415,10 @@ def apply_app_profile(cfg):
     elif APP_PROFILE == "status":
         result["autoreply"]["enabled"] = False
         result["autoreply_im"]["enabled"] = False
-        # This standalone worker must never inherit legacy foreground-input mode.
-        result.setdefault("status", {})["execution_mode"] = "strict_background"
+        # Preserve only the explicit opt-in best-effort mode; legacy configs stay fail-closed.
+        status = result.setdefault("status", {})
+        if status.get("execution_mode") != "best_effort_background":
+            status["execution_mode"] = "strict_background"
     elif APP_PROFILE == "music":
         result["status"]["enabled"] = False
         result["autoreply_im"]["enabled"] = False
@@ -544,8 +546,13 @@ def _validate(cfg, errs, warns):
             errs.append(t("e_sel", k="status.edit"))
         if st.get("background_enter_target", "edit") not in ("edit", "combo"):
             errs.append("status.background_enter_target must be edit or combo")
-        if st.get("execution_mode", "interactive") not in ("interactive", "strict_background"):
-            errs.append("status.execution_mode must be interactive or strict_background")
+        if st.get("execution_mode", "interactive") not in (
+            "interactive", "strict_background", "best_effort_background"
+        ):
+            errs.append(
+                "status.execution_mode must be interactive, strict_background, "
+                "or best_effort_background"
+            )
         mq, hs = st["marquee"], st["history"]
         try:
             inf = mq.get("infinite_loop", False)
@@ -1140,12 +1147,13 @@ def commit(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply_btn=N
     user32 = ctypes.windll.user32
     foreground = user32.GetForegroundWindow()
     window_is_foreground = foreground == getattr(win, "handle", None)
-    # Keep Camfrog out of the foreground when the user is working elsewhere.
-    # A non-foreground status update is submitted to the verified parent combo.
+    # Best-effort explicitly accepts occasional Camfrog activation to avoid
+    # the Edit-control ding observed with direct Edit Enter.
+    best_effort = execution_mode == "best_effort_background"
     background_submit = apply_btn is None and (
-        background_enter_target == "combo" or not require_fg or
+        best_effort or background_enter_target == "combo" or not require_fg or
         (background_if_not_foreground and not window_is_foreground))
-    submit_target = background_enter_target
+    submit_target = "combo" if best_effort else background_enter_target
     if background_submit and submit_target == "edit":
         # Always upgrade to "combo" for a background submit: posting Enter
         # directly to the child Edit control triggers a Windows ding on some
@@ -1181,6 +1189,12 @@ def commit(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply_btn=N
             ctrl.type_keys("{ENTER}")
         else:
             _background_enter(ctrl, submit_target)
+            if best_effort:
+                log.warning(
+                    "STATUS_SUBMIT=DISPATCHED_UNVERIFIED route=combo-post; "
+                    "best-effort mode may activate or flash Camfrog; verify "
+                    "the result in another Camfrog account's friend list"
+                )
     if (prev and prev != win.handle and user32.IsWindow(prev)
             and user32.GetForegroundWindow() != prev):
         time.sleep(0.15)
@@ -2453,6 +2467,12 @@ def _strict_status_start_blocked(cfg, emit=print):
     """Fail closed before a status worker starts when live submit is unverified."""
     if cfg.get("dry_run", True) or not cfg.get("status", {}).get("enabled", True):
         return False
+    if cfg.get("status", {}).get("execution_mode") == "best_effort_background":
+        emit(
+            "BEST_EFFORT_BACKGROUND: combo-post may activate or flash Camfrog; "
+            "provider outcome remains unverified."
+        )
+        return False
     try:
         from camfrog_status_engine import strict_background_submit_supported
 
@@ -3104,7 +3124,9 @@ def cli_main(argv=None, force_strict_background=False):
     try:
         cfg = apply_app_profile(load_cfg(cfg_path))
         if force_strict_background and APP_PROFILE == "status":
-            cfg.setdefault("status", {})["execution_mode"] = "strict_background"
+            status = cfg.setdefault("status", {})
+            if status.get("execution_mode") != "best_effort_background":
+                status["execution_mode"] = "strict_background"
     except Exception as e:
         print(t("cannot_load", e=e))
         return 2
@@ -3469,7 +3491,10 @@ def runtime_config(config):
     """Build isolated worker settings with PID and stop files owned by this app."""
     runtime = copy.deepcopy(config)
     status = runtime.setdefault("status", {})
-    status["execution_mode"] = "strict_background"
+    if status.get("execution_mode") == "best_effort_background":
+        status["background_enter_target"] = "combo"
+    else:
+        status["execution_mode"] = "strict_background"
     status["random"] = False
     status.setdefault("marquee", {})["enabled"] = True
     normalize_marquee_loop(runtime)
@@ -4024,8 +4049,12 @@ def build_app():
                 marquee.get("loop_slots", False) or marquee.get("infinite_loop", False)))
             self.scroll_frames = tk.BooleanVar(value=bool(
                 self.config["status"]["marquee"].get("scroll", False)))
-            self.combo_enter = tk.BooleanVar(value=(
-                self.config["status"].get("background_enter_target", "edit") == "combo"))
+            self.execution_mode = tk.StringVar(
+                value=self.config["status"].get("execution_mode", "strict_background")
+                if self.config["status"].get("execution_mode") in (
+                    "strict_background", "best_effort_background"
+                ) else "strict_background"
+            )
             self.live_send = tk.BooleanVar(value=not self.config.get("dry_run", True))
             try:
                 self._load_fields()
@@ -4166,11 +4195,22 @@ def build_app():
             ).pack(side="left")
             ttk.Checkbutton(
                 options,
-                text=self._tr("Strict background (currently unsupported)", "โหมดเบื้องหลังเข้มงวด (ยังไม่รองรับ)"),
-                variable=self.combo_enter,
-                command=self.schedule_save,
-                state="disabled",
-            ).pack(side="left", padx=(8, 0))
+                text=self._tr("Submit mode", "โหมดส่งสถานะ"),
+                style="Hint.TLabel",
+            ).pack(side="left", padx=(8, 3))
+            ttk.Combobox(
+                options, textvariable=self.execution_mode, state="readonly", width=24,
+                values=("strict_background", "best_effort_background"),
+            ).pack(side="left")
+            self.execution_mode.trace_add("write", self.schedule_save)
+            ttk.Label(
+                outer,
+                text=self._tr(
+                    "Best-effort uses combo-post; Camfrog may flash or take focus. Strict currently refuses.",
+                    "Best-effort ใช้ combo-post; Camfrog อาจกระพริบหรือแย่งโฟกัส ส่วน Strict ยังปฏิเสธการส่ง",
+                ),
+                style="Hint.TLabel", wraplength=420,
+            ).pack(fill="x", pady=(0, 5))
             self._build_actions(outer)
             ttk.Label(outer, text=f"ZCHAT {self.app_name.upper()}", style="Brand.TLabel",
                       anchor="center").pack(fill="x")
@@ -4303,7 +4343,10 @@ def build_app():
                 load_cfg(self.config_path), self.live_send.get())
             config["language"] = self.language_preference
             st = config["status"]
-            st["background_enter_target"] = "combo" if self.combo_enter.get() else "edit"
+            st["execution_mode"] = self.execution_mode.get()
+            st["background_enter_target"] = (
+                "combo" if st["execution_mode"] == "best_effort_background" else "edit"
+            )
             mq = st["marquee"]
             try:
                 mq["step_seconds"] = max(MARQUEE_STEP_MIN, float(self.step.get()))

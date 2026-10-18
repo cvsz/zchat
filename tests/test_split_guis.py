@@ -364,6 +364,22 @@ def test_status_standalone_profile_overrides_legacy_interactive_mode(name):
 @pytest.mark.parametrize(
     "name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"]
 )
+def test_status_profile_preserves_explicit_best_effort_mode(name):
+    mod = load(name)
+    configured = copy.deepcopy(mod.DEFAULTS)
+    configured["status"]["execution_mode"] = "best_effort_background"
+
+    profiled = mod.apply_app_profile(configured)
+    runtime = mod.runtime_config(profiled) if name != "status_changer_gui" else mod.runtime_config(profiled, "random")
+
+    assert profiled["status"]["execution_mode"] == "best_effort_background"
+    assert runtime["status"]["execution_mode"] == "best_effort_background"
+    assert runtime["status"]["background_enter_target"] == "combo"
+
+
+@pytest.mark.parametrize(
+    "name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"]
+)
 def test_status_commit_strict_mode_never_uses_foreground_input(name, monkeypatch):
     mod = load(name)
     win = SimpleNamespace(handle=100)
@@ -1054,6 +1070,39 @@ def test_combo_enter_option_uses_background_target_even_when_foreground_is_requi
         win, ctrl, "slot 2", False, require_fg=True, restore=True,
         background_enter_target="combo")
     assert events == [("write", "slot 2"), ("background_enter", ctrl, "combo")]
+
+
+@pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"]
+)
+def test_best_effort_mode_posts_to_combo_without_global_input(name, monkeypatch, caplog):
+    mod = load(name)
+    events = []
+    win = SimpleNamespace(handle=77)
+    ctrl = SimpleNamespace(
+        handle=88,
+        set_focus=lambda: pytest.fail("best-effort must not focus Camfrog"),
+        type_keys=lambda *_args: pytest.fail("best-effort must not inject keys"),
+    )
+    user32 = SimpleNamespace(
+        GetForegroundWindow=lambda: 55,
+        IsWindow=lambda _hwnd: True,
+        SetForegroundWindow=lambda _hwnd: pytest.fail("best-effort must not restore focus"),
+    )
+    monkeypatch.setattr(mod.ctypes, "windll", SimpleNamespace(user32=user32), raising=False)
+    monkeypatch.setattr(mod, "is_web", lambda _ctrl: False)
+    monkeypatch.setattr(mod, "write_text", lambda _ctrl, _text: True)
+    monkeypatch.setattr(
+        mod, "_background_enter",
+        lambda _ctrl, target: events.append(target),
+    )
+
+    assert mod.commit(
+        win, ctrl, "test", False, require_fg=True, restore=True,
+        execution_mode="best_effort_background",
+    )
+    assert events == ["combo"]
+    assert "may activate or flash Camfrog" in caplog.text
 
 
 @pytest.mark.parametrize(
