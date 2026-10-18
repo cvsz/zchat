@@ -83,4 +83,10 @@ On 2026-10-18, standalone Random and Marquee discovery was aligned with the comb
 - The control server explicitly documents that its Windows process/URI behavior lacks Windows runtime acceptance and that the service is not production-ready. See [control-server/README.md](../control-server/README.md).
 - The requested client reconstruction remains blocked by the absence of client source and a chat-server contract. See [the reconstruction status](../zchat-client-re/IMPLEMENTATION_STATUS.md).
 
+### Current full-build verification (2026-10-18)
+
+- The native Windows `.venv-runtime` full suite completed on the current ZChat head: 924 passed, 1 skipped, and 3 subtests passed. This is source-suite evidence, not packaged GUI acceptance.
+- The CI artifact at `test-builds/full-build-21e9577/dist/status-changer/status-changer.exe` records `commit=e5fe324f337a61dbcad08fc658f0284ddfba52f8` and `clean=true` in `BUILD_SOURCE.txt`. The feature ZIP passed CRC validation and all 8 executable hashes in `SHA256SUMS.txt`; ZIP SHA-256 is `fb04e1c41463f67b24671aced1ef78faeaca92427395f33de578e306eb15b644`.
+- Authenticode inspection reports the status-changer executable as `NotSigned`. A native Windows start attempt returned `Access is denied`, so packaged GUI/runtime acceptance was not completed. A read-only inspection found no matching Code Integrity or AppLocker event for this executable during the inspected period; the specific denial cause remains unknown. No Windows security setting was changed.
+
 No production-readiness or deployment claim is made by this audit.
