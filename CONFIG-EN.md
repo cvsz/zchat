@@ -22,7 +22,7 @@ Missing keys use built-in defaults. This reference covers the source CLI configu
 | `safety.restore_previous_window` | `true` | After sending, return focus to the window you were using. Set `false` to leave Camfrog's chat window in front; IM auto-reply scrolls its local reply echo into the chat viewport either way |
 | `safety.max_consecutive_failures` | `5` | Stop after N failed ticks in a row (backoff + re-attach) |
 | `status.enabled` | `true` | Rotate status |
-| `status.execution_mode` | `interactive` | `interactive` uses real desktop input and may affect focus; it waits for user inactivity (2 s by default, `ZCHAT_USER_IDLE_MS` override, 120 s maximum wait). `strict_background` fails closed with `BACKGROUND_UNSUPPORTED`. `best_effort_background` posts Enter to the status combo without global input, but Camfrog may activate or flash and provider delivery is unverified |
+| `status.execution_mode` | `interactive` | `interactive` uses real desktop input and may affect focus; it waits for user inactivity (2 s by default, `ZCHAT_USER_IDLE_MS` override, 120 s maximum wait). `strict_background` fails closed with `BACKGROUND_UNSUPPORTED`. `best_effort_background` is a legacy value rejected by live status workers because Camfrog may activate and interrupt keyboard input |
 | `status.edit` / `apply_button` | selectors / `null` | UIA selectors from `discover`; `apply_button` is invoked instead of Enter |
 | `status.background_enter_target` | `edit` | Legacy submit-target setting retained for compatibility. It does not override the strict-mode capability gate. Do not use it as evidence that a no-interference background status send is supported. |
 | `status.interval_seconds` | `600` | Minimum 0.3 |

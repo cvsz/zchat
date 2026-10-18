@@ -125,7 +125,7 @@ def test_explicit_unverified_test_mode_uses_combo_post_without_global_input(
         lambda _ctrl, target: events.append(("post-message", target)),
     )
 
-    assert combined_gui.commit(
+    assert not combined_gui.commit(
         win,
         ctrl,
         "test status",
@@ -134,7 +134,7 @@ def test_explicit_unverified_test_mode_uses_combo_post_without_global_input(
         background_if_not_foreground=True,
         execution_mode="interactive",
     )
-    assert events == [("post-message", "combo")]
+    assert events == []
 
 
 def test_status_profile_remains_strict_without_explicit_test_opt_in(monkeypatch):
@@ -231,6 +231,7 @@ def test_status_changer_start_waits_for_worker_pid_registration(
     monkeypatch.setattr(
         combined_gui.subprocess, "Popen", start_child
     )
+    monkeypatch.setattr(combined_gui, "_strict_status_start_blocked", lambda *_a, **_k: False)
     cfg = {
         "dry_run": False,
         "status": {"enabled": True, "execution_mode": "best_effort_background"},
@@ -315,6 +316,7 @@ def test_status_changer_start_stops_unregistered_child_on_timeout(
     monkeypatch.setattr(
         combined_gui.subprocess, "Popen", lambda *_args, **_kwargs: child
     )
+    monkeypatch.setattr(combined_gui, "_strict_status_start_blocked", lambda *_a, **_k: False)
     cfg = {
         "dry_run": False,
         "status": {"enabled": True, "execution_mode": "best_effort_background"},

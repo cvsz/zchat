@@ -10,6 +10,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [2.19.3] - 2026-10-19
 
 ### Fixed
+- Refuse live status submissions through `best_effort_background` and targeted combo-post when Camfrog is not already foreground. Windows runtime evidence showed combo-post can activate Camfrog and interrupt keyboard input; workers now fail closed before writing status text.
 - Room Control, IM Auto-reply, Music DJ, and Chat IM Private now attempt Camfrog control discovery after startup and persist detected selectors only after config validation. The combined Status Changer saves both Random and Marquee status pools and configs before starting discovery. Each app retains its inlined discovery implementation and remains an independent one-file executable.
 - Create each status app data directory before clearing PID/start-gate files or launching its worker, so a fresh install can register and authorize the worker instead of leaving an unverified child running.
 - Document the current status submit trade-offs, interactive user-activity wait, automatic standalone status-app setup, and worker startup handshake consistently across the English and Thai guides.
@@ -17,7 +18,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Added
 - Added process-level runtime-adapter regression tests for identity revalidation and ownership, plus Windows-only GUI/HWND cases using a controlled fixture process.
 - Added an approximate build countdown to the full-build logger, calibrated from the median duration of recent successful builds with a ten-minute fallback.
-- Added an opt-in `best_effort_background` status mode to Status Changer, Random Status, and Marquee Status. It uses `combo-post`, warns that Camfrog may activate or flash, and keeps provider outcomes explicitly unverified; see `docs/STATUS-SUBMIT-MODES.md`.
 - Added a Windows-only CreateDesktop Camfrog launcher for manual isolation testing. Native Camfrog behavior remains unverified until tested in a Windows session.
 - Added repository structure and Markdown-link validation to the main GitHub CI job.
 - Added the LINE unit suite to the fast Linux CI job as well as its Windows packaging gate.

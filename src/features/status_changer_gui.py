@@ -1496,11 +1496,27 @@ def commit(
     if dry:
         log.info(t("dry_send", text=shown(text)))
         return True
+    if execution_mode == "best_effort_background":
+        log.error(
+            "BEST_EFFORT_BACKGROUND_DISABLED: Camfrog combo-post can take "
+            "desktop focus and interrupt keyboard input; refusing status send."
+        )
+        return False
     if is_web(ctrl):
         return commit_web(win, ctrl, text, require_fg, restore)
     user32 = ctypes.windll.user32
     foreground = user32.GetForegroundWindow()
     window_is_foreground = foreground == getattr(win, "handle", None)
+    if apply_btn is None and not window_is_foreground and (
+        background_if_not_foreground
+        or not require_fg
+        or background_enter_target == "combo"
+    ):
+        log.error(
+            "Refusing targeted background status submit: Camfrog can activate "
+            "and take desktop focus."
+        )
+        return False
     # A status update should not raise Camfrog over the user's current window.
     # If Camfrog is not foreground, write to its verified Edit and submit via
     # its verified CComboBoxTS parent. Explicit combo mode uses the same path
@@ -3196,10 +3212,10 @@ def _strict_status_start_blocked(cfg, emit=print):
         return False
     if cfg.get("status", {}).get("execution_mode") == "best_effort_background":
         emit(
-            "BEST_EFFORT_BACKGROUND: combo-post may activate or flash Camfrog; "
-            "provider outcome remains unverified."
+            "BEST_EFFORT_BACKGROUND_DISABLED: Camfrog combo-post can take "
+            "desktop focus and interrupt keyboard input. Status worker refused."
         )
-        return False
+        return True
     if _unverified_status_test_submit_enabled():
         emit(
             "UNVERIFIED TEST MODE: status submissions use combo-post to avoid "

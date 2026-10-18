@@ -833,7 +833,7 @@ def test_status_changer_logs_the_completed_status_text(caplog, monkeypatch):
     assert "status submission dispatched (provider outcome unverified)" in caplog.text
 
 
-def test_status_changer_combo_submit_does_not_focus_or_type_keys(monkeypatch):
+def test_status_changer_refuses_combo_submit_if_it_may_take_focus(monkeypatch):
     from types import SimpleNamespace
 
     mod = load("status_changer_gui")
@@ -848,14 +848,13 @@ def test_status_changer_combo_submit_does_not_focus_or_type_keys(monkeypatch):
         type_keys=lambda *_a, **_k: pytest.fail("background update must not simulate typing"),
     )
     monkeypatch.setattr(mod, "is_web", lambda _ctrl: False)
-    monkeypatch.setattr(mod, "write_text", lambda _ctrl, _text: True)
+    writes = []
+    monkeypatch.setattr(mod, "write_text", lambda _ctrl, _text: writes.append(_text) or True)
 
-    assert mod.commit(SimpleNamespace(handle=123), ctrl, "status", False,
-                      require_fg=True, background_enter_target="combo")
-    assert posted == [
-        (77, 0x0100, 0x0D, 0x001C0001),
-        (77, 0x0101, 0x0D, 0xC01C0001),
-    ]
+    assert not mod.commit(SimpleNamespace(handle=123), ctrl, "status", False,
+                          require_fg=True, background_enter_target="combo")
+    assert writes == []
+    assert posted == []
 
 
 @pytest.mark.parametrize("name", ["status_random_gui", "status_marquee_gui"])
@@ -1485,9 +1484,8 @@ def test_foreground_status_commit_writes_frame_before_enter(name, monkeypatch):
 
 
 @pytest.mark.parametrize("name", ["status_changer_gui", "status_marquee_gui"])
-def test_combo_enter_option_uses_background_target_even_when_foreground_is_required(
-        name, monkeypatch):
-    """The explicit combo test option must bypass the normal foreground Enter path."""
+def test_combo_enter_option_refuses_when_camfrog_is_not_foreground(name, monkeypatch):
+    """Targeted combo Enter can activate Camfrog, so non-foreground sends fail closed."""
     mod = load(name)
     events = []
     win = SimpleNamespace(handle=77)
@@ -1512,16 +1510,32 @@ def test_combo_enter_option_uses_background_target_even_when_foreground_is_requi
         lambda target_ctrl, target: events.append(("background_enter", target_ctrl, target)),
     )
 
-    assert mod.commit(
+    assert not mod.commit(
         win, ctrl, "slot 2", False, require_fg=True, restore=True,
         background_enter_target="combo")
-    assert events == [("write", "slot 2"), ("background_enter", ctrl, "combo")]
+    assert events == []
 
 
 @pytest.mark.parametrize(
     "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"]
 )
-def test_best_effort_mode_posts_to_combo_without_global_input(name, monkeypatch, caplog):
+def test_best_effort_worker_start_is_refused_before_launch(name):
+    mod = load(name)
+    cfg = copy.deepcopy(mod.DEFAULTS)
+    cfg["dry_run"] = False
+    cfg["status"]["enabled"] = True
+    cfg["status"]["execution_mode"] = "best_effort_background"
+    messages = []
+
+    assert mod._strict_status_start_blocked(cfg, emit=messages.append)
+    assert len(messages) == 1
+    assert "interrupt keyboard input" in messages[0]
+
+
+@pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"]
+)
+def test_best_effort_mode_refuses_unisolated_combo_submit(name, monkeypatch, caplog):
     mod = load(name)
     events = []
     win = SimpleNamespace(handle=77)
@@ -1537,24 +1551,26 @@ def test_best_effort_mode_posts_to_combo_without_global_input(name, monkeypatch,
     )
     monkeypatch.setattr(mod.ctypes, "windll", SimpleNamespace(user32=user32), raising=False)
     monkeypatch.setattr(mod, "is_web", lambda _ctrl: False)
-    monkeypatch.setattr(mod, "write_text", lambda _ctrl, _text: True)
+    writes = []
+    monkeypatch.setattr(mod, "write_text", lambda _ctrl, _text: writes.append(_text) or True)
     monkeypatch.setattr(
         mod, "_background_enter",
         lambda _ctrl, target: events.append(target),
     )
 
-    assert mod.commit(
+    assert not mod.commit(
         win, ctrl, "test", False, require_fg=True, restore=True,
         execution_mode="best_effort_background",
     )
-    assert events == ["combo"]
-    assert "may activate or flash Camfrog" in caplog.text
+    assert events == []
+    assert writes == []
+    assert "interrupt keyboard input" in caplog.text
 
 
 @pytest.mark.parametrize(
     "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"])
-def test_status_update_uses_combo_when_camfrog_is_not_foreground(name, monkeypatch):
-    """Background status changes never activate Camfrog or steal current focus."""
+def test_status_update_refuses_combo_when_camfrog_is_not_foreground(name, monkeypatch):
+    """Targeted Enter can activate Camfrog, so non-foreground submits fail closed."""
     mod = load(name)
     events = []
     win = SimpleNamespace(handle=77)
@@ -1578,10 +1594,10 @@ def test_status_update_uses_combo_when_camfrog_is_not_foreground(name, monkeypat
         mod, "_background_enter",
         lambda target_ctrl, target: events.append(("background_enter", target_ctrl, target)))
 
-    assert mod.commit(
+    assert not mod.commit(
         win, ctrl, "slot 2", False, require_fg=True, restore=True,
         background_enter_target="edit", background_if_not_foreground=True)
-    assert events == [("write", "slot 2"), ("background_enter", ctrl, "combo")]
+    assert events == []
 
 
 @pytest.mark.parametrize(

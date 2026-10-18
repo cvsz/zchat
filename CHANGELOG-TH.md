@@ -10,13 +10,13 @@
 ## [2.19.3] - 19 ตุลาคม 2026
 
 ### แก้ไข
+* ปฏิเสธการส่งสถานะ live ผ่าน `best_effort_background` และ targeted combo-post เมื่อ Camfrog ไม่ได้อยู่หน้าสุด หลักฐานทดสอบบน Windows พบว่า combo-post อาจ activate Camfrog และขัดจังหวะการพิมพ์ worker จึง fail-closed ก่อนเขียนข้อความสถานะ
 * Room Control, IM Auto-reply, Music DJ และ Chat IM Private จะลองค้นหา Camfrog controls หลังเปิดโปรแกรม และบันทึก selector เฉพาะเมื่อ config ผ่าน validation ส่วน Status Changer จะบันทึก status pool และ config ทั้ง Random กับ Marquee ก่อนเริ่ม discovery แต่ละแอปยังคงโค้ด discovery ของตัวเองและเป็น EXE ไฟล์เดียวที่แยกทำงานได้
 * สร้างโฟลเดอร์ข้อมูลของแอปสถานะก่อนล้างไฟล์ PID/start-gate หรือเปิด worker เพื่อให้การติดตั้งใหม่ลงทะเบียนและอนุญาต worker ได้ แทนการปล่อย child process ที่ยังยืนยันตัวตนไม่ได้
 * ปรับ README, คู่มือผู้ใช้, คู่มือ config และเอกสาร submit mode ทั้งภาษาอังกฤษและไทย ให้ตรงกับข้อแลกเปลี่ยนของโหมดส่งสถานะ การรอผู้ใช้ การตั้งค่าอัตโนมัติของแอป standalone และ startup handshake
 
 ### เพิ่ม
 
-* เพิ่มโหมดสถานะ `best_effort_background` แบบเลือกเปิดใช้งาน (opt-in) สำหรับ Status Changer, Random Status และ Marquee Status โดยใช้ `combo-post`, แจ้งเตือนว่า Camfrog อาจมีการทำงานหรือกะพริบขึ้นมา และผลลัพธ์จากผู้ให้บริการยังคงไม่มีการตรวจสอบยืนยันอย่างเป็นทางการ ดูรายละเอียดที่ `docs/STATUS-SUBMIT-MODES.md`
 * เพิ่มตัวเปิดใช้งาน CreateDesktop Camfrog เฉพาะสำหรับ Windows เพื่อใช้ทดสอบการแยกการทำงาน (isolation testing) พฤติกรรมดั้งเดิมของ Camfrog จะยังไม่ได้รับการยืนยันจนกว่าจะได้รับการทดสอบในเซสชันของ Windows
 * เพิ่มโครงสร้างที่เก็บโค้ด (repository structure) และการตรวจสอบลิงก์ Markdown ในงานหลักของ GitHub CI
 * เพิ่มชุดทดสอบยูนิต (unit suite) ของ LINE ในงาน fast Linux CI และเกตการแพ็กเกจสำหรับ Windows

@@ -20,7 +20,7 @@ English version: `USER-MANUAL-EN.md`.
 1. เปิด Camfrog แล้วเข้าห้อง (อย่าย่อลง tray)
 2. เปิด Camfrog ก่อน แล้วจึงเปิดแอป standalone ที่ต้องการ แอป Camfrog ทุกตัวจะลองค้นหา control และบันทึก selector ที่ผ่าน validation ให้อัตโนมัติ ส่วน Web Status ใช้ control บนเว็บไซต์ ใช้ **Setup → Auto-detect** หรือ **Discover controls** เพื่อลองใหม่ และตรวจ selector ก่อนเปิด live actions
 3. เปิด `dry_run` ไว้ก่อนเสมอขณะทดสอบ โหมดนี้แค่บันทึกว่าจะส่งอะไร ไม่ส่งจริง
-4. คงโหมดทดลองไว้ระหว่างตรวจสอบ โหมด strict จะคืน `BACKGROUND_UNSUPPORTED` ส่วน `best_effort_background` ที่เลือกเปิดเองอาจดึงหน้าต่าง Camfrog ขึ้นหรือกะพริบ และไม่ยืนยันผลจากผู้ให้บริการ โหมด interactive จะรอให้ผู้ใช้หยุดใช้งาน desktop ก่อนใช้อินพุตจริง ดู `docs/STATUS-SUBMIT-MODES.md` ส่วน `web-status.exe` ใช้เว็บไซต์แยกต่างหาก
+4. คงโหมดทดลองไว้ระหว่างตรวจสอบ โหมด strict จะคืน `BACKGROUND_UNSUPPORTED` โหมดเดิม `best_effort_background` ถูกปิด เพราะทดสอบบน Windows พบว่า Camfrog ดึง focus ได้และรบกวนคีย์บอร์ด โหมด interactive จะรอให้ผู้ใช้หยุดใช้งาน desktop ก่อนใช้อินพุตจริง ดู `docs/STATUS-SUBMIT-MODES.md` ส่วน `web-status.exe` ใช้เว็บไซต์แยกต่างหาก
 
 ## 3. ควบคุมห้อง
 
@@ -125,7 +125,7 @@ English version: `USER-MANUAL-EN.md`.
 - Room/IM: ปุ่ม GUI **Save & Start** / **Stop** หรือคำสั่ง CLI `start` / `state` / `stop` (แบบซ่อน ไม่มีหน้าต่าง) สถานะ: ปุ่ม **Start**/**Stop** ของตัวเองกับ worker ที่มากับแอป
 - แต่ละแอปบันทึก log ข้าง config ตัวเอง (source CLI ใช้ `camfrog_auto.log`) แก้ `config.json` ตอนรันได้ ค่าถูกต้องมีผลใน ~3 วินาที ค่าผิดถูกปฏิเสธและ log ไว้
 - Activity Log ของ Status Changer รวมกิจกรรม GUI และ log จาก worker โดยข้อความสถานะที่ส่งสำเร็จจะแสดงเมื่อเปิด `log_message_text` ระบบล้าง activity log และ worker log ทุกวันเวลา 12:00 ตามเวลาท้องถิ่นขณะแอปทำงาน หากปิดแอปไว้จะล้างเมื่อเปิดครั้งถัดไป
-- โหมด strict background ยังไม่รองรับและคืน `BACKGROUND_UNSUPPORTED` โหมด `best_effort_background` จะโพสต์ Enter ไปยัง combo สถานะ แต่อาจดึงหน้าต่างหรือกะพริบ และยังไม่ยืนยันสถานะจากผู้ให้บริการ โหมด interactive รอการใช้งานว่าง 2 วินาที (`ZCHAT_USER_IDLE_MS` ใช้ปรับได้; 0 ปิดการรอ) และเลื่อนการส่งเมื่อผู้ใช้ยังทำงานต่อเนื่องเกิน 120 วินาที การเริ่ม worker สร้างโฟลเดอร์ข้อมูลและรอการอนุญาต PID ก่อนเริ่มลูป
+- โหมด strict background ยังไม่รองรับและคืน `BACKGROUND_UNSUPPORTED` โหมด `best_effort_background` ถูกปิด เพราะการส่ง combo อาจดึง focus และขัดจังหวะการพิมพ์ worker จะปฏิเสธก่อนเขียนข้อความสถานะ โหมด interactive รอการใช้งานว่าง 2 วินาที (`ZCHAT_USER_IDLE_MS` ใช้ปรับได้; 0 ปิดการรอ) และเลื่อนการส่งเมื่อผู้ใช้ยังทำงานต่อเนื่องเกิน 120 วินาที การเริ่ม worker สร้างโฟลเดอร์ข้อมูลและรอการอนุญาต PID ก่อนเริ่มลูป
 - การส่ง status แบบอื่นอาจต้องให้ Camfrog อยู่หน้าสุด Camfrog ต้องเปิดอยู่ (ย่อไว้ได้เฉพาะเมื่อ control ยังเข้าถึงได้ — ตรวจด้วย Discover)
 
 ## 12. แก้ปัญหา
@@ -135,7 +135,7 @@ English version: `USER-MANUAL-EN.md`.
 | `pywin32 ... no matching distribution` | ติดตั้ง CPython 3.12 64-bit ลบ `.venv` แล้วรัน `build.bat` ใหม่ |
 | Auto-detect หาไม่เจอ | เปิดห้องแชทให้เห็นหน้าต่างแล้วลองใหม่ แล้วใช้ Discover controls |
 | error `requirements.txt (line 1)` พูดถึงแต่ pywinauto | ใช้ไฟล์เก่า แตก zip ล่าสุดลงโฟลเดอร์ใหม่ |
-| worker สถานะปฏิเสธคำขอ live | โหมด strict จะคืน `BACKGROUND_UNSUPPORTED` ตามคาด เลือก `best_effort_background` เฉพาะเมื่อยอมรับได้ว่า Camfrog อาจ activate หน้าต่างและผลจากผู้ให้บริการยังไม่ยืนยัน โหมด interactive รอให้ผู้ใช้หยุดใช้งานแต่ยังอาจเปลี่ยนโฟกัส |
+| worker สถานะปฏิเสธคำขอ live | โหมด strict จะคืน `BACKGROUND_UNSUPPORTED` ตามคาด อย่าใช้ `best_effort_background`; worker ปฏิเสธแบบ fail-closed เพราะอาจรบกวนคีย์บอร์ด ส่วน strict ยังไม่รองรับจนกว่าจะยืนยันเส้นทางแยก desktop โหมด interactive รอให้ผู้ใช้หยุดใช้งานแต่ยังอาจเปลี่ยนโฟกัส |
 | เสียง error ทุกครั้งที่เปลี่ยนสถานะ | ลอง **combo Enter (test)** ในโหมดทดลองก่อน แล้วตรวจ Activity Log ก่อนเปิดส่งสถานะจริง |
 | ควบคุมหน้าต่างผิด/เก่า | แก้ **Window title regex** แล้ว detect ใหม่ |
 | Explorer โชว์ไอคอนเก่าหลัง build | cache ไอคอน Windows ย้าย/เปลี่ยนชื่อ exe หรือรีสตาร์ท Explorer |

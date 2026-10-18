@@ -46,7 +46,7 @@ Room Control และ IM Auto-reply ใช้ `config.json` แยกกัน 
 1. เปิด Camfrog แล้วเข้าห้องก่อนเปิดแอป standalone แอปจะลองค้นหา control ให้อัตโนมัติ ใช้ **Setup → Auto-detect** หรือ **Discover controls** เพื่อลองใหม่ ผลวิเคราะห์: `docs/CAMFROG-8.5-FINDINGS.md`
 2. แก้ `config.json` ของแอปนั้น ตั้งนิค ตั้งกฎตอบ คง `dry_run` ไว้ขณะทดสอบ
 3. ใช้ `im-autoreply.exe` สำหรับตอบ IM ส่วนตัว config และ log แยกจาก Room Control
-4. ใช้ `status-random.exe` หรือ `status-marquee.exe` สำหรับแอปแยก หรือ `status-changer.exe` สำหรับหน้ารวมพร้อม Activity Log แต่ละแอปเก็บข้อมูลของตัวเอง โหมด strict background ยังหยุดด้วย `BACKGROUND_UNSUPPORTED` ส่วน `best_effort_background` จะโพสต์ Enter ไปยัง combo สถานะ แต่ Camfrog อาจดึงหน้าต่างขึ้นหรือกะพริบ และยังไม่ยืนยันผลจากผู้ให้บริการ โหมด interactive จะรอให้ผู้ใช้หยุดใช้งาน desktop ก่อนส่ง ดู [`docs/STATUS-SUBMIT-MODES.md`](docs/STATUS-SUBMIT-MODES.md) ส่วน `web-status.exe` เป็นฟีเจอร์แยก
+4. ใช้ `status-random.exe` หรือ `status-marquee.exe` สำหรับแอปแยก หรือ `status-changer.exe` สำหรับหน้ารวมพร้อม Activity Log แต่ละแอปเก็บข้อมูลของตัวเอง โหมด strict background ยังหยุดด้วย `BACKGROUND_UNSUPPORTED` โหมดเดิม `best_effort_background` ถูกปิดหลังทดสอบบน Windows พบว่า Camfrog ดึง focus ได้และทำให้คีย์บอร์ดถูกรบกวน worker จึงปฏิเสธจนกว่าจะยืนยันเส้นทางแยก desktop ได้ โหมด interactive จะรอให้ผู้ใช้หยุดใช้งาน desktop ก่อนส่ง ดู [`docs/STATUS-SUBMIT-MODES.md`](docs/STATUS-SUBMIT-MODES.md) ส่วน `web-status.exe` เป็นฟีเจอร์แยก
 5. เปิดแชทส่วนตัวใน Camfrog แล้วใช้ `chat-im-private.exe` refresh และโฟกัสหน้าต่าง แอปจะลองค้นหา selector ตอนเปิด และยังใช้ **Discover controls** เพื่อบันทึกรายการ control ลง `controls.txt` สำหรับตรวจวิเคราะห์ได้
 
 คำสั่ง `python camfrog_auto.py ...` ยังใช้เป็น CLI สำหรับพัฒนา โดยใช้ `config.json` ในเครื่องซึ่ง Git จะไม่ติดตาม สร้างได้ด้วย `python camfrog_auto.py init --config config.json` หรือคัดลอกจาก `config.example.json` ส่วน CI และ build ตรวจด้วยตัวอย่างที่ปลอดภัย CLI นี้ไม่ใช่หนึ่งในแปดแอปที่ build คำสั่งใน `extras\*.bat` เป็นทางลัด ยกเว้น `extras\gui.bat` ที่เปิด `dist\room-control\room-control.exe` ที่ build แล้ว
@@ -69,7 +69,7 @@ Room Control และ IM Auto-reply มีปุ่ม **Save & Start** กั�
 
 แต่ละแอปบันทึก log ในโฟลเดอร์ของ config ตัวเอง ส่วน source CLI ใช้ `camfrog_auto.log` ในโฟลเดอร์ repository
 
-**การส่งสถานะ:** โหมด strict background คืน `BACKGROUND_UNSUPPORTED` ก่อนเขียนหรือส่ง เพราะยังไม่มีเส้นทาง Camfrog 8.5 ที่ยืนยันว่าไม่ activate หน้าต่าง โหมด `best_effort_background` โพสต์ Enter ไปยัง combo สถานะโดยไม่ใช้อินพุตเมาส์/คีย์บอร์ดทั่วระบบ แต่ Camfrog อาจดึงหน้าต่างขึ้นหรือกะพริบ และการส่ง/อ่านค่ากลับในเครื่องไม่ยืนยันว่าผู้ให้บริการได้รับสถานะ เส้นทาง interactive ที่ใช้โฟกัส เมาส์ หรือปุ่มจริงจะรอให้ไม่มีการใช้งาน 2 วินาที (ปรับด้วย `ZCHAT_USER_IDLE_MS`; 0 ปิดการรอ) และเลื่อนการส่งหากผู้ใช้ยังทำงานต่อเนื่องเกิน 120 วินาที วิธีนี้ลดการชนกับผู้ใช้ แต่ไม่ได้ทำให้การส่งไม่ activate หน้าต่าง การเริ่ม worker สร้างโฟลเดอร์ข้อมูลและรอการอนุญาต PID ก่อนเข้าลูป ส่วนการตอบแชทในห้องใช้ช่องกรอกอีกชนิดหนึ่งและต้องให้หน้าต่างห้องอยู่หน้าสุด
+**การส่งสถานะ:** โหมด strict background คืน `BACKGROUND_UNSUPPORTED` ก่อนเขียนหรือส่ง เพราะยังไม่มีเส้นทาง Camfrog 8.5 ที่ยืนยันว่าไม่ activate หน้าต่าง โหมด `best_effort_background` ถูกปิด เพราะ Camfrog อาจดึง focus ระหว่างส่งสถานะและขัดจังหวะการพิมพ์ worker ปฏิเสธโหมดนี้ก่อนเขียนข้อความ เส้นทาง interactive ที่ใช้โฟกัส เมาส์ หรือปุ่มจริงจะรอให้ไม่มีการใช้งาน 2 วินาที (ปรับด้วย `ZCHAT_USER_IDLE_MS`; 0 ปิดการรอ) และเลื่อนการส่งหากผู้ใช้ยังทำงานต่อเนื่องเกิน 120 วินาที วิธีนี้ลดการชนกับผู้ใช้ แต่ไม่ได้ทำให้การส่งไม่ activate หน้าต่าง การเริ่ม worker สร้างโฟลเดอร์ข้อมูลและรอการอนุญาต PID ก่อนเข้าลูป ส่วนการตอบแชทในห้องใช้ช่องกรอกอีกชนิดหนึ่งและต้องให้หน้าต่างห้องอยู่หน้าสุด
 
 ## สถานะเลื่อน + สลับจากประวัติ
 
@@ -77,8 +77,8 @@ Room Control และ IM Auto-reply มีปุ่ม **Save & Start** กั�
 - **สลับจากประวัติ** (`status.history`): ทุก status ที่ตั้งถูกเก็บลง `status_history.json` ถ้าเปิด `use_as_source` จะสลับเลือกจากประวัติให้อัตโนมัติ (`rotate` = วนรอบ, `random`, `most_used`) ข้อความใน `status.messages` ถูกใส่เข้าไปอัตโนมัติ
 - **สลับไทย-อังกฤษอัตโนมัติ** (`status.language_cycle: ["th","en"]`): สลับไทย→อังกฤษ→ไทย… ทุกครั้งที่เปลี่ยน status ใช้ได้ทั้งประวัติและข้อความปกติ
 - **ความปลอดภัย:** ทุกเฟรมคือการเปลี่ยน status จริง จึงจำกัดความถี่ขั้นต่ำ 0.3 วินาที ควรตั้งช่วงเวลาให้เหมาะสมและเริ่มด้วย `dry_run: true`
-- **ส่งสถานะจริง:** แอปสถานะเริ่มในโหมดทดลอง ปุ่ม **Save Data** บันทึกค่าเท่านั้น โหมด strict คืน `BACKGROUND_UNSUPPORTED`; `best_effort_background` ต้องเลือกใช้เองและอาจดึงหน้าต่าง Camfrog ขึ้นมา โดยผลจากผู้ให้บริการยังไม่ยืนยัน โหมด interactive รอให้ desktop ว่างก่อนใช้โฟกัสหรืออินพุตจริง `web-status.exe` ใช้เส้นทางเว็บไซต์แยกต่างหาก
-- **ตัวเลือก background status:** เลือก `strict_background` เพื่อปฏิเสธแบบ fail-closed หรือเลือก `best_effort_background` เพื่อโพสต์ Enter ไปยัง combo โดยยอมรับว่า Camfrog อาจ activate หน้าต่าง ดู `status.execution_mode` ใน `CONFIG-TH.md` และ `docs/STATUS-SUBMIT-MODES.md`
+- **ส่งสถานะจริง:** แอปสถานะเริ่มในโหมดทดลอง ปุ่ม **Save Data** บันทึกค่าเท่านั้น โหมด strict คืน `BACKGROUND_UNSUPPORTED`; `best_effort_background` ถูกปิด เพราะอาจดึง focus และรบกวนคีย์บอร์ด โหมด interactive รอให้ desktop ว่างก่อนใช้โฟกัสหรืออินพุตจริง `web-status.exe` ใช้เส้นทางเว็บไซต์แยกต่างหาก
+- **ตัวเลือก background status:** เลือก `strict_background` เพื่อปฏิเสธแบบ fail-closed และอย่าเลือกโหมดเดิม `best_effort_background` ซึ่งถูกปิดเพราะอาจดึง focus ดู `status.execution_mode` ใน `CONFIG-TH.md` และ `docs/STATUS-SUBMIT-MODES.md`
 
 ดูตัวอย่างโดยไม่ต้องเปิด Camfrog:
 ```
