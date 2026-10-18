@@ -1135,8 +1135,11 @@ def test_non_status_commit_keeps_foreground_requirement(name, monkeypatch):
     assert events == []
 
 
-def test_status_window_discovery_includes_hidden_windows(monkeypatch):
-    mod = load("status_changer_gui")
+@pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"]
+)
+def test_status_window_discovery_includes_hidden_windows(name, monkeypatch):
+    mod = load(name)
     native = SimpleNamespace(
         handle=77,
         class_name=lambda: "#32770",
@@ -1170,11 +1173,14 @@ def test_status_window_discovery_includes_hidden_windows(monkeypatch):
     assert calls == [{"title_re": ".*Camfrog.*", "visible_only": False}]
 
 
+@pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"]
+)
 def test_status_window_discovery_uses_matching_status_control_to_disambiguate_processes(
-        monkeypatch):
-    mod = load("status_changer_gui")
+        name, monkeypatch):
+    mod = load(name)
     windows = [
-        SimpleNamespace(handle=77, process_id=lambda: 101,
+        SimpleNamespace(handle=77, process_id=lambda: None,
                         class_name=lambda: "#32770", window_text=lambda: "Camfrog one"),
         SimpleNamespace(handle=88, process_id=lambda: 202,
                         class_name=lambda: "#32770", window_text=lambda: "Camfrog two"),
@@ -1200,9 +1206,12 @@ def test_status_window_discovery_uses_matching_status_control_to_disambiguate_pr
     assert mod.get_status_window(cfg, desktop_factory) is wrappers[88]
 
 
+@pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"]
+)
 def test_status_window_discovery_fails_when_status_control_matches_multiple_processes(
-        monkeypatch):
-    mod = load("status_changer_gui")
+        name, monkeypatch):
+    mod = load(name)
     windows = [
         SimpleNamespace(handle=77, process_id=lambda: 101,
                         class_name=lambda: "#32770", window_text=lambda: "Camfrog one"),
@@ -1452,11 +1461,14 @@ def test_strict_background_failure_does_not_fall_back_to_uia_discovery(
         apply("dummy.json", "strict background test")
 
 
-def test_status_changer_reload_attach_failure_clears_stale_status_handles(
-        monkeypatch, tmp_path, caplog):
+@pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"]
+)
+def test_status_worker_reload_attach_failure_clears_stale_status_handles(
+        name, monkeypatch, tmp_path, caplog):
     import logging
 
-    import status_changer_gui as m
+    m = load(name)
 
     cfg_path = tmp_path / "config.json"
     cfg_path.write_text("{}", encoding="utf-8")
@@ -1486,8 +1498,11 @@ def test_status_changer_reload_attach_failure_clears_stale_status_handles(
     assert "Traceback" not in caplog.text
 
 
-def test_status_changer_resolve_invalidates_stale_handles_before_discovery(monkeypatch):
-    import status_changer_gui as m
+@pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"]
+)
+def test_status_worker_resolve_invalidates_stale_handles_before_discovery(name, monkeypatch):
+    m = load(name)
 
     runner = object.__new__(m.Runner)
     runner.cfg = {"status": {"enabled": True}, "autoreply": {"enabled": False}}

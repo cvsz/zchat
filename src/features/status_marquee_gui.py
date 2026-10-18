@@ -756,33 +756,42 @@ def _require_single_window_process(windows):
         )
 
 
+def get_status_window(cfg, desktop_factory):
+    """Attach only to a title-matched window with the configured status control."""
+    native_windows = desktop_factory(backend="win32").windows(
+        title_re=cfg["window_title_regex"], visible_only=False
+    )
+    native_windows = [w for w in native_windows if not is_own_gui_window(w)]
+    native_windows = [w for w in native_windows if _window_process_id(w) != os.getpid()]
+    if not native_windows:
+        raise RuntimeError(t("no_window"))
+
+    desktop = desktop_factory(backend="uia")
+    selector = cfg.get("status", {}).get("edit", {})
+    matches = []
+    for native in native_windows:
+        try:
+            window = desktop.window(handle=native.handle).wrapper_object()
+            if selector:
+                find(window, selector)
+            matches.append((native, window))
+        except Exception:
+            continue
+
+    if matches:
+        _require_single_window_process([native for native, _window in matches])
+        return matches[0][1]
+
+    # Keep setup/detection useful if the saved selector is stale, while still
+    # rejecting ambiguous or unverifiable process ownership.
+    _require_single_window_process(native_windows)
+    log.warning("Status edit control not found in any matching window; using first window")
+    return desktop.window(handle=native_windows[0].handle).wrapper_object()
+
+
 def get_window(cfg: dict):
     from pywinauto import Desktop  # lazy: `check` works without pywinauto
-    # Allow status control discovery in minimized/hidden Camfrog windows. The
-    # configured selector must still match before a candidate is accepted.
-    wins = Desktop(backend="uia").windows(
-        title_re=cfg["window_title_regex"], visible_only=False)
-    wins = [w for w in wins if not is_own_gui_window(w)]
-    wins = [w for w in wins if _window_process_id(w) != os.getpid()]
-    if not wins:
-        raise RuntimeError(t("no_window"))
-    _require_single_window_process(wins)
-
-    # Find the window that actually contains the status edit control.
-    # The status edit is in the buddy list window (has CComboBoxTS with auto_id 1436
-    # containing an Edit with auto_id 1001). Try each window until we find it.
-    st_edit_spec = cfg.get("status", {}).get("edit", {})
-    if st_edit_spec:
-        for w in wins:
-            try:
-                find(w, st_edit_spec)
-                return w
-            except Exception:
-                continue
-
-    # Fallback: return first window if status edit not found in any (for detect/initial setup)
-    log.warning("Status edit control not found in any matching window; using first window")
-    return wins[0]
+    return get_status_window(cfg, Desktop)
 
 
 def process_windows(main) -> list:
@@ -1831,7 +1840,13 @@ class Runner:
         LOG_TEXT = new["log"]["log_message_text"]
         if not LANG_LOCKED:
             LANG = resolve_lang(new["language"])
-        self.resolve()
+        try:
+            self.resolve()
+        except Exception as e:
+            self.win = self.status_edit = self.apply_btn = None
+            self.marq = None
+            log.warning("Config reloaded but Camfrog re-attach failed: %s", e)
+            return
         log.info(t("reloaded"))
 
     def write_stats(self, now, force=False):
@@ -1881,6 +1896,7 @@ class Runner:
     def _do_resolve(self):
         cfg = self.cfg
         st, ar = cfg["status"], cfg["autoreply"]
+        self.win = self.status_edit = self.apply_btn = None
         self.win = get_window(cfg)
         self.status_edit, self.apply_btn = None, None
         self.status_edit = find(self.win, st["edit"]) if st["enabled"] else None
