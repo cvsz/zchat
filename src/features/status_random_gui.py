@@ -1098,8 +1098,9 @@ def _background_enter(ctrl, target="edit"):
         if not handle and hasattr(ctrl, "element_info"):
             handle = getattr(ctrl.element_info, "handle", 0)
         if not handle:
-            ctrl.send_keystrokes("{ENTER}")
-            return
+            raise LookupError(
+                "Status Edit has no HWND; refusing keyboard-input fallback"
+            )
     u = ctypes.windll.user32
     try:
         u.PostMessageW.argtypes = (ctypes.c_void_p, ctypes.c_uint,

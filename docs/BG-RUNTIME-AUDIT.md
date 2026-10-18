@@ -72,6 +72,8 @@ Status feature callers now check `FEATURE` scope using stable local resource key
 
 On 2026-10-18, standalone Random and Marquee discovery was aligned with the combined Status Changer: title-matched windows are first filtered by the configured status Edit selector, and process ownership is checked only for selector-matching candidates. This avoids rejecting a valid status window solely because the broad title regex also matches an unrelated or unverifiable auxiliary window, while still failing closed when multiple matching status controls belong to different or unverifiable processes. Failed reattachment after config reload now clears stale handles and logs a warning instead of escaping into the worker loop as a repeated traceback. Shared regression tests cover all three status modules. These tests do not establish live Camfrog discovery or account identity; the Windows runtime acceptance gate remains open.
 
+On 2026-10-18, the three status workers stopped falling back to `send_keystrokes("{ENTER}")` when a selected status Edit has no valid HWND. That fallback could send keyboard input through the automation layer without proving that it remained scoped to the intended Camfrog control. The workers now raise a lookup error before dispatch, and a regression test checks all three standalone/combined modules. This source change does not suppress the Windows ding observed when a valid Enter message is posted to Camfrog's Edit; no Windows sound setting is changed, and the packaged runtime still needs verification.
+
 ## Evidence and remaining gates
 
 - `line/tests/test_core.py`: 51 unit tests passed on Linux/WSL and 51 passed on native Windows. Callback-error tests mock Tk state and dialogs; tray retry tests assert captured warning records.

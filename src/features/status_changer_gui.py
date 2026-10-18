@@ -1438,8 +1438,9 @@ def _background_enter(ctrl, target="edit"):
         if not handle and hasattr(ctrl, "element_info"):
             handle = getattr(ctrl.element_info, "handle", 0)
         if not handle:
-            ctrl.send_keystrokes("{ENTER}")
-            return
+            raise LookupError(
+                "Status Edit has no HWND; refusing keyboard-input fallback"
+            )
     if not handle:
         raise LookupError("Status combo has no HWND; cannot try combo Enter")
 

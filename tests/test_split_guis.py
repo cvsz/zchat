@@ -1118,6 +1118,24 @@ def test_status_submit_never_imports_or_mutates_windows_sound_registry(name, mon
 
 
 @pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_random_gui", "status_marquee_gui"]
+)
+def test_status_submit_fails_closed_without_hwnd_instead_of_sending_keys(name):
+    mod = load(name)
+    events = []
+    ctrl = SimpleNamespace(
+        handle=0,
+        element_info=SimpleNamespace(handle=0),
+        send_keystrokes=lambda keys: events.append(("keys", keys)),
+    )
+
+    with pytest.raises(LookupError, match="refusing keyboard-input fallback"):
+        mod._background_enter(ctrl, "edit")
+
+    assert events == []
+
+
+@pytest.mark.parametrize(
     "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"])
 def test_non_status_commit_keeps_foreground_requirement(name, monkeypatch):
     """Chat and IM controls must not use the status-only background fallback."""
