@@ -36,6 +36,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Fixed GitHub Actions supply-chain security by pinning actions to immutable commit SHAs with least-privilege `contents: read` permissions.
 
 ### Changed
+- Raised the minimum Random interval and Marquee frame delay to 10 seconds across the standalone and combined Status Changer apps. Legacy settings are clamped on load, and retry scheduling cannot submit faster than the configured interval.
+- Status worker logs now label successful local dispatch as unverified instead of claiming the provider status was set.
+- Changed the opt-in unverified Status Changer test route from Edit Enter to combo-parent Enter to avoid the observed Edit-control ding; the combo route can activate Camfrog and remains unsupported for strict background use.
+- Removed the legacy Random and Marquee submit-time writes to Windows sound registry values; status submission no longer tries to mute or restore system sound settings.
 - Updated the architecture guide to describe the maintained desktop apps, ZChat services, repository tooling, and deployment boundaries.
 - Web Status now defaults to switching non-empty status slots every 60 seconds.
 - Status Changer records completed status text in its worker log and clears its status logs daily at 12:00 local time.

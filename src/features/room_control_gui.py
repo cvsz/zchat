@@ -130,7 +130,7 @@ S = {
     "verified_ambiguous": ("verified Camfrog discovery is ambiguous: {detail}",
                            "การค้นหา Camfrog แบบยืนยันตัวตนกำกวม: {detail}"),
     "no_ctrl": ("control not found: {spec} (matches={n})", "ไม่พบ control: {spec} (พบ {n} รายการ)"),
-    "status_set": ("status set: {text}", "ตั้ง status แล้ว: {text}"),
+    "status_set": ("status submission dispatched (provider outcome unverified): {text}", "ส่งคำสั่ง status แล้ว (ยังไม่ยืนยันผลจาก Camfrog): {text}"),
     "status_fail": ("status commit failed", "ตั้ง status ไม่สำเร็จ"),
     "reply_fail": ("reply commit failed", "ส่งข้อความตอบไม่สำเร็จ"),
     "replied": ("replied to {nick}: {text}", "ตอบ {nick} แล้ว: {text}"),

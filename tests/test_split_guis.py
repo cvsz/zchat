@@ -108,7 +108,7 @@ def test_start_reports_success_only_after_worker_pid_is_registered(
         name, tmp_path, monkeypatch, capsys):
     mod = load(name)
     monkeypatch.setattr(mod, "BASE", tmp_path)
-    monkeypatch.setattr(mod.os, "name", "nt")
+    monkeypatch.setattr(mod, "os", SimpleNamespace(name="nt"))
     monkeypatch.setattr(mod, "child_cmd", lambda _args: ["pythonw.exe", "entry.py"])
     monkeypatch.setattr(mod, "child_env", lambda: {})
     states = iter([None, None, 123])
@@ -520,7 +520,7 @@ def test_status_changer_logs_the_completed_status_text(caplog, monkeypatch):
     mod.Runner._finish_status(
         runner_state, {"slot_index": None, "raw": "status text sent"}, "status text sent")
 
-    assert "status set: 'status text sent'" in caplog.text
+    assert "status submission dispatched (provider outcome unverified)" in caplog.text
 
 
 def test_status_changer_combo_submit_does_not_focus_or_type_keys(monkeypatch):
@@ -882,10 +882,10 @@ def test_marquee_runner_scrolls_frames_and_rotates_lines(monkeypatch):
     cfg["dry_run"] = True
     cfg["status"]["enabled"] = True
     cfg["status"]["messages"] = ["AAA line one here", "BBB line two here"]
-    cfg["status"]["interval_seconds"] = 0.3
+    cfg["status"]["interval_seconds"] = 10
     cfg["status"]["history"]["enabled"] = False
     cfg["status"]["marquee"].update(enabled=True, scroll=True, width=10, stride=2,
-                                    step_seconds=0.3, cycles=1, max_frames=80)
+                                    step_seconds=10, cycles=1, max_frames=80)
     assert m.validate(cfg)[0] == []
     r = m.Runner(cfg)
     r.status_edit, r.apply_btn, r.win = object(), None, object()
@@ -896,7 +896,7 @@ def test_marquee_runner_scrolls_frames_and_rotates_lines(monkeypatch):
     monkeypatch.setattr(m.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(m.time, "sleep", lambda s: None)
     for _ in range(400):
-        clock[0] += 0.1
+        clock[0] += 10
         r.do_status(clock[0])
     assert len(sent) > 10, "frames never advanced"
     assert len({s[:3] for s in sent}) > 1, "lines never rotated"
@@ -910,10 +910,10 @@ def test_marquee_slot_loop_advances_after_finishing_scroll_frames(monkeypatch):
     cfg["dry_run"] = True
     cfg["status"]["enabled"] = True
     cfg["status"]["messages"] = ["AAA status that is long enough", "BBB next status long enough"]
-    cfg["status"]["interval_seconds"] = 3.0
+    cfg["status"]["interval_seconds"] = 10.0
     cfg["status"]["history"]["enabled"] = False
     cfg["status"]["marquee"].update(
-        enabled=True, scroll=True, width=10, stride=2, step_seconds=0.5,
+        enabled=True, scroll=True, width=10, stride=2, step_seconds=10,
         cycles=1, max_frames=5, loop_slots=True, infinite_loop=False)
     assert m.validate(cfg)[0] == []
 
@@ -925,7 +925,7 @@ def test_marquee_slot_loop_advances_after_finishing_scroll_frames(monkeypatch):
     clock = [0.0]
     monkeypatch.setattr(m.time, "monotonic", lambda: clock[0])
 
-    for instant in (0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0):
+    for instant in (0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0):
         clock[0] = instant
         r.do_status(instant)
 
@@ -950,7 +950,7 @@ def test_marquee_without_scroll_uses_frame_delay_not_legacy_interval(name, monke
     cfg["status"]["history"]["enabled"] = False
     cfg["status"]["marquee"].update(
         enabled=True, scroll=False, loop_slots=True, infinite_loop=False,
-        step_seconds=0.5,
+        step_seconds=10,
     )
     runner = mod.Runner(cfg)
     runner.status_edit, runner.apply_btn, runner.win = object(), None, object()
@@ -959,7 +959,7 @@ def test_marquee_without_scroll_uses_frame_delay_not_legacy_interval(name, monke
     clock = [0.0]
     monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
 
-    for instant in (0.0, 0.49, 0.5, 1.0, 1.49, 1.5):
+    for instant in (0.0, 9.99, 10.0, 19.99, 20.0, 29.99, 30.0):
         clock[0] = instant
         runner.do_status(instant)
 
@@ -1090,6 +1090,34 @@ def test_status_update_uses_combo_when_camfrog_is_not_foreground(name, monkeypat
 
 
 @pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_random_gui", "status_marquee_gui"]
+)
+def test_status_submit_never_imports_or_mutates_windows_sound_registry(name, monkeypatch):
+    import builtins
+
+    mod = load(name)
+    sent = []
+    user32 = SimpleNamespace(PostMessageW=lambda *args: sent.append(args) or 1)
+    monkeypatch.setattr(mod.ctypes, "windll", SimpleNamespace(user32=user32), raising=False)
+    monkeypatch.setattr(mod.os, "name", "nt")
+    monkeypatch.setattr(mod.time, "sleep", lambda _seconds: None)
+    original_import = builtins.__import__
+
+    def guarded_import(module_name, *args, **kwargs):
+        if module_name == "winreg":
+            raise AssertionError("Status submission must not access Windows sound registry")
+        return original_import(module_name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    combo = SimpleNamespace(class_name="CComboBoxTS", handle=77)
+    edit = SimpleNamespace(handle=88, element_info=SimpleNamespace(parent=combo))
+
+    mod._background_enter(edit, "combo")
+
+    assert sent == [(77, 0x0100, 0x0D, 0), (77, 0x0101, 0x0D, 0)]
+
+
+@pytest.mark.parametrize(
     "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"])
 def test_non_status_commit_keeps_foreground_requirement(name, monkeypatch):
     """Chat and IM controls must not use the status-only background fallback."""
@@ -1152,7 +1180,7 @@ def test_marquee_submits_frames_only_after_configured_step(name, monkeypatch):
                          set_on_start=True)
     cfg["status"]["history"]["enabled"] = False
     cfg["status"]["marquee"].update(
-        enabled=True, scroll=True, width=8, stride=2, step_seconds=0.5,
+        enabled=True, scroll=True, width=8, stride=2, step_seconds=10,
         cycles=1, max_frames=5, loop_slots=False, infinite_loop=False)
     clock = [0.0]
     monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
@@ -1161,11 +1189,45 @@ def test_marquee_submits_frames_only_after_configured_step(name, monkeypatch):
     sent_at = []
     runner.send = lambda _ctrl, _text, btn=None: sent_at.append(clock[0]) or True
 
-    for instant in (0.0, 0.25, 0.49, 0.5, 0.75, 0.99, 1.0):
+    for instant in (0.0, 9.99, 10.0, 19.99, 20.0):
         clock[0] = instant
         runner.do_status(instant)
 
-    assert sent_at == [0.0, 0.5, 1.0]
+    assert sent_at == [0.0, 10.0, 20.0]
+
+
+@pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_random_gui", "status_marquee_gui"]
+)
+def test_status_retry_never_bypasses_ten_second_minimum(name, monkeypatch):
+    mod = load(name)
+    cfg = copy.deepcopy(mod.DEFAULTS)
+    cfg["dry_run"] = True
+    cfg["status"].update(
+        enabled=True,
+        random=name != "status_marquee_gui",
+        messages=["Retry status"],
+        interval_seconds=10,
+        retry_seconds=1,
+    )
+    cfg["status"]["history"]["enabled"] = False
+    cfg["status"]["marquee"]["enabled"] = name == "status_marquee_gui"
+    cfg["status"]["marquee"]["scroll"] = False
+    runner = mod.Runner(cfg)
+    runner.status_edit, runner.apply_btn, runner.win = object(), None, object()
+    sends = []
+    runner.send = lambda _ctrl, _text, btn=None: (
+        sends.append(True), len(sends) > 1
+    )[1]
+
+    with pytest.raises(RuntimeError):
+        runner.do_status(100)
+    assert runner.last_status == 100
+
+    runner.do_status(109.99)
+    assert len(sends) == 1
+    runner.do_status(110)
+    assert len(sends) == 2
 
 
 @pytest.mark.parametrize("name", ["status_changer_gui", "status_marquee_gui"])
@@ -1186,7 +1248,7 @@ def test_marquee_uses_each_slot_once_then_wraps_only_when_loop_is_enabled(
     cfg["status"]["history"].update(
         enabled=True, use_as_source=True, seed_from_messages=False)
     cfg["status"]["marquee"].update(
-        enabled=True, scroll=scroll, width=8, stride=2, step_seconds=0.5,
+        enabled=True, scroll=scroll, width=8, stride=2, step_seconds=10,
         cycles=1, max_frames=3, loop_slots=loop_slots, infinite_loop=False)
     caplog.set_level("INFO")
     runner = mod.Runner(cfg)
@@ -1199,8 +1261,8 @@ def test_marquee_uses_each_slot_once_then_wraps_only_when_loop_is_enabled(
     completed = []
     previous_count = 0
     expected = messages + messages[:1] if loop_slots else messages
-    for tick in range(1501):
-        now = tick * 0.1
+    for tick in range(1201):
+        now = tick * 1.0
         clock[0] = now
         runner.do_status(now)
         count = runner.stats["statuses"]
@@ -1272,7 +1334,7 @@ def test_apply_sends_frames_immediately_when_scroll_on(monkeypatch):
     cfg["status"]["execution_mode"] = "interactive"
     cfg["status"]["max_length"] = 120
     cfg["status"]["marquee"].update(enabled=True, scroll=True, width=10, stride=2,
-                                    step_seconds=0.3, cycles=1, max_frames=80)
+                                    step_seconds=10, cycles=1, max_frames=80)
     monkeypatch.setattr(m, "get_window", lambda config: object())
     monkeypatch.setattr(m, "find", lambda win, spec: object())
     seen, sleeps = [], []
@@ -1282,7 +1344,7 @@ def test_apply_sends_frames_immediately_when_scroll_on(monkeypatch):
     assert m.apply_status_scrolling("dummy.json", "status message that scrolls on") == 0
     assert len(seen) > 1, "expected several frames sent in order"
     assert seen == sorted(seen, key=lambda t: seen.index(t)) and len(set(seen)) > 1
-    assert sleeps and all(s >= 0.3 for s in sleeps)
+    assert sleeps and all(s >= 10 for s in sleeps)
 
 
 def test_apply_falls_back_to_single_shot_when_scroll_off(monkeypatch):

@@ -81,7 +81,7 @@ def test_runtime_config_enforces_strict_background_for_each_worker_mode(mode):
         assert runtime["status"]["marquee"]["enabled"] is (mode == "marquee")
 
 
-def test_explicit_unverified_test_mode_uses_edit_post_without_global_input(
+def test_explicit_unverified_test_mode_uses_combo_post_without_global_input(
     monkeypatch, capsys
 ):
     monkeypatch.setenv(combined_gui.UNVERIFIED_STATUS_TEST_ENV, "1")
@@ -95,10 +95,10 @@ def test_explicit_unverified_test_mode_uses_edit_post_without_global_input(
     }
     profiled = combined_gui.apply_app_profile(cfg)
     assert profiled["status"]["execution_mode"] == "interactive"
-    assert profiled["status"]["background_enter_target"] == "edit"
+    assert profiled["status"]["background_enter_target"] == "combo"
     runtime = combined_gui.runtime_config(cfg, "random")
     assert runtime["status"]["execution_mode"] == "interactive"
-    assert runtime["status"]["background_enter_target"] == "edit"
+    assert runtime["status"]["background_enter_target"] == "combo"
     assert not combined_gui._strict_status_start_blocked(
         {"dry_run": False, "status": {"enabled": True}}
     )
@@ -134,7 +134,7 @@ def test_explicit_unverified_test_mode_uses_edit_post_without_global_input(
         background_if_not_foreground=True,
         execution_mode="interactive",
     )
-    assert events == [("post-message", "edit")]
+    assert events == [("post-message", "combo")]
 
 
 def test_status_profile_remains_strict_without_explicit_test_opt_in(monkeypatch):
@@ -457,6 +457,61 @@ def test_parse_interval_seconds_clamps_up_to_minimum():
     assert gui.parse_interval_seconds("0.1") == gui.RANDOM_INTERVAL_MIN
     assert gui.parse_interval_seconds("-5") == gui.RANDOM_INTERVAL_MIN
     assert gui.parse_interval_seconds("10") == 10
+    assert gui.RANDOM_INTERVAL_MIN == 10
+
+
+def test_legacy_status_config_is_clamped_to_provider_minimum(tmp_path):
+    import json
+
+    path = tmp_path / "legacy-status.json"
+    path.write_text(
+        json.dumps(
+            {
+                "status": {
+                    "interval_seconds": 1.5,
+                    "marquee": {"step_seconds": 0.5},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = combined_gui.load_cfg(path)
+
+    assert cfg["status"]["interval_seconds"] == 10
+    assert cfg["status"]["marquee"]["step_seconds"] == 10
+
+
+def test_configure_status_mode_clamps_random_and_marquee_to_ten_seconds():
+    import copy
+
+    cfg = copy.deepcopy(combined_gui.DEFAULTS)
+    combined_gui.configure_status_mode(cfg, "random", ["one"], 1)
+    assert cfg["status"]["interval_seconds"] == 10
+
+    combined_gui.configure_status_mode(
+        cfg,
+        "marquee",
+        ["one"],
+        1,
+        {"step": 0.5, "stride": 1, "scroll": True, "loop_slots": False},
+    )
+    assert cfg["status"]["interval_seconds"] == 10
+    assert cfg["status"]["marquee"]["step_seconds"] == 10
+
+
+def test_scrolling_cli_frames_are_spaced_at_least_ten_seconds(monkeypatch):
+    import copy
+
+    cfg = copy.deepcopy(combined_gui.DEFAULTS)
+    cfg["dry_run"] = True
+    cfg["status"]["execution_mode"] = "strict_background"
+    cfg["status"]["marquee"]["step_seconds"] = 0.5
+    sleeps = []
+    monkeypatch.setattr(combined_gui.time, "sleep", sleeps.append)
+
+    assert combined_gui._commit_frames(cfg, ["first", "second"]) == 0
+    assert sleeps == [10]
 
 
 def test_parse_interval_seconds_clamps_down_to_maximum():

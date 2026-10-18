@@ -137,8 +137,8 @@ S = {
     ),
     "e_msgs": ("status.messages is empty", "status.messages ว่างเปล่า"),
     "e_interval": (
-        "status.interval_seconds must be >= 0.3",
-        "status.interval_seconds ต้องไม่น้อยกว่า 0.3",
+        "status.interval_seconds must be >= 10 seconds",
+        "status.interval_seconds ต้องไม่น้อยกว่า 10 วินาที",
     ),
     "e_sel": ("{k} must be a selector object", "{k} ต้องเป็น object ของ selector"),
     "e_delay": (
@@ -190,7 +190,7 @@ S = {
         "control not found: {spec} (matches={n})",
         "ไม่พบ control: {spec} (พบ {n} รายการ)",
     ),
-    "status_set": ("status set: {text}", "ตั้ง status แล้ว: {text}"),
+    "status_set": ("status submission dispatched (provider outcome unverified): {text}", "ส่งคำสั่ง status แล้ว (ยังไม่ยืนยันผลจาก Camfrog): {text}"),
     "bg_status_client_confirmed": (
         "Camfrog client shows the status (external state unverified): {text}",
         "หน้าต่าง Camfrog แสดงสถานะนี้แล้ว (ยังไม่ยืนยันสถานะภายนอก): {text}",
@@ -200,8 +200,8 @@ S = {
         "ตั้งสถานะเบื้องหลังไม่สำเร็จ (state={state}, code={code})",
     ),
     "status_slot_set": (
-        "status slot {slot}/{total} set: {text}",
-        "ตั้งสถานะช่อง {slot}/{total} แล้ว: {text}",
+        "status slot {slot}/{total} dispatched (provider outcome unverified): {text}",
+        "ส่งคำสั่ง status ช่อง {slot}/{total} แล้ว (ยังไม่ยืนยันผลจาก Camfrog): {text}",
     ),
     "status_fail": ("status commit failed", "ตั้ง status ไม่สำเร็จ"),
     "reply_fail": ("reply commit failed", "ส่งข้อความตอบไม่สำเร็จ"),
@@ -329,8 +329,8 @@ S = {
     "why_link": ("contains a link", "มีลิงก์"),
     "why_pattern": ("matches skip_patterns", "ตรงกับ skip_patterns"),
     "e_marquee": (
-        "status.marquee invalid: width 8-80 (and <= status.max_length), stride 1..width, step_seconds >= 0.3, cycles 1-5, max_frames 5-300",
-        "status.marquee ไม่ถูกต้อง: width 8-80 (และไม่เกิน status.max_length), stride 1..width, step_seconds >= 0.3, cycles 1-5, max_frames 5-300",
+        "status.marquee invalid: width 8-80 (and <= status.max_length), stride 1..width, step_seconds >= 10 seconds, cycles 1-5, max_frames 5-300",
+        "status.marquee ไม่ถูกต้อง: width 8-80 (และไม่เกิน status.max_length), stride 1..width, step_seconds >= 10 วินาที, cycles 1-5, max_frames 5-300",
     ),
     "e_cycle": (
         "status.language_cycle items must be th or en",
@@ -554,7 +554,7 @@ DEFAULTS = {
             "scroll": False,
             "width": 28,
             "stride": 2,
-            "step_seconds": 0.5,
+            "step_seconds": 10,
             "separator": "   \u2022   ",
             "cycles": 1,
             "max_frames": 80,
@@ -655,7 +655,7 @@ def apply_app_profile(cfg):
         if _unverified_status_test_submit_enabled():
             # Keep the explicit local test route consistent across parent and worker.
             status["execution_mode"] = "interactive"
-            status["background_enter_target"] = "edit"
+            status["background_enter_target"] = "combo"
         else:
             # Normal standalone workers remain fail-closed.
             status["execution_mode"] = "strict_background"
@@ -677,7 +677,22 @@ def deep_merge(base: dict, over: dict) -> dict:
 
 def load_cfg(path: Union[str, Path]) -> dict:
     with Path(path).open(encoding="utf-8-sig") as f:  # Notepad may add a BOM
-        return deep_merge(DEFAULTS, json.load(f))
+        config = deep_merge(DEFAULTS, json.load(f))
+    status = config.get("status", {})
+    try:
+        interval = float(status.get("interval_seconds", RANDOM_INTERVAL_MIN))
+        if math.isfinite(interval):
+            status["interval_seconds"] = max(RANDOM_INTERVAL_MIN, interval)
+    except (TypeError, ValueError, OverflowError):
+        pass
+    marquee = status.get("marquee", {})
+    try:
+        step = float(marquee.get("step_seconds", MARQUEE_STEP_MIN))
+        if math.isfinite(step):
+            marquee["step_seconds"] = max(MARQUEE_STEP_MIN, step)
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return config
 
 
 def parse_hm(s: str) -> dt.time:
@@ -772,7 +787,7 @@ def _validate(cfg, errs, warns):
     if st["enabled"]:
         if not st["messages"]:
             errs.append(t("e_msgs"))
-        if st["interval_seconds"] < 0.3:
+        if st["interval_seconds"] < RANDOM_INTERVAL_MIN:
             errs.append(t("e_interval"))
         if st["language_mode"] not in ("th", "en", "both", "alternate"):
             errs.append(t("e_mode"))
@@ -798,7 +813,7 @@ def _validate(cfg, errs, warns):
                     8 <= mq["width"] <= 80
                     and mq["width"] <= st["max_length"]
                     and 1 <= mq["stride"] <= mq["width"]
-                    and mq["step_seconds"] >= 0.3
+                    and mq["step_seconds"] >= MARQUEE_STEP_MIN
                     and (inf or (1 <= mq["cycles"] <= 5))
                     and 5 <= mq["max_frames"] <= 300
                 )
@@ -1479,11 +1494,11 @@ def commit(
         or (background_if_not_foreground and not window_is_foreground)
     )
     submit_target = background_enter_target
-    # Always upgrade to "combo" when doing a background submit with "edit" target:
-    # posting Enter directly to the child Edit control triggers a Windows ding
-    # sound on Camfrog builds that don't handle Enter in the Edit — regardless
-    # of whether Camfrog is currently the foreground window.
-    if background_submit and submit_target == "edit" and not unverified_test_submit:
+    # Always submit through the verified combo parent. Posting Enter directly
+    # to Camfrog's child Edit can produce a Windows ding on supported builds.
+    # Combo submission has independently observed foreground activation, so it
+    # remains experimental and does not qualify for strict-background mode.
+    if background_submit and submit_target == "edit":
         submit_target = "combo"
     needs_foreground = require_fg and apply_btn is None and not background_submit
     prev = foreground if restore and needs_foreground else 0
@@ -1520,14 +1535,17 @@ def commit(
             except Exception as exc:
                 if unverified_test_submit:
                     log.error(
-                        "STATUS_SUBMIT=DISPATCH_FAILED route=edit-post error=%s",
+                        "STATUS_SUBMIT=DISPATCH_FAILED route=%s error=%s",
+                        f"{submit_target}-post",
                         type(exc).__name__,
                     )
                 raise
             if unverified_test_submit:
                 log.warning(
-                    "STATUS_SUBMIT=DISPATCHED_UNVERIFIED route=edit-post; "
-                    "verify in another Camfrog account's friend list"
+                    "STATUS_SUBMIT=DISPATCHED_UNVERIFIED route=%s; "
+                    "the combo route may activate Camfrog; verify in another "
+                    "Camfrog account's friend list",
+                    f"{submit_target}-post",
                 )
     if (
         prev
@@ -2710,7 +2728,9 @@ class Runner:
         frame = m["frames"][m["i"]]
         if not self.send(self.status_edit, frame, self.apply_btn):
             self.marq = None
-            self.last_status = now - st["interval_seconds"] + st["retry_seconds"]
+            self.last_status = now - st["interval_seconds"] + max(
+                st["retry_seconds"], st["interval_seconds"]
+            )
             raise RuntimeError(t("status_fail"))
         if (
             m["i"] == 0
@@ -2727,7 +2747,7 @@ class Runner:
             if m["i"] >= len(m["frames"]):
                 m["i"] = 0
             m["next"] = time.monotonic() + max(
-                0.3, float(st["marquee"]["step_seconds"])
+                MARQUEE_STEP_MIN, float(st["marquee"]["step_seconds"])
             )
             log.debug(t("status_set", text=shown(frame)))
             return
@@ -2741,7 +2761,7 @@ class Runner:
             # writes can be slow; using `now` here could make delayed sends run
             # back-to-back and destabilize the ticker.
             m["next"] = time.monotonic() + max(
-                0.3, float(st["marquee"]["step_seconds"])
+                MARQUEE_STEP_MIN, float(st["marquee"]["step_seconds"])
             )
             log.debug(t("status_set", text=shown(frame)))
 
@@ -3035,8 +3055,9 @@ def _strict_status_start_blocked(cfg, emit=print):
         return False
     if _unverified_status_test_submit_enabled():
         emit(
-            "UNVERIFIED TEST MODE: status submissions will be dispatched through "
-            "edit-post; verify the result in another Camfrog account's friend list."
+            "UNVERIFIED TEST MODE: status submissions use combo-post to avoid "
+            "the Edit control ding; Camfrog may activate. Verify the result in "
+            "another Camfrog account's friend list."
         )
         return False
     try:
@@ -4201,7 +4222,7 @@ DEFAULTS = {
             "scroll": False,
             "width": 28,
             "stride": 2,
-            "step_seconds": 0.5,
+            "step_seconds": 10,
             "separator": "   \u2022   ",
             "cycles": 1,
             "max_frames": 80,
@@ -4312,9 +4333,9 @@ DATA_DIR = (
 
 ACTIVE_MODE_FILE = "camfrog_status_changer.mode"
 MODE_SETTINGS_FILE = "status-mode-settings.json"
-MARQUEE_STEP_MIN = 0.3
+MARQUEE_STEP_MIN = 10
 MARQUEE_STRIDE_DEFAULT = 2
-RANDOM_INTERVAL_MIN = 0.3
+RANDOM_INTERVAL_MIN = 10
 RANDOM_INTERVAL_DEFAULT = 600
 RANDOM_INTERVAL_MAX = 86400
 STATUS_SLOTS = 10
@@ -4483,7 +4504,7 @@ def configure_status_mode(
 
     status = config["status"]
     marquee = status["marquee"]
-    status["interval_seconds"] = interval_seconds
+    status["interval_seconds"] = parse_interval_seconds(interval_seconds)
     status["messages"] = messages
     status["random"] = mode == "random"
     marquee["enabled"] = mode == "marquee"
@@ -4629,10 +4650,11 @@ def runtime_config(config, mode="random"):
     runtime = copy.deepcopy(config)
     status = runtime.setdefault("status", {})
     # Normal workers fail closed in strict mode. An explicit local test flag
-    # opts into a targeted Edit-message route that remains externally unverified.
+    # opts into a combo-parent route that remains externally unverified and may
+    # activate Camfrog.
     if _unverified_status_test_submit_enabled():
         status["execution_mode"] = "interactive"
-        status["background_enter_target"] = "edit"
+        status["background_enter_target"] = "combo"
     else:
         status["execution_mode"] = "strict_background"
     status["random"] = mode == "random"
@@ -4841,9 +4863,9 @@ def _commit_frames(config, frames, cancel_event=None):
         ctrl = find(win, st["edit"])
         btn = find(win, st["apply_button"]) if st["apply_button"] else None
     try:
-        step = max(0.3, float(mq.get("step_seconds", 0.3)))
+        step = max(MARQUEE_STEP_MIN, float(mq.get("step_seconds", MARQUEE_STEP_MIN)))
     except (TypeError, ValueError):
-        step = 0.3
+        step = MARQUEE_STEP_MIN
     for i, frame in enumerate(frames):
         _raise_if_status_cancelled(cancel_event)
         if strict:
@@ -5532,8 +5554,9 @@ def build_app():
             self._log_activity("Application opened", "app")
             if _unverified_status_test_submit_enabled():
                 self._log_activity(
-                    "UNVERIFIED TEST MODE enabled: edit-post dispatch only; "
-                    "friend-list PASS/FAIL must be recorded separately",
+                    "UNVERIFIED TEST MODE enabled: combo-post dispatch; "
+                    "Camfrog may activate and friend-list PASS/FAIL must be "
+                    "recorded separately",
                     "app",
                 )
             self.clipboard_controller = ClipboardController(
@@ -6025,8 +6048,8 @@ def build_app():
                     timing,
                     textvariable=self.step,
                     from_=MARQUEE_STEP_MIN,
-                    to=10,
-                    increment=0.1,
+                    to=3600,
+                    increment=1,
                     width=5,
                 ).pack(side="left", padx=(4, 3))
                 ttk.Label(timing, text="s", style="Card.TLabel").pack(side="left")

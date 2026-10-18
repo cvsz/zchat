@@ -479,6 +479,10 @@ def test_evaluate_client_runtime_state_boundary_rules(monkeypatch):
     assert state_empty.ui_visible is False
     assert state_empty.account_authenticated is False
     assert state_empty.room_member is False
+    assert any(
+        "Room membership not established: No room window present." in note
+        for note in state_empty.evidence_notes
+    )
 
     # Rule 2: Room window existing does NOT establish current room membership if kicked
     kicked_desc = [

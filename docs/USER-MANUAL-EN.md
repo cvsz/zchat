@@ -50,15 +50,15 @@ Apps: `room-control`, `chat-im-private`, `status-random`, `status-marquee`, `sta
 ## 6. Status Changer: Random, Marquee, and Activity Log
 
 - `status-changer.exe` puts Random and Marquee in separate tabs with separate ten-slot pools. It reuses existing mode pool databases when it finds their data folders. The legacy `status-random.exe` and `status-marquee.exe` remain available for compatibility.
-- **Random:** each switch picks a status from its ten slots. **Switch every** is in seconds and has a minimum of 0.3 seconds.
-- **Marquee:** **Step** sets seconds per frame and the delay between whole-line slots when Scroll is off (minimum 0.3); **Stride** sets character clusters per frame, and **Scroll** turns frame scrolling on or off. Marquee follows the populated slots in order; History source cannot reorder them. With scrolling on, each populated slot completes its frames before the next slot starts. **Loop slots** restarts at slot 1 after the last populated slot; with it off, the sequence stops after the last slot. Thai vowel/tone clusters stay together. **Switch every** applies to Random only.
+- **Random:** each switch picks a status from its ten slots. **Switch every** is in seconds and has a minimum of 10 seconds.
+- **Marquee:** **Step** sets seconds per frame and the delay between whole-line slots when Scroll is off (minimum 10 seconds); **Stride** sets character clusters per frame, and **Scroll** turns frame scrolling on or off. Every frame is an external status submission and is rate-limited by this minimum. Marquee follows the populated slots in order; History source cannot reorder them. With scrolling on, each populated slot completes its frames before the next slot starts. **Loop slots** restarts at slot 1 after the last populated slot; with it off, the sequence stops after the last slot. Thai vowel/tone clusters stay together. **Switch every** applies to Random only.
 - **Start** applies the selected mode immediately; only one status worker can run at a time. The window shows which mode is active. **Stop** ends that worker.
-- **Activity Log** combines GUI actions with both worker logs. GUI events omit status text; worker logs may include the status that Camfrog received. Use **Open log folder** to inspect the files.
+- **Activity Log** combines GUI actions with both worker logs. GUI events omit status text; worker logs label a local dispatch separately from provider verification. Use **Open log folder** to inspect the files.
 
 ## 7. Status history, schedules, language
 
-- Long statuses scroll across a window of `width` characters: **Step** (seconds per frame, min 0.5), **Stride** (clusters per frame), **Loop** (repeat without settling). With **Scroll** off (default), each pool line is applied whole, one per tick, rotating 1..N and wrapping.
-- Every frame is a real status change on Camfrog, so keep frames slow and few. Start with dry-run.
+- Long statuses scroll across a window of `width` characters: **Step** (seconds per frame, minimum 10), **Stride** (clusters per frame), **Loop** (repeat without settling). With **Scroll** off (default), each pool line is applied whole, one per tick, rotating 1..N and wrapping.
+- Random switches, Marquee frames, and automatic retries are spaced at least 10 seconds apart. Start with dry-run.
 - Thai-safe: never splits vowel/tone clusters, never emits a blank frame.
 - Use `status-changer.exe` for the combined Random and Marquee interface with an Activity Log. It stores its settings, pools, and logs separately under `status-data\`; only one status mode runs at a time.
 
