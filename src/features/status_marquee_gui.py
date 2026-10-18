@@ -1842,7 +1842,7 @@ class Runner:
             LANG = resolve_lang(new["language"])
         try:
             self.resolve()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - keep worker alive on any UIA reattach error
             self.win = self.status_edit = self.apply_btn = None
             self.marq = None
             log.warning("Config reloaded but Camfrog re-attach failed: %s", e)
