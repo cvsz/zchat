@@ -1274,21 +1274,33 @@ class UserActivityGuard:
 
     @staticmethod
     def _win_tick():
-        return ctypes.windll.kernel32.GetTickCount() & 0xFFFFFFFF
+        try:
+            kernel32 = getattr(getattr(ctypes, "windll", None), "kernel32", None)
+            if kernel32 and hasattr(kernel32, "GetTickCount"):
+                return kernel32.GetTickCount() & 0xFFFFFFFF
+        except Exception:
+            pass
+        return int(time.monotonic() * 1000) & 0xFFFFFFFF
 
     @staticmethod
     def _win_last_input():
         if os.name != "nt":
             return None
+        try:
+            user32 = getattr(getattr(ctypes, "windll", None), "user32", None)
+            if not user32 or not hasattr(user32, "GetLastInputInfo"):
+                return None
 
-        class LASTINPUTINFO(ctypes.Structure):
-            _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+            class LASTINPUTINFO(ctypes.Structure):
+                _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
 
-        info = LASTINPUTINFO()
-        info.cbSize = ctypes.sizeof(info)
-        if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+            info = LASTINPUTINFO()
+            info.cbSize = ctypes.sizeof(info)
+            if not user32.GetLastInputInfo(ctypes.byref(info)):
+                return None
+            return info.dwTime
+        except Exception:
             return None
-        return info.dwTime
 
     def mark_own(self, start, end, slack=400):
         self._own = (start, (end + slack) & 0xFFFFFFFF)
