@@ -264,3 +264,28 @@ def test_browser_login_can_keep_explicitly_requested_profile(
 
     assert retained_profile == str(profile)
     assert profile.is_dir()
+
+
+@pytest.mark.parametrize("domain, accepted", [
+    ("camfrog.com", True),
+    (".camfrog.com", True),
+    ("profiles.camfrog.com", True),
+    ("PROFILES.CAMFROG.COM", True),
+    ("evilcamfrog.com", False),
+    ("camfrog.com.evil.example", False),
+    ("foo.camfrog.com.evil.example", False),
+    ("camfrog.comevil", False),
+    ("camfrog.com.", False),
+    ("", False),
+    (None, False),
+])
+def test_cookie_domain_boundary(domain, accepted):
+    assert bl._is_camfrog_cookie_domain(domain) is accepted
+
+
+def test_cookie_serialization_rejects_suffix_spoofing():
+    cookies = [
+        {"domain": "evilcamfrog.com", "name": "PHPSESSID", "value": "spoof"},
+        {"domain": "profiles.camfrog.com", "name": "PHPSESSID", "value": "real"},
+    ]
+    assert bl._cookies_to_string(cookies) == "PHPSESSID=real"

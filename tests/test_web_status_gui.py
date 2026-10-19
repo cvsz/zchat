@@ -1089,3 +1089,28 @@ def test_start_chains_login_then_rotation(tmp_path, monkeypatch):
     assert manager.session_ready is True
     manager.stop()
     assert manager.session_ready is False
+
+
+@pytest.mark.parametrize("domain, accepted", [
+    ("camfrog.com", True),
+    (".camfrog.com", True),
+    ("profiles.camfrog.com", True),
+    ("PROFILES.CAMFROG.COM", True),
+    ("evilcamfrog.com", False),
+    ("camfrog.com.evil.example", False),
+    ("foo.camfrog.com.evil.example", False),
+    ("camfrog.comevil", False),
+    ("camfrog.com.", False),
+    ("", False),
+    (None, False),
+])
+def test_inlined_cookie_domain_boundary(domain, accepted):
+    assert wsg._is_camfrog_cookie_domain(domain) is accepted
+
+
+def test_inlined_cookie_serialization_rejects_suffix_spoofing():
+    cookies = [
+        {"domain": "evilcamfrog.com", "name": "PHPSESSID", "value": "spoof"},
+        {"domain": "profiles.camfrog.com", "name": "PHPSESSID", "value": "real"},
+    ]
+    assert wsg._cookies_to_string(cookies) == "PHPSESSID=real"
