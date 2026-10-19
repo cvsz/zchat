@@ -31,6 +31,9 @@
 - Introduce jitter-based typing delay variations to emulate authentic human typing rhythms during status/IM auto-replies.
 - Add multi-language sentiment analysis for `im-autoreply` with auto-translation integration.
 
-### D. Multi-Instance & Cloud Synchronization
-- Support headless daemon mode for Linux/WSL2 and Windows Server without active GUI rendering.
-- Profile backup and cloud synchronization for status rotation templates via encrypted S3/WebDAV.
+### E. Dual-Language Automated Name-Changer Engine
+- **Manual & Automated Profile Display Name Changer**:
+  - Multi-language alternating display name scheduler (English + Thai).
+  - Precise timing guards with configurable delays to prevent rate-limiting or anti-abuse triggers.
+  - Seamless integration into `camfrog_gui.py` and standalone feature runners with F3/F4 hotkey support.
+  - Fail-safe fallback to original nickname on error or abrupt session disconnect.
