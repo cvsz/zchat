@@ -1187,7 +1187,25 @@ def _escape_keys(text):
     return "".join("{%s}" % c if c in "{}()+^%~" else c for c in text)
 
 
-def commit_web(win, ctrl, text: str, require_fg: bool = True, restore: bool = False) -> bool:
+def _type_human_like(text: str, keyboard_module=None, min_jitter: float = 0.015, max_jitter: float = 0.055):
+    """Simulate authentic human typing rhythm with randomized inter-keystroke jitter."""
+    if keyboard_module is None:
+        from pywinauto import keyboard as keyboard_module
+    import random
+    # Human reaction / thinking pause before starting to type
+    time.sleep(random.uniform(0.12, 0.35))
+    for char in text:
+        escaped = "{%s}" % char if char in "{}()+^%~" else char
+        keyboard_module.send_keys(escaped, pause=0.005, with_spaces=True)
+        # Jitter delay per keystroke (simulates 50-70 WPM typing cadence)
+        delay = random.uniform(min_jitter, max_jitter)
+        # Occasional micro-pause at spaces or punctuation (natural cadence)
+        if char in " .,!?\n":
+            delay += random.uniform(0.04, 0.12)
+        time.sleep(delay)
+
+
+def commit_web(win, ctrl, text: str, require_fg: bool = True, restore: bool = False, human_like: bool = True) -> bool:
     """Send into Camfrog's web chat box. There is no text control to write to, so: bring the room to
     front, click the box, paste (clipboard is restored) or type, press Enter. Never types unless the
     room window is verified foreground, re-checked right before Enter."""
@@ -1203,11 +1221,16 @@ def commit_web(win, ctrl, text: str, require_fg: bool = True, restore: bool = Fa
         log.error(t("not_fg"))
         return False
     old = _clip_get()
-    pasted = _clip_set(text)
+    pasted = False
+    if not human_like:
+        pasted = _clip_set(text)
     try:
         keyboard.send_keys("^a", pause=0.02)
-        keyboard.send_keys("^v" if pasted else _escape_keys(text), pause=0.01, with_spaces=True)
-        time.sleep(0.2)
+        if human_like or not pasted:
+            _type_human_like(text, keyboard)
+        else:
+            keyboard.send_keys("^v", pause=0.01, with_spaces=True)
+        time.sleep(0.15)
     finally:
         if pasted and old is not None:
             time.sleep(0.2)
@@ -2685,11 +2708,14 @@ class Runner:
 
     def dj_command(self, queue, dj, cmd, arg, nick, owner):
         """One DJ chat command -> reply text (None = not a DJ command)."""
-        if cmd in ("request", "req", "song"):
+        if cmd in ("play", "request", "req", "song"):
             title = arg
+            if not title:
+                raise DJError("please specify a song title to play: !play <song name>")
             if dj.get("audio_backend", "chat") == "local":
                 song = dj_find_song(BASE / dj.get("music_dir", "music"), arg)
                 if song is None:
+                    # Extended fallback: search in music directory with looser match
                     raise DJError(f'not found as .wav in music/: "{arg}"')
                 title = song.stem
             if queue.current is not None \
@@ -2720,7 +2746,7 @@ class Runner:
                 return "[dj] skipped, queue is empty"
             return dj["announce_now"].format(title=nxt["title"], user=nxt["user"])
         if cmd == "help":
-            return "[dj] commands: !request <song> !queue !current !skip"
+            return "[dj] commands: !play <song> !request <song> !queue !current !skip"
         return None
 
     def dj_start_playback(self, queue, dj):
@@ -3529,6 +3555,7 @@ def build_parser():
     tr.add_argument("--sender", default="TestUser")
     tr.add_argument("--file")
     tr.add_argument("--im", action="store_true", help="test with the autoreply_im rules and limits")
+    p.add_argument("--daemon", action="store_true", help="run as headless background daemon (Linux/WSL2/Windows Server)")
     return p
 
 
@@ -3599,6 +3626,17 @@ def main(argv=None, force_strict_background=False):
         return cmd_history_import(cfg, a.file)
     if a.cmd == "start":
         return cmd_start(cfg, a)
+    if getattr(a, "daemon", False) and os.name != "nt":
+        # Fork to run in headless background daemon mode on POSIX / Linux / WSL2
+        try:
+            pid = os.fork()
+            if pid > 0:
+                print(f"[Daemon] Forked background worker process (PID {pid})")
+                return 0
+            os.setsid()
+        except OSError as e:
+            print(f"[Daemon] Fork failed: {e}")
+            return 1
     setup_logging(cfg)
     try:
         if a.cmd == "windows":
