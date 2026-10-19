@@ -5,7 +5,7 @@ import copy
 import pytest
 
 
-def test_f3_f4_delegate_to_validated_worker_lifecycle(monkeypatch):
+def test_f3_f4_delegate_to_validated_worker_lifecycle(monkeypatch, tmp_path):
     import camfrog_auto as app
 
     calls = []
@@ -18,11 +18,13 @@ def test_f3_f4_delegate_to_validated_worker_lifecycle(monkeypatch):
         lambda cfg: calls.append(("stop", cfg)) or 0,
     )
     config = copy.deepcopy(app.DEFAULTS)
+    config_path = tmp_path / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
 
-    assert app.toggle_worker(config, "start") == "worker started"
+    assert app.toggle_worker(config, "start", config_path) == "worker started"
     assert app.toggle_worker(config, "stop") == "worker stopped"
     assert calls[0][0] == "start"
-    assert calls[0][2].config is None
+    assert calls[0][2].config == str(config_path.resolve())
     assert calls[1] == ("stop", config)
 
 
@@ -31,12 +33,26 @@ def test_f3_f4_delegate_to_validated_worker_lifecycle(monkeypatch):
     ("stop", "cmd_stop"),
 ])
 def test_worker_hotkeys_do_not_report_failed_operations_as_success(
-    action, method, monkeypatch
+    action, method, monkeypatch, tmp_path
 ):
     import camfrog_auto as app
 
     monkeypatch.setattr(app, method, lambda *_args: 1)
-    assert app.toggle_worker(copy.deepcopy(app.DEFAULTS), action).endswith("failed")
+    config_path = tmp_path / "config.json"
+    config_path.write_text("{}", encoding="utf-8")
+    assert app.toggle_worker(
+        copy.deepcopy(app.DEFAULTS), action, config_path
+    ).endswith("failed")
+
+
+def test_worker_start_without_verified_config_path_fails_closed(monkeypatch):
+    import camfrog_auto as app
+
+    monkeypatch.setattr(
+        app, "cmd_start",
+        lambda *_args: pytest.fail("worker cannot start without its config path"),
+    )
+    assert "failed" in app.toggle_worker(copy.deepcopy(app.DEFAULTS), "start")
 
 
 @pytest.mark.parametrize("function,enable", [

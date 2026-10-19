@@ -2974,10 +2974,12 @@ def release_run_mutex(handle):
         log.debug("Could not close worker mutex handle: %s", ctypes.get_last_error())
 
 
-def toggle_worker(cfg, action: str) -> str:
+def toggle_worker(cfg, action: str, config_path=None) -> str:
     """Delegate hotkey requests to the validated worker lifecycle commands."""
     if action == "start":
-        args = argparse.Namespace(config=None, lang=None)
+        if config_path is None or not Path(config_path).is_file():
+            return "worker start failed: verified configuration path required"
+        args = argparse.Namespace(config=str(Path(config_path).resolve()), lang=None)
         return "worker started" if cmd_start(cfg, args) == 0 else "worker start failed"
     if action == "stop":
         return "worker stopped" if cmd_stop(cfg) == 0 else "worker stop failed"
@@ -3174,7 +3176,7 @@ def register_hotkey_handler(cfg):
     log.info("F3/F4 hotkey handler registered (poll-based)")
 
 
-def check_hotkeys(cfg):
+def check_hotkeys(cfg, config_path=None):
     """Check for F3/F4 hotkey presses. Call periodically in main loop."""
     import ctypes
     import os as _os
@@ -3188,7 +3190,7 @@ def check_hotkeys(cfg):
     f4_pressed = user32.GetAsyncKeyState(0x73) & 0x8000
     
     if f3_pressed:
-        result = toggle_worker(cfg, "start")
+        result = toggle_worker(cfg, "start", config_path=config_path)
         log.info(f"F3 hotkey: {result}")
         cfg["_hotkey_f3_pressed"] = True
         _t.sleep(0.3)
