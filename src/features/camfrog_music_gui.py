@@ -3318,7 +3318,7 @@ class Runner:
                                  "บันทึกลิงก์เพลง YouTube ไม่ได้ โปรดตรวจสอบโฟลเดอร์ข้อมูลของแอป")) from None
             return bi("[dj] Random YouTube music search (saved): {url}|"
                       "[dj] สุ่มลิงก์ค้นหาเพลง YouTube (บันทึกแล้ว): {url}").format(url=url)
-        if cmd in ("request", "req", "song"):
+        if cmd in ("play", "request", "req", "song"):
             title = arg
             video_id = None
             backend = dj.get("audio_backend", "chat")

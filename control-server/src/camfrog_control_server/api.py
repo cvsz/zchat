@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import secrets
 from datetime import UTC, timedelta
 from http import HTTPStatus
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -1550,3 +1551,99 @@ def report_command_result(
         details={"operation": command.operation, "result_code": body.code.value},
     )
     db.commit()
+
+
+# ---------- Telemetry & Real-Time WebSocket ----------
+
+class TelemetryHub:
+    """Thread-safe WebSocket manager broadcasting worker status and activity logs."""
+
+    def __init__(self):
+        self._connections: set = set()
+        self._lock = asyncio.Lock()
+        self._history: list[dict[str, Any]] = []
+
+    async def connect(self, ws):
+        await ws.accept()
+        async with self._lock:
+            self._connections.add(ws)
+            for item in self._history[-50:]:
+                try:
+                    await ws.send_json(item)
+                except Exception:
+                    pass
+
+    async def disconnect(self, ws):
+        async with self._lock:
+            self._connections.discard(ws)
+
+    async def broadcast(self, event_type: str, data: dict[str, Any]):
+        message = {
+            "type": event_type,
+            "timestamp": utcnow().isoformat(),
+            "payload": data,
+        }
+        async with self._lock:
+            self._history.append(message)
+            if len(self._history) > 200:
+                self._history.pop(0)
+            dead = set()
+            for ws in self._connections:
+                try:
+                    await ws.send_json(message)
+                except Exception:
+                    dead.add(ws)
+            self._connections.difference_update(dead)
+
+
+TELEMETRY_HUB = TelemetryHub()
+
+
+@router.websocket("/ws/telemetry")
+async def telemetry_websocket(
+    websocket: WebSocket,
+    token: str | None = None,
+):
+    """Real-time telemetry and activity log WebSocket stream."""
+    settings = websocket.app.state.settings
+    if token:
+        if verify_dashboard_token(token, settings.jwt_signing_secret) is None:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+    await TELEMETRY_HUB.connect(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_text("pong")
+    except WebSocketDisconnect:
+        await TELEMETRY_HUB.disconnect(websocket)
+    except Exception:
+        await TELEMETRY_HUB.disconnect(websocket)
+
+
+@router.post("/telemetry/events", status_code=status.HTTP_202_ACCEPTED)
+async def publish_telemetry_event(
+    event: dict[str, Any],
+    request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+):
+    """Receive worker metrics and events from registered agents or admin."""
+    if credentials is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required.")
+    token = credentials.credentials
+    settings = request.app.state.settings
+    is_admin = verify_dashboard_token(token, settings.jwt_signing_secret) is not None
+    if not is_admin:
+        token_h = hash_token(token)
+        with request.app.state.session_factory() as session:
+            agent = session.scalar(
+                select(Agent).where(Agent.token_hash == token_h, Agent.revoked_at.is_(None))
+            )
+            if agent is None:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token.")
+    event_type = event.get("type", "worker.metric")
+    payload = event.get("payload", event)
+    await TELEMETRY_HUB.broadcast(event_type, payload)
+    return {"status": "broadcasted"}
+

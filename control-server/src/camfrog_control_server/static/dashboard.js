@@ -393,3 +393,72 @@ document.getElementById("command-form").addEventListener("submit", async (event)
     if (requestGeneration === sessionGeneration) setNotice(error.message, "error");
   }
 });
+
+let telemetryWs = null;
+
+function connectTelemetryWs(token) {
+  if (telemetryWs) {
+    try { telemetryWs.close(); } catch (_) {}
+    telemetryWs = null;
+  }
+  const badge = document.getElementById("telemetry-status-badge");
+  const consoleLog = document.getElementById("telemetry-log-console");
+  if (!badge || !consoleLog) return;
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const wsUrl = `${protocol}//${window.location.host}/ws/telemetry?token=${encodeURIComponent(token)}`;
+  badge.textContent = "Connecting...";
+  badge.className = "badge warning";
+  try {
+    telemetryWs = new WebSocket(wsUrl);
+  } catch (e) {
+    badge.textContent = "Error";
+    badge.className = "badge danger";
+    return;
+  }
+  telemetryWs.onopen = () => {
+    badge.textContent = "Live Connected";
+    badge.className = "badge success";
+    consoleLog.innerHTML += `\n[${new Date().toLocaleTimeString()}] Connected to telemetry stream.`;
+    consoleLog.scrollTop = consoleLog.scrollHeight;
+  };
+  telemetryWs.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      const time = msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
+      const p = msg.payload || {};
+      if (p.worker_state) {
+        const el = document.getElementById("stat-worker-state");
+        if (el) el.textContent = p.worker_state;
+      }
+      if (p.guard_state !== undefined) {
+        const el = document.getElementById("stat-guard-state");
+        if (el) el.textContent = p.guard_state ? "Active (Deferred)" : "Clear";
+      }
+      if (p.replies !== undefined) {
+        const el = document.getElementById("stat-replies-count");
+        if (el) el.textContent = String(p.replies);
+      }
+      if (p.current_dj) {
+        const el = document.getElementById("stat-dj-playing");
+        if (el) el.textContent = p.current_dj;
+      }
+      const logLine = p.log || (p.text ? `[${p.type || "worker"}] ${p.text}` : JSON.stringify(p));
+      consoleLog.innerHTML += `\n[${time}] ${logLine}`;
+      consoleLog.scrollTop = consoleLog.scrollHeight;
+    } catch (_) {}
+  };
+  telemetryWs.onclose = () => {
+    badge.textContent = "Disconnected";
+    badge.className = "badge";
+  };
+}
+
+const origLogin = window.loginWithToken;
+if (typeof tokenInput !== "undefined" && tokenInput) {
+  document.getElementById("connect-button")?.addEventListener("click", () => {
+    setTimeout(() => {
+      if (accessToken) connectTelemetryWs(accessToken);
+    }, 500);
+  });
+}
+
