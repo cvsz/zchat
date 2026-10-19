@@ -25,6 +25,24 @@
   <main>
     <p id="notice" class="notice" role="status" aria-live="polite">Enter the control-plane admin token to load data.</p>
 
+    <section aria-labelledby="telemetry-heading">
+      <div class="section-heading">
+        <div><p class="eyebrow">REAL-TIME TELEMETRY</p><h2 id="telemetry-heading">Live Worker Status & Telemetry</h2></div>
+        <span id="telemetry-status-badge" class="badge">Disconnected</span>
+      </div>
+      <div class="cards" id="telemetry-cards">
+        <article class="card"><p class="eyebrow">WORKER STATE</p><h3 id="stat-worker-state">Idle</h3><p class="hint">Active running workers</p></article>
+        <article class="card"><p class="eyebrow">USER ACTIVITY GUARD</p><h3 id="stat-guard-state">Clear</h3><p class="hint">Input deferral status</p></article>
+        <article class="card"><p class="eyebrow">AUTO REPLIES</p><h3 id="stat-replies-count">0</h3><p class="hint">Replies processed</p></article>
+        <article class="card"><p class="eyebrow">DJ QUEUE</p><h3 id="stat-dj-playing">Stopped</h3><p class="hint">Currently playing track</p></article>
+      </div>
+      <div class="table-wrap" role="region" aria-label="Live logs" tabindex="0">
+        <div id="telemetry-log-console" style="background:#111;color:#39ff14;font-family:monospace;font-size:12px;padding:12px;height:160px;overflow-y:auto;border-radius:4px;">
+          [System] Real-time worker log console initialized. Awaiting connection...
+        </div>
+      </div>
+    </section>
+
     <section aria-labelledby="overview-heading">
       <div class="section-heading">
         <div><p class="eyebrow">CONTROL PLANE</p><h2 id="overview-heading">Overview</h2></div>

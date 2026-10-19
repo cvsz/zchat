@@ -134,6 +134,8 @@ class _Dll:
 
 def test_commit_aborts_if_focus_stolen_before_enter(monkeypatch):
     # fg ok during foreground_ok(), stolen right before the keystroke
+    # Simulate verified idle input; CI has no interactive Windows desktop.
+    monkeypatch.setattr(c.USER_GUARD, "wait_until_idle", lambda: True)
     monkeypatch.setattr(c.ctypes, "windll", _Dll([111, 999]), raising=False)
     ctrl = _Ctrl()
     assert c.commit(_Win(), ctrl, "hi", False, True) is False
@@ -141,6 +143,8 @@ def test_commit_aborts_if_focus_stolen_before_enter(monkeypatch):
 
 
 def test_commit_sends_when_focus_stable(monkeypatch):
+    # The desktop activity preflight is tested separately with injected clocks.
+    monkeypatch.setattr(c.USER_GUARD, "wait_until_idle", lambda: True)
     monkeypatch.setattr(c.ctypes, "windll", _Dll([111]), raising=False)
     ctrl = _Ctrl()
     assert c.commit(_Win(), ctrl, "hi", False, True) is True

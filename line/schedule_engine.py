@@ -67,11 +67,18 @@ def due_schedules(schedule, now=None, grace_seconds=90):
     return due
 
 
-def mark_schedule_fired(schedule, item_id, occurrence):
+def mark_schedule_fired(schedule, item_id, occurrence, now=None):
     """Persist a run marker and prune entries older than two weeks."""
     fired = schedule.setdefault("last_fired", {})
     fired[item_id] = occurrence
-    cutoff = datetime.now().timestamp() - timedelta(days=14).total_seconds()
+    try:
+        ref_time = datetime.fromisoformat(occurrence)
+    except Exception:
+        ref_time = now or datetime.now()
+    if ref_time.tzinfo is not None:
+        cutoff = ref_time.timestamp() - timedelta(days=14).total_seconds()
+    else:
+        cutoff = ref_time.timestamp() - timedelta(days=14).total_seconds()
     for key, value in list(fired.items()):
         try:
             when = datetime.fromisoformat(value)

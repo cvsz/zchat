@@ -77,6 +77,12 @@ BASE = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) \
 
 APP_PROFILE = "status"
 APP_PROFILES = {"full", "room", "im_reply", "status", "music"}
+UNVERIFIED_STATUS_TEST_ENV = "ZCHAT_STATUS_TEST_UNVERIFIED_SUBMIT"
+
+
+def _unverified_status_test_submit_enabled():
+    """Allow interactive status testing only when explicitly opted in."""
+    return os.environ.get(UNVERIFIED_STATUS_TEST_ENV, "").strip() == "1"
 
 # Standalone executables can pin runtime state to their own directory. Status
 # workers use ZCFATO_DATA_DIR, which takes precedence over the GUI app directory.
@@ -416,9 +422,13 @@ def apply_app_profile(cfg):
     elif APP_PROFILE == "status":
         result["autoreply"]["enabled"] = False
         result["autoreply_im"]["enabled"] = False
-        # Preserve only the explicit opt-in best-effort mode; legacy configs stay fail-closed.
+        # Preserve interactive only for an explicitly enabled test run.
         status = result.setdefault("status", {})
-        if status.get("execution_mode") != "best_effort_background":
+        if not (
+            status.get("execution_mode") == "best_effort_background"
+            or (status.get("execution_mode") == "interactive"
+                and _unverified_status_test_submit_enabled())
+        ):
             status["execution_mode"] = "strict_background"
     elif APP_PROFILE == "music":
         result["status"]["enabled"] = False
@@ -1129,7 +1139,150 @@ def _background_enter(ctrl, target="edit"):
         time.sleep(0.02)
 
 
-def commit(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply_btn=None,
+# --- user-activity guard (kept identical in every self-contained module) ---
+class UserActivityGuard:
+    """Yield the desktop to the human before any command that injects global input.
+
+    Commands that move the mouse, steal focus or send real keystrokes must not run
+    while the user is working. Wait (bounded) until the user has been idle for
+    `idle_ms`; input produced by our own injection is not counted as user activity.
+    Windows only: elsewhere `user_idle_ms()` is None and the guard never blocks.
+    """
+
+    def __init__(self, idle_ms=None, poll=0.25, max_wait=120.0, tick=None,
+                 last_input=None, sleep=None, clock=None):
+        if idle_ms is None:
+            try:
+                idle_ms = int(os.environ.get("ZCHAT_USER_IDLE_MS", "2000"))
+            except ValueError:
+                idle_ms = 2000
+        self.idle_ms = max(0, idle_ms)
+        self.poll = poll
+        self.max_wait = max_wait
+        self._tick = tick or self._win_tick
+        self._last_input = last_input or self._win_last_input
+        self._sleep = sleep or time.sleep
+        self._clock = clock or time.monotonic
+        self._own = None  # (start_tick, end_tick) of our latest injection
+        self._user_tick = None
+
+    @staticmethod
+    def _win_tick():
+        try:
+            kernel32 = getattr(getattr(ctypes, "windll", None), "kernel32", None)
+            if kernel32 and hasattr(kernel32, "GetTickCount"):
+                return kernel32.GetTickCount() & 0xFFFFFFFF
+        except Exception:
+            pass
+        return int(time.monotonic() * 1000) & 0xFFFFFFFF
+
+    @staticmethod
+    def _win_last_input():
+        if os.name != "nt":
+            return None
+        try:
+            user32 = getattr(getattr(ctypes, "windll", None), "user32", None)
+            if not user32 or not hasattr(user32, "GetLastInputInfo"):
+                return None
+
+            class LASTINPUTINFO(ctypes.Structure):
+                _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+
+            info = LASTINPUTINFO()
+            info.cbSize = ctypes.sizeof(info)
+            if not user32.GetLastInputInfo(ctypes.byref(info)):
+                return None
+            return info.dwTime
+        except Exception:
+            return None
+
+    def mark_own(self, start, end, slack=400):
+        self._own = (start, (end + slack) & 0xFFFFFFFF)
+
+    def _is_own(self, last):
+        if not self._own:
+            return False
+        start, end = self._own
+        return ((last - start) & 0xFFFFFFFF) <= ((end - start) & 0xFFFFFFFF)
+
+    def user_idle_ms(self):
+        """Milliseconds since the last *user* input, or None when unknown."""
+        try:
+            last = self._last_input()
+            if last is None:
+                return None
+            if not self._is_own(last):
+                self._user_tick = last
+            if self._user_tick is None:
+                return 10 ** 9  # only our own input seen so far
+            return (self._tick() - self._user_tick) & 0xFFFFFFFF
+        except Exception:
+            return None
+
+    def wait_until_idle(self):
+        """Wait for idle input; refuse unsafe injection when Windows input is unknown."""
+        if self.idle_ms <= 0:
+            return True
+        deadline = self._clock() + self.max_wait
+        noted = False
+        while True:
+            idle = self.user_idle_ms()
+            if idle is None:
+                if os.name == "nt":
+                    log.error("Cannot verify Windows user activity; refusing desktop input injection")
+                    return False
+                return True
+            if idle >= self.idle_ms:
+                return True
+            if self._clock() >= deadline:
+                return False
+            if not noted:
+                log.info("User is active; deferring input injection until the desktop is idle")
+                noted = True
+            self._sleep(self.poll)
+
+    def run(self, func, *args, **kwargs):
+        start = self._tick() if os.name == "nt" else 0
+        try:
+            return func(*args, **kwargs)
+        finally:
+            if os.name == "nt":
+                self.mark_own(start, self._tick())
+
+
+USER_GUARD = UserActivityGuard()
+_BACKGROUND_MODES = ("strict_background", "best_effort_background")
+
+
+def _injects_global_input(bound) -> bool:
+    if bound.get("dry"):
+        return False
+    if bound.get("execution_mode", "interactive") in _BACKGROUND_MODES:
+        return False
+    if is_web(bound.get("ctrl")):
+        return True
+    if bound.get("apply_btn") is not None:
+        return True
+    if bound.get("background_enter_target") == "combo" or not bound.get("require_fg", True):
+        return False
+    return True
+
+
+def commit(*args, **kwargs) -> bool:
+    """Gate `_commit_impl` so input-injecting sends never run while the user is active."""
+    import inspect
+    bound = inspect.signature(_commit_impl).bind(*args, **kwargs)
+    bound.apply_defaults()
+    if not _injects_global_input(bound.arguments):
+        return _commit_impl(*args, **kwargs)
+    if not USER_GUARD.wait_until_idle():
+        log.error("Deferred: user stayed active; not taking over mouse/keyboard")
+        return False
+    return USER_GUARD.run(_commit_impl, *args, **kwargs)
+# --- end user-activity guard ---
+
+
+def _commit_impl(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply_btn=None,
            restore: bool = False, background_enter_target: str = "edit",
            background_if_not_foreground: bool = False,
            execution_mode: str = "interactive") -> bool:
@@ -2495,6 +2648,15 @@ def _strict_status_start_blocked(cfg, emit=print):
             "desktop focus and interrupt keyboard input. Status worker refused."
         )
         return True
+    if cfg.get("status", {}).get("execution_mode") == "interactive":
+        if not _unverified_status_test_submit_enabled():
+            emit("INTERACTIVE_TEST_DISABLED: explicit Windows test opt-in required.")
+            return True
+        emit(
+            "UNVERIFIED TEST MODE: interactive status submission may activate "
+            "Camfrog and interrupt desktop input; independently verify provider state."
+        )
+        return False
     try:
         from camfrog_status_engine import strict_background_submit_supported
 
@@ -3149,7 +3311,11 @@ def cli_main(argv=None, force_strict_background=False):
         cfg = apply_app_profile(load_cfg(cfg_path))
         if force_strict_background and APP_PROFILE == "status":
             status = cfg.setdefault("status", {})
-            if status.get("execution_mode") != "best_effort_background":
+            if not (
+                status.get("execution_mode") == "best_effort_background"
+                or (status.get("execution_mode") == "interactive"
+                    and _unverified_status_test_submit_enabled())
+            ):
                 status["execution_mode"] = "strict_background"
     except Exception as e:
         print(t("cannot_load", e=e))
@@ -3503,7 +3669,12 @@ def runtime_config(config):
     """Build isolated worker settings with PID and stop files owned by this app."""
     runtime = copy.deepcopy(config)
     status = runtime.setdefault("status", {})
-    if status.get("execution_mode") == "best_effort_background":
+    if (
+        status.get("execution_mode") == "interactive"
+        and _unverified_status_test_submit_enabled()
+    ):
+        status["background_enter_target"] = "combo"
+    elif status.get("execution_mode") == "best_effort_background":
         status["background_enter_target"] = "combo"
     else:
         status["execution_mode"] = "strict_background"
@@ -4002,7 +4173,9 @@ def build_app():
             self.execution_mode = tk.StringVar(
                 value=self.config["status"].get("execution_mode", "strict_background")
                 if self.config["status"].get("execution_mode") in (
-                    "strict_background", "best_effort_background"
+                    ("strict_background", "best_effort_background", "interactive")
+                    if _unverified_status_test_submit_enabled()
+                    else ("strict_background", "best_effort_background")
                 ) else "strict_background"
             )
             self.live_send = tk.BooleanVar(value=not self.config.get("dry_run", True))
@@ -4018,6 +4191,8 @@ def build_app():
             self.clipboard_controller = ClipboardController(
                 self.root, translate=self._translate_clipboard, on_error=self._clipboard_error)
             self.clipboard_controller.install(self.root)
+            self.root.bind("<F3>", lambda _e: self.set_enabled("random", True))
+            self.root.bind("<F4>", lambda _e: self.set_enabled("random", False))
             self.root.protocol("WM_DELETE_WINDOW", self.close_app)
             self.task_poll_job = self.root.after(100, self.poll_task_results)
             self.state_job = self.root.after(500, self.refresh_state)
@@ -4151,14 +4326,18 @@ def build_app():
             ).pack(side="left", padx=(8, 3))
             ttk.Combobox(
                 options, textvariable=self.execution_mode, state="readonly", width=24,
-                values=("strict_background", "best_effort_background"),
+                values=(
+                    ("strict_background", "best_effort_background", "interactive")
+                    if _unverified_status_test_submit_enabled()
+                    else ("strict_background", "best_effort_background")
+                ),
             ).pack(side="left")
             self.execution_mode.trace_add("write", self.schedule_save)
             ttk.Label(
                 outer,
                 text=self._tr(
-                    "Best-effort uses combo-post; Camfrog may flash or take focus. Strict currently refuses.",
-                    "Best-effort ใช้ combo-post; Camfrog อาจกระพริบหรือแย่งโฟกัส ส่วน Strict ยังปฏิเสธการส่ง",
+                    "Live background sending is unverified and disabled. Interactive testing requires an explicit opt-in and may take focus.",
+                    "การส่งสถานะเบื้องหลังยังไม่ผ่านการยืนยันและถูกปิดอยู่ โหมดทดสอบต้องเปิดเองและอาจแย่งโฟกัส",
                 ),
                 style="Hint.TLabel", wraplength=420,
             ).pack(fill="x", pady=(0, 5))

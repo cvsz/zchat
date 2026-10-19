@@ -655,6 +655,40 @@ def test_status_standalone_profile_overrides_legacy_interactive_mode(name):
     assert legacy["status"]["execution_mode"] == "interactive"
 
 
+@pytest.mark.parametrize("name", ["status_random_gui", "status_marquee_gui"])
+def test_split_status_interactive_test_requires_explicit_opt_in(name, monkeypatch):
+    mod = load(name)
+    configured = copy.deepcopy(mod.DEFAULTS)
+    configured["status"]["execution_mode"] = "interactive"
+    configured["dry_run"] = False
+
+    monkeypatch.delenv("ZCHAT_STATUS_TEST_UNVERIFIED_SUBMIT", raising=False)
+    normal = mod.apply_app_profile(configured)
+    assert normal["status"]["execution_mode"] == "strict_background"
+    assert mod.runtime_config(configured)["status"]["execution_mode"] == "strict_background"
+    assert mod._strict_status_start_blocked(configured, emit=lambda *_args: None)
+
+    monkeypatch.setenv("ZCHAT_STATUS_TEST_UNVERIFIED_SUBMIT", "1")
+    opted_in = mod.apply_app_profile(configured)
+    runtime = mod.runtime_config(opted_in)
+    assert opted_in["status"]["execution_mode"] == "interactive"
+    assert runtime["status"]["execution_mode"] == "interactive"
+    assert runtime["status"]["background_enter_target"] == "combo"
+    warnings = []
+    assert not mod._strict_status_start_blocked(runtime, emit=warnings.append)
+    assert any("UNVERIFIED TEST MODE" in warning for warning in warnings)
+
+
+@pytest.mark.parametrize("name", ["status_random_gui", "status_marquee_gui"])
+def test_split_status_opt_in_never_enables_disabled_best_effort(name, monkeypatch):
+    mod = load(name)
+    monkeypatch.setenv("ZCHAT_STATUS_TEST_UNVERIFIED_SUBMIT", "1")
+    config = copy.deepcopy(mod.DEFAULTS)
+    config["dry_run"] = False
+    config["status"]["execution_mode"] = "best_effort_background"
+    assert mod._strict_status_start_blocked(config, emit=lambda *_args: None)
+
+
 @pytest.mark.parametrize(
     "name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"]
 )
@@ -1460,6 +1494,9 @@ def test_camfrog_status_edit_replaces_text_through_accessible_value(name):
 def test_foreground_status_commit_writes_frame_before_enter(name, monkeypatch):
     """Focus the Camfrog window, replace the frame, then submit without Ctrl+A."""
     mod = load(name)
+    # Windows CI has no interactive desktop. Isolate the tested foreground
+    # sequence from the activity guard, which has dedicated regression tests.
+    monkeypatch.setattr(mod.USER_GUARD, "wait_until_idle", lambda: True)
     events = []
     win = SimpleNamespace(handle=77)
     ctrl = SimpleNamespace(
