@@ -10,7 +10,16 @@ from http import HTTPStatus
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSocket, WebSocketDisconnect, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -1555,6 +1564,7 @@ def report_command_result(
 
 # ---------- Telemetry & Real-Time WebSocket ----------
 
+
 class TelemetryHub:
     """Thread-safe WebSocket manager broadcasting worker status and activity logs."""
 
@@ -1630,7 +1640,9 @@ async def publish_telemetry_event(
 ):
     """Receive worker metrics and events from registered agents or admin."""
     if credentials is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token required."
+        )
     token = credentials.credentials
     settings = request.app.state.settings
     is_admin = verify_dashboard_token(token, settings.jwt_signing_secret) is not None
@@ -1641,9 +1653,10 @@ async def publish_telemetry_event(
                 select(Agent).where(Agent.token_hash == token_h, Agent.revoked_at.is_(None))
             )
             if agent is None:
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token.")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token."
+                )
     event_type = event.get("type", "worker.metric")
     payload = event.get("payload", event)
     await TELEMETRY_HUB.broadcast(event_type, payload)
     return {"status": "broadcasted"}
-
