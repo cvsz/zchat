@@ -38,10 +38,13 @@ def test_feature_package_requires_only_the_standalone_executables(tmp_path):
 
     sums = package.write_sums(tmp_path, "camfrog-features")
     assert [line.split("  ", 1)[1] for line in sums.read_text().splitlines()] == list(
-        package.FEATURE_EXECUTABLES)
+        package.FEATURE_EXECUTABLES
+    )
     bundle = package.make_zip(tmp_path, tmp_path / "bundle.zip", executables_only=True)
     with zipfile.ZipFile(bundle) as archive:
-        assert set(archive.namelist()) == set(package.FEATURE_EXECUTABLES) | {"SHA256SUMS.txt"}
+        assert set(archive.namelist()) == set(package.FEATURE_EXECUTABLES) | {
+            "SHA256SUMS.txt"
+        }
 
     (tmp_path / "legacy.exe").write_bytes(b"old app")
     try:
@@ -50,6 +53,22 @@ def test_feature_package_requires_only_the_standalone_executables(tmp_path):
         assert "legacy.exe" in str(exc)
     else:
         raise AssertionError("expected an unexpected executable to stop packaging")
+
+
+def test_feature_package_ignores_retained_ci_build_snapshots(tmp_path):
+    for relative in package.FEATURE_EXECUTABLES:
+        executable = tmp_path / relative
+        executable.parent.mkdir(parents=True, exist_ok=True)
+        executable.write_bytes(relative.encode())
+
+    retained = tmp_path / "ci-39105912872" / "camfrog-apps-windows" / "dist"
+    retained.mkdir(parents=True)
+    (retained / "old-build.exe").write_bytes(b"retained CI artifact")
+
+    sums = package.write_sums(tmp_path, "camfrog-features")
+    assert [line.split("  ", 1)[1] for line in sums.read_text().splitlines()] == list(
+        package.FEATURE_EXECUTABLES
+    )
 
 
 def test_feature_package_excludes_the_separate_zchat_client(tmp_path, monkeypatch):
@@ -80,6 +99,28 @@ def test_feature_package_excludes_the_separate_zchat_client(tmp_path, monkeypatc
         assert set(archive.namelist()) == set(package.FEATURE_EXECUTABLES) | {
             "SHA256SUMS.txt"
         }
+
+
+def test_feature_package_includes_each_app_icon(tmp_path):
+    for relative in package.FEATURE_EXECUTABLES:
+        executable = tmp_path / relative
+        executable.parent.mkdir(parents=True, exist_ok=True)
+        executable.write_bytes(relative.encode())
+        (executable.parent / "app.ico").write_bytes(b"zchat icon")
+    package.write_sums(tmp_path, "camfrog-features")
+
+    bundle = package.make_zip(
+        tmp_path,
+        tmp_path / "bundle.zip",
+        executables_only=True,
+        included_executables=set(package.FEATURE_EXECUTABLES),
+    )
+    with zipfile.ZipFile(bundle) as archive:
+        names = set(archive.namelist())
+        assert all(
+            f"{Path(relative).parent.as_posix()}/app.ico" in names
+            for relative in package.FEATURE_EXECUTABLES
+        )
 
 
 def test_zip_contains_files_with_relative_paths(tmp_path):
@@ -141,7 +182,9 @@ def test_write_sums_rejects_unsafe_package_names(tmp_path, name):
         package.write_sums(tmp_path, name)
 
 
-def test_main_rejects_traversal_before_touching_artifacts(tmp_path, monkeypatch, capsys):
+def test_main_rejects_traversal_before_touching_artifacts(
+    tmp_path, monkeypatch, capsys
+):
     root = tmp_path / "repo"
     dist = root / "dist"
     dist.mkdir(parents=True)
@@ -162,7 +205,9 @@ def test_write_sums_rejects_symlink_executables(tmp_path, monkeypatch):
     executable = tmp_path / "app.exe"
     executable.write_bytes(b"not a symlink on disk")
     original = Path.is_symlink
-    monkeypatch.setattr(Path, "is_symlink", lambda path: path == executable or original(path))
+    monkeypatch.setattr(
+        Path, "is_symlink", lambda path: path == executable or original(path)
+    )
 
     with pytest.raises(ValueError, match="symbolic link"):
         package.write_sums(tmp_path, "app")
@@ -215,9 +260,38 @@ def test_main_restores_checksums_when_zip_creation_fails(
 
 def test_icon_is_valid_multisize():
     import struct
+
     d = (Path(__file__).resolve().parent.parent / "app.ico").read_bytes()
     reserved, kind, n = struct.unpack("<HHH", d[:6])
-    assert (reserved, kind) == (0, 1) and n >= 4
+    assert (reserved, kind) == (0, 1)
+    sizes = {
+        (width or 256, height or 256)
+        for width, height, _colors, _reserved, _planes, _bpp, _length, _offset in (
+            struct.unpack_from("<BBBBHHII", d, 6 + i * 16) for i in range(n)
+        )
+    }
+    assert sizes == {
+        (16, 16),
+        (24, 24),
+        (32, 32),
+        (48, 48),
+        (64, 64),
+        (128, 128),
+        (256, 256),
+    }
+
+
+def test_doctor_rejects_icon_missing_a_required_resolution(tmp_path, monkeypatch):
+    import doctor
+
+    icon = (Path(__file__).resolve().parent.parent / "app.ico").read_bytes()
+    # Keep the header and first image only to simulate an accidentally incomplete icon.
+    incomplete = icon[: 6 + 16 + int.from_bytes(icon[14:18], "little")]
+    incomplete = incomplete[:4] + (1).to_bytes(2, "little") + incomplete[6:]
+    monkeypatch.setattr(doctor, "ROOT", tmp_path)
+    (tmp_path / "app.ico").write_bytes(incomplete)
+
+    assert "incomplete" in doctor.icon_problem()[0]
 
 
 # ---- audit regressions ----
@@ -234,15 +308,22 @@ def test_load_cfg_accepts_utf8_bom(tmp_path):
 
 
 def test_validate_never_raises_on_bad_types():
-    cfg = ca.deep_merge(ca.DEFAULTS, {"status": {"messages": ["x"], "interval_seconds": "300"},
-                                      "autoreply": {"delay_range_seconds": [1]}})
+    cfg = ca.deep_merge(
+        ca.DEFAULTS,
+        {
+            "status": {"messages": ["x"], "interval_seconds": "300"},
+            "autoreply": {"delay_range_seconds": [1]},
+        },
+    )
     errs, _ = ca.validate(cfg)
     assert errs  # reported as errors, no exception
 
 
 def test_validate_bad_rule_shape_reported():
-    cfg = ca.deep_merge(ca.DEFAULTS, {"status": {"messages": ["x"]},
-                                      "autoreply": {"rules": ["not-a-dict"]}})
+    cfg = ca.deep_merge(
+        ca.DEFAULTS,
+        {"status": {"messages": ["x"]}, "autoreply": {"rules": ["not-a-dict"]}},
+    )
     assert ca.validate(cfg)[0]
 
 
@@ -270,6 +351,7 @@ def test_doctor_bat_runs_once_and_matches_build_selection():
 
 def test_missing_window_is_a_clean_error_not_a_traceback(tmp_path, monkeypatch):
     import shutil
+
     root = Path(__file__).resolve().parent.parent
     cfgp = tmp_path / "config.json"
     shutil.copy(root / "config.example.json", cfgp)
@@ -277,11 +359,15 @@ def test_missing_window_is_a_clean_error_not_a_traceback(tmp_path, monkeypatch):
 
     def boom(cfg):
         raise RuntimeError("Camfrog window not found (check window_title_regex)")
+
     monkeypatch.setattr(ca, "get_window", boom)
     assert ca.main(["--config", str(cfgp), "discover"]) == 1
     import logging
+
     logging.shutdown()
-    assert "Traceback" not in (tmp_path / "camfrog_auto.log").read_text(encoding="utf-8")
+    assert "Traceback" not in (tmp_path / "camfrog_auto.log").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_windows_command_registered():
@@ -340,7 +426,9 @@ def test_bat_files_are_crlf():
     root = Path(__file__).resolve().parent.parent
     for p in list(root.glob("*.bat")) + list((root / "extras").glob("*.bat")):
         b = p.read_bytes()
-        assert b.count(b"\n") == b.count(b"\r\n"), f"{p.name} has bare LF (cmd.exe breaks)"
+        assert b.count(b"\n") == b.count(b"\r\n"), (
+            f"{p.name} has bare LF (cmd.exe breaks)"
+        )
 
 
 def test_build_cleans_stale_root_web_status_exe_before_packaging():
@@ -349,3 +437,13 @@ def test_build_cleans_stale_root_web_status_exe_before_packaging():
     cleanup = r'if exist "dist\web-status.exe" del /q "dist\web-status.exe"'
     assert cleanup in build
     assert build.index(cleanup) < build.index("tools\\package.py")
+
+
+def test_build_requires_and_bundles_the_zchat_icon_before_packaging():
+    root = Path(__file__).resolve().parent.parent
+    build = (root / "build.bat").read_text(encoding="utf-8")
+    assert "refusing to build apps with a default Python icon" in build
+    assert 'set "ICONARG=--icon app.ico --add-data app.ico;."' in build
+    assert build.index('copy /y "app.ico" "dist\\%%D\\app.ico"') < build.index(
+        "tools\\package.py"
+    )

@@ -130,7 +130,7 @@ S = {
     "verified_ambiguous": ("verified Camfrog discovery is ambiguous: {detail}",
                            "การค้นหา Camfrog แบบยืนยันตัวตนกำกวม: {detail}"),
     "no_ctrl": ("control not found: {spec} (matches={n})", "ไม่พบ control: {spec} (พบ {n} รายการ)"),
-    "status_set": ("status set: {text}", "ตั้ง status แล้ว: {text}"),
+    "status_set": ("status submission dispatched (provider outcome unverified): {text}", "ส่งคำสั่ง status แล้ว (ยังไม่ยืนยันผลจาก Camfrog): {text}"),
     "status_fail": ("status commit failed", "ตั้ง status ไม่สำเร็จ"),
     "reply_fail": ("reply commit failed", "ส่งข้อความตอบไม่สำเร็จ"),
     "replied": ("replied to {nick}: {text}", "ตอบ {nick} แล้ว: {text}"),
@@ -3662,6 +3662,7 @@ def build_app():
             self.root.bind("<Control-s>", lambda _e: self.save())
             self.root.after(150, self.pump)
             self.root.after(500, self.tick)
+            self.root.after(1000, self._discover_controls_on_start)
             self.root.after(2500, self.auto_update_check)
 
         # ---- close
@@ -4180,6 +4181,18 @@ def build_app():
             setup_logging(cfg)
             self.run_bg(lambda: cmd_detect(cfg, self.model.path, False, True), "detect")
 
+        def _discover_controls_on_start(self):
+            """Discover and persist valid selectors after the standalone UI opens."""
+            if self._closing:
+                return
+            if self.busy:
+                self.root.after(1000, self._discover_controls_on_start)
+                return
+            self.run_bg(
+                lambda: cmd_detect(self.model.cfg, self.model.path, True, True),
+                "startup-detect",
+            )
+
         def apply_proposal(self, out):
             skipped = []
             for proposal in iter_proposals(out):
@@ -4229,6 +4242,8 @@ def build_app():
                         text = (out.splitlines()[-1] if out else "").strip()
                         if text == "update":
                             self.check_update()
+                    if kind == "startup-detect" and rc == 0:
+                        self.root.after(0, self.reload)
                     if kind in ("helper", "detect") and out:
                         extra = ""
                         if kind == "detect" and rc == 0:
@@ -4392,7 +4407,7 @@ def main(argv=None):
 # Read-only GitHub API (no token needed for public repos, stdlib only). Each
 # packaged app checks the same repo's latest release and downloads only its
 # own executable asset, verified against the release's SHA256SUMS.txt.
-APP_VERSION = "2.19.2"
+APP_VERSION = "2.19.3"
 GITHUB_REPO = os.environ.get("CAMFROG_UPDATE_REPO", "cvsz/zchat")
 UPDATE_ASSET_SUMS = "SHA256SUMS.txt"
 

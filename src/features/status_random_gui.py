@@ -1,10 +1,11 @@
-"""Camfrog Random Status - self-contained (engine + clipboard + GUI inlined, mode: random)."""
+"""ZChat Random Status - self-contained standalone application."""
 import argparse
 import copy
 import ctypes
 import datetime as dt
 import hashlib
 import json
+import math
 import logging
 import logging.handlers
 import os
@@ -84,6 +85,19 @@ if os.environ.get("ZCFATO_DATA_DIR"):
 elif os.environ.get("CAMFROG_APP_DATA_DIR"):
     BASE = Path(os.environ["CAMFROG_APP_DATA_DIR"])
 
+
+def _application_icon_path() -> Path:
+    """Resolve the packaged UI icon independently from the user data directory."""
+    candidates = []
+    if getattr(sys, "frozen", False):
+        bundle_dir = getattr(sys, "_MEIPASS", None)
+        if bundle_dir:
+            candidates.append(Path(bundle_dir) / "app.ico")
+        candidates.append(Path(sys.executable).resolve().parent / "app.ico")
+    else:
+        candidates.append(_source_base() / "app.ico")
+    return next((path for path in candidates if path.is_file()), candidates[0])
+
 # Nickname regex: Unicode word chars + space . - (Camfrog allows Thai in nicknames).
 # LINE_RE nick capture is permissive; validation happens via NICK_RE.
 NICK_RE = re.compile(r"^[\w][\w .\-]{0,31}$", re.UNICODE)
@@ -93,6 +107,10 @@ THAI_RE = re.compile(r"[\u0e00-\u0e7f]")
 log = logging.getLogger("camfrog_status")
 LOG_TEXT = True
 LANG = "en"
+STATUS_STARTUP_DELAY_SECONDS = 10
+WORKER_START_TIMEOUT_SECONDS = 30
+WORKER_LAUNCHER_EXIT_GRACE_SECONDS = 2
+WORKER_START_GATE_TIMEOUT_SECONDS = 60
 
 # ---------- i18n (TH / EN) ----------
 S = {
@@ -105,7 +123,7 @@ S = {
     "e_regex": ("window_title_regex invalid: {e}", "window_title_regex ไม่ถูกต้อง: {e}"),
     "e_hours": ("active_hours start/end must be HH:MM", "active_hours start/end ต้องเป็นรูปแบบ HH:MM"),
     "e_msgs": ("status.messages is empty", "status.messages ว่างเปล่า"),
-    "e_interval": ("status.interval_seconds must be >= 0.3", "status.interval_seconds ต้องไม่น้อยกว่า 0.3"),
+    "e_interval": ("status.interval_seconds must be >= 10 seconds", "status.interval_seconds ต้องไม่น้อยกว่า 10 วินาที"),
     "e_sel": ("{k} must be a selector object", "{k} ต้องเป็น object ของ selector"),
     "e_delay": ("autoreply.delay_range_seconds must be [min, max] with 0 <= min <= max",
                 "autoreply.delay_range_seconds ต้องเป็น [min, max] โดย 0 <= min <= max"),
@@ -129,9 +147,10 @@ S = {
     "no_window": ("Camfrog window not found (check window_title_regex)",
                   "ไม่พบหน้าต่าง Camfrog (ตรวจ window_title_regex)"),
     "no_ctrl": ("control not found: {spec} (matches={n})", "ไม่พบ control: {spec} (พบ {n} รายการ)"),
-    "status_set": ("status set: {text}", "ตั้ง status แล้ว: {text}"),
-    "bg_status_applied": ("background status applied: {text}",
-                          "ตั้งสถานะเบื้องหลังแล้ว: {text}"),
+    "status_set": ("status submission dispatched (provider outcome unverified): {text}", "ส่งคำสั่ง status แล้ว (ยังไม่ยืนยันผลจาก Camfrog): {text}"),
+    "bg_status_client_confirmed": (
+        "Camfrog client shows the status (external state unverified): {text}",
+        "หน้าต่าง Camfrog แสดงสถานะนี้แล้ว (ยังไม่ยืนยันสถานะภายนอก): {text}"),
     "bg_status_failed": ("background status failed (state={state}, code={code})",
                          "ตั้งสถานะเบื้องหลังไม่สำเร็จ (state={state}, code={code})"),
     "status_fail": ("status commit failed", "ตั้ง status ไม่สำเร็จ"),
@@ -205,8 +224,8 @@ S = {
     "why_sender": ("sender filtered", "กรองผู้ส่ง"),
     "why_link": ("contains a link", "มีลิงก์"),
     "why_pattern": ("matches skip_patterns", "ตรงกับ skip_patterns"),
-    "e_marquee": ("status.marquee invalid: width 8-80 (and <= status.max_length), stride 1..width, step_seconds >= 0.3, cycles 1-5, max_frames 5-300",
-                  "status.marquee ไม่ถูกต้อง: width 8-80 (และไม่เกิน status.max_length), stride 1..width, step_seconds >= 0.3, cycles 1-5, max_frames 5-300"),
+    "e_marquee": ("status.marquee invalid: width 8-80 (and <= status.max_length), stride 1..width, step_seconds >= 0.3 seconds, cycles 1-5, max_frames 5-300",
+                  "status.marquee ไม่ถูกต้อง: width 8-80 (และไม่เกิน status.max_length), stride 1..width, step_seconds >= 0.3 seconds, cycles 1-5, max_frames 5-300"),
     "e_cycle": ("status.language_cycle items must be th or en", "status.language_cycle ต้องเป็น th หรือ en เท่านั้น"),
     "e_hmode": ("status.history.mode must be rotate, random or most_used", "status.history.mode ต้องเป็น rotate, random หรือ most_used"),
     "e_hmax": ("status.history.max_items must be 5-500 and file must be set", "status.history.max_items ต้อง 5-500 และต้องตั้ง file"),
@@ -327,7 +346,7 @@ DEFAULTS = {
                "max_consecutive_failures": 5},
     "status": {
         "enabled": True,
-        "execution_mode": "interactive",  # or "strict_background" (no focus/input/clipboard/sound changes)
+        "execution_mode": "strict_background",
         "edit": {"class_name": "Edit", "auto_id": "1001", "index": 0},
         "apply_button": None,
         "background_enter_target": "edit",  # experimental "combo" targets the parent CComboBoxTS
@@ -397,6 +416,10 @@ def apply_app_profile(cfg):
     elif APP_PROFILE == "status":
         result["autoreply"]["enabled"] = False
         result["autoreply_im"]["enabled"] = False
+        # Preserve only the explicit opt-in best-effort mode; legacy configs stay fail-closed.
+        status = result.setdefault("status", {})
+        if status.get("execution_mode") != "best_effort_background":
+            status["execution_mode"] = "strict_background"
     elif APP_PROFILE == "music":
         result["status"]["enabled"] = False
         result["autoreply_im"]["enabled"] = False
@@ -415,7 +438,22 @@ def deep_merge(base: dict, over: dict) -> dict:
 
 def load_cfg(path: Union[str, Path]) -> dict:
     with Path(path).open(encoding="utf-8-sig") as f:  # Notepad may add a BOM
-        return deep_merge(DEFAULTS, json.load(f))
+        config = deep_merge(DEFAULTS, json.load(f))
+    status = config.get("status", {})
+    try:
+        interval = float(status.get("interval_seconds", RANDOM_INTERVAL_MIN))
+        if math.isfinite(interval):
+            status["interval_seconds"] = max(RANDOM_INTERVAL_MIN, interval)
+    except (TypeError, ValueError, OverflowError):
+        pass
+    marquee = status.get("marquee", {})
+    try:
+        step = float(marquee.get("step_seconds", MARQUEE_STEP_MIN))
+        if math.isfinite(step):
+            marquee["step_seconds"] = max(MARQUEE_STEP_MIN, step)
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return config
 
 
 def parse_hm(s: str) -> dt.time:
@@ -501,7 +539,7 @@ def _validate(cfg, errs, warns):
     if st["enabled"]:
         if not st["messages"]:
             errs.append(t("e_msgs"))
-        if st["interval_seconds"] < 0.3:
+        if st["interval_seconds"] < RANDOM_INTERVAL_MIN:
             errs.append(t("e_interval"))
         if st["language_mode"] not in ("th", "en", "both", "alternate"):
             errs.append(t("e_mode"))
@@ -509,15 +547,20 @@ def _validate(cfg, errs, warns):
             errs.append(t("e_sel", k="status.edit"))
         if st.get("background_enter_target", "edit") not in ("edit", "combo"):
             errs.append("status.background_enter_target must be edit or combo")
-        if st.get("execution_mode", "interactive") not in ("interactive", "strict_background"):
-            errs.append("status.execution_mode must be interactive or strict_background")
+        if st.get("execution_mode", "interactive") not in (
+            "interactive", "strict_background", "best_effort_background"
+        ):
+            errs.append(
+                "status.execution_mode must be interactive, strict_background, "
+                "or best_effort_background"
+            )
         mq, hs = st["marquee"], st["history"]
         try:
             inf = mq.get("infinite_loop", False)
             scroll = mq.get("scroll", False)
             if mq["enabled"] and scroll and not (8 <= mq["width"] <= 80 and mq["width"] <= st["max_length"]
                                       and 1 <= mq["stride"] <= mq["width"]
-                                      and mq["step_seconds"] >= 0.3
+                                      and mq["step_seconds"] >= MARQUEE_STEP_MIN
                                       and (inf or (1 <= mq["cycles"] <= 5))
                                       and 5 <= mq["max_frames"] <= 300):
                 errs.append(t("e_marquee"))
@@ -690,7 +733,7 @@ def is_own_gui_window(win) -> bool:
     try:
         title = win.window_text()
         if title and title.startswith((
-                "Camfrog Status Changer", "Camfrog Random Status", "Camfrog Marquee Status")):
+                "ZChat Status Changer", "ZChat Random Status", "ZChat Marquee Status")):
             return True
     except Exception:
         pass
@@ -721,33 +764,42 @@ def _require_single_window_process(windows):
         )
 
 
+def get_status_window(cfg, desktop_factory):
+    """Attach only to a title-matched window with the configured status control."""
+    native_windows = desktop_factory(backend="win32").windows(
+        title_re=cfg["window_title_regex"], visible_only=False
+    )
+    native_windows = [w for w in native_windows if not is_own_gui_window(w)]
+    native_windows = [w for w in native_windows if _window_process_id(w) != os.getpid()]
+    if not native_windows:
+        raise RuntimeError(t("no_window"))
+
+    desktop = desktop_factory(backend="uia")
+    selector = cfg.get("status", {}).get("edit", {})
+    matches = []
+    for native in native_windows:
+        try:
+            window = desktop.window(handle=native.handle).wrapper_object()
+            if selector:
+                find(window, selector)
+            matches.append((native, window))
+        except Exception:
+            continue
+
+    if matches:
+        _require_single_window_process([native for native, _window in matches])
+        return matches[0][1]
+
+    # Keep setup/detection useful if the saved selector is stale, while still
+    # rejecting ambiguous or unverifiable process ownership.
+    _require_single_window_process(native_windows)
+    log.warning("Status edit control not found in any matching window; using first window")
+    return desktop.window(handle=native_windows[0].handle).wrapper_object()
+
+
 def get_window(cfg: dict):
     from pywinauto import Desktop  # lazy: `check` works without pywinauto
-    # Allow status control discovery in minimized/hidden Camfrog windows. The
-    # configured selector must still match before a candidate is accepted.
-    wins = Desktop(backend="uia").windows(
-        title_re=cfg["window_title_regex"], visible_only=False)
-    wins = [w for w in wins if not is_own_gui_window(w)]
-    wins = [w for w in wins if _window_process_id(w) != os.getpid()]
-    if not wins:
-        raise RuntimeError(t("no_window"))
-    _require_single_window_process(wins)
-
-    # Find the window that actually contains the status edit control.
-    # The status edit is in the buddy list window (has CComboBoxTS with auto_id 1436
-    # containing an Edit with auto_id 1001). Try each window until we find it.
-    st_edit_spec = cfg.get("status", {}).get("edit", {})
-    if st_edit_spec:
-        for w in wins:
-            try:
-                find(w, st_edit_spec)
-                return w
-            except Exception:
-                continue
-
-    # Fallback: return first window if status edit not found in any (for detect/initial setup)
-    log.warning("Status edit control not found in any matching window; using first window")
-    return wins[0]
+    return get_status_window(cfg, Desktop)
 
 
 def process_windows(main) -> list:
@@ -1057,26 +1109,9 @@ def _background_enter(ctrl, target="edit"):
         if not handle and hasattr(ctrl, "element_info"):
             handle = getattr(ctrl.element_info, "handle", 0)
         if not handle:
-            ctrl.send_keystrokes("{ENTER}")
-            return
-    saved_sounds = {}
-    if os.name == "nt":
-        try:
-            import winreg
-            base_reg = r"AppEvents\Schemes\Apps\.Default"
-            for sub in (".Default", "SystemAsterisk", "SystemExclamation", "SystemNotification"):
-                try:
-                    k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, f"{base_reg}\\{sub}\\.Current", 0,
-                                       winreg.KEY_READ | winreg.KEY_WRITE)
-                    val, vtype = winreg.QueryValueEx(k, "")
-                    saved_sounds[sub] = (val, vtype)
-                    winreg.SetValueEx(k, "", 0, vtype, "")
-                    winreg.CloseKey(k)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
+            raise LookupError(
+                "Status Edit has no HWND; refusing keyboard-input fallback"
+            )
     u = ctypes.windll.user32
     try:
         u.PostMessageW.argtypes = (ctypes.c_void_p, ctypes.c_uint,
@@ -1085,28 +1120,13 @@ def _background_enter(ctrl, target="edit"):
     except (AttributeError, TypeError):
         pass
 
-    try:
-        if not u.PostMessageW(handle, 0x0100, 0x0D, 0):
-            raise RuntimeError("Could not post Enter key-down to status control")
-        if not u.PostMessageW(handle, 0x0101, 0x0D, 0):
-            raise RuntimeError("Could not post Enter key-up to status control")
-        if os.name == "nt":
-            time.sleep(0.02)
-    finally:
-        if saved_sounds:
-            try:
-                import winreg
-                base_reg = r"AppEvents\Schemes\Apps\.Default"
-                for sub, (val, vtype) in saved_sounds.items():
-                    try:
-                        k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, f"{base_reg}\\{sub}\\.Current", 0,
-                                           winreg.KEY_SET_VALUE)
-                        winreg.SetValueEx(k, "", 0, vtype, val)
-                        winreg.CloseKey(k)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+    # Match the tested probe route: scan code 0x1c and key-transition bits.
+    if not u.PostMessageW(handle, 0x0100, 0x0D, 0x001C0001):
+        raise RuntimeError("Could not post Enter key-down to status control")
+    if not u.PostMessageW(handle, 0x0101, 0x0D, 0xC01C0001):
+        raise RuntimeError("Could not post Enter key-up to status control")
+    if os.name == "nt":
+        time.sleep(0.02)
 
 
 def commit(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply_btn=None,
@@ -1115,24 +1135,41 @@ def commit(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply_btn=N
            execution_mode: str = "interactive") -> bool:
     """Write text, verify read-back, confirm Camfrog is foreground, send, restore focus.
 
-    When execution_mode is "strict_background", delegates to commit_background() which
-    uses camfrog_status_engine.BackgroundStatusExecutor and performs the change without
-    focus stealing, global input injection, clipboard mutation, or sound-registry changes.
+    When execution_mode is "strict_background", delegates to commit_background(),
+    which fails closed before writing because the Camfrog 8.5 submit path is not
+    verified to preserve desktop state.
     """
     if execution_mode == "strict_background":
         return commit_background(text, dry=dry)
     if dry:
         log.info(t("dry_send", text=shown(text)))
         return True
+    if execution_mode == "best_effort_background":
+        log.error(
+            "BEST_EFFORT_BACKGROUND_DISABLED: Camfrog combo-post can take "
+            "desktop focus and interrupt keyboard input; refusing status send."
+        )
+        return False
     if is_web(ctrl):
         return commit_web(win, ctrl, text, require_fg, restore)
     user32 = ctypes.windll.user32
     foreground = user32.GetForegroundWindow()
     window_is_foreground = foreground == getattr(win, "handle", None)
+    if apply_btn is None and not window_is_foreground and (
+        background_if_not_foreground
+        or not require_fg
+        or background_enter_target == "combo"
+    ):
+        log.error(
+            "Refusing targeted background status submit: Camfrog can activate "
+            "and take desktop focus."
+        )
+        return False
+    best_effort = execution_mode == "best_effort_background"
     background_submit = apply_btn is None and (
-        background_enter_target == "combo" or not require_fg or
+        best_effort or background_enter_target == "combo" or not require_fg or
         (background_if_not_foreground and not window_is_foreground))
-    submit_target = background_enter_target
+    submit_target = "combo" if best_effort else background_enter_target
     if background_submit and submit_target == "edit":
         # Always upgrade to "combo" for a background submit: posting Enter
         # directly to the child Edit control triggers a Windows ding on some
@@ -1162,6 +1199,12 @@ def commit(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply_btn=N
             ctrl.type_keys("{ENTER}")
         else:
             _background_enter(ctrl, submit_target)
+            if best_effort:
+                log.warning(
+                    "STATUS_SUBMIT=DISPATCHED_UNVERIFIED route=combo-post; "
+                    "best-effort mode may activate or flash Camfrog; verify "
+                    "the result in another Camfrog account's friend list"
+                )
     if prev and prev != win.handle and user32.IsWindow(prev):
         time.sleep(0.15)
         user32.SetForegroundWindow(prev)  # best effort: give focus back to what you were doing
@@ -1169,18 +1212,15 @@ def commit(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply_btn=N
 
 
 def commit_background(text: str, dry: bool = False, pid: Optional[int] = None) -> bool:
-    """Change Camfrog status using strict background mode.
+    """Attempt a strict background status change; the current adapter fails closed.
 
     Uses camfrog_status_engine.BackgroundStatusExecutor which:
     - Discovers and verifies the Camfrog process independently (PID + creation time +
       Authenticode signature).
-    - Writes status text without stealing focus.
-    - Submits Enter via PostMessage without global keyboard/mouse injection.
-    - Does not modify the clipboard.
-    - Does not modify Windows sound-registry values.
-    - Verifies the applied status before reporting success.
+    - Refuses before writing because submit isolation has not been verified.
 
-    Returns True if the status was verified as applied, False otherwise.
+    Returns True only when the client already confirms the requested text; otherwise
+    returns False. No external provider result is inferred from local UI state.
     """
     if dry:
         log.info(t("dry_send", text=shown(text)))
@@ -1189,6 +1229,7 @@ def commit_background(text: str, dry: bool = False, pid: Optional[int] = None) -
     try:
         from camfrog_status_engine import (
             BackgroundStatusExecutor,
+            EmergencyStopScope,
             ExecutionMode,
             StatusResultState,
         )
@@ -1198,6 +1239,8 @@ def commit_background(text: str, dry: bool = False, pid: Optional[int] = None) -
 
     executor = BackgroundStatusExecutor(
         default_mode=ExecutionMode.STRICT_BACKGROUND,
+        emergency_scope=EmergencyStopScope.FEATURE,
+        emergency_resource_key="camfrog.status-random",
     )
     try:
         evidence = executor.execute_status_change(
@@ -1212,8 +1255,8 @@ def commit_background(text: str, dry: bool = False, pid: Optional[int] = None) -
         log.error(t("bg_status_failed", state="EXECUTION_ERROR", code=str(exc)[:120]))
         return False
 
-    if evidence.result_state == StatusResultState.VERIFIED_APPLIED.value:
-        log.info(t("bg_status_applied", text=shown(text)))
+    if evidence.result_state == StatusResultState.CLIENT_STATE_CONFIRMED.value:
+        log.info(t("bg_status_client_confirmed", text=shown(text)))
         return True
     log.error(t("bg_status_failed", state=evidence.result_state, code=evidence.error_code))
     return False
@@ -1519,6 +1562,100 @@ def running_pid(cfg):
     return pid if pid_alive(pid) and pid_is_ours(pid) else None
 
 
+def worker_start_gate_path(cfg):
+    return pid_path(cfg).with_suffix(pid_path(cfg).suffix + ".start")
+
+
+def wait_for_worker_start_gate():
+    """Keep a launched worker inert until its parent verifies registration."""
+    gate_value = os.environ.get("ZCFATO_WORKER_START_GATE")
+    if not gate_value:
+        return True
+    gate = Path(gate_value)
+    deadline = time.monotonic() + WORKER_START_GATE_TIMEOUT_SECONDS
+    while not gate.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if not gate.exists():
+        log.error("Worker start authorization was not received; exiting before status work.")
+        return False
+    try:
+        gate.unlink()
+    except OSError:
+        log.exception("Could not remove worker start authorization file")
+    return True
+
+
+def _authorize_worker_start(cfg, emit):
+    gate = worker_start_gate_path(cfg)
+    temporary = gate.with_name(f"{gate.name}.{time.time_ns()}.tmp")
+    try:
+        temporary.write_text("start\n", encoding="ascii")
+        temporary.replace(gate)
+    except OSError as exc:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        emit(f"Worker PID registered but start authorization failed: {exc}")
+        return False
+    return True
+
+
+def _wait_for_worker_registration(cfg, process, log_path, emit):
+    """Wait for the worker's registered PID (which can differ from launcher PID).
+
+    PyInstaller one-file launchers create a second process for the Python runtime.
+    The worker registers that inner PID while ``Popen.pid`` can identify the
+    still-waiting bootloader process.
+    """
+    deadline = time.monotonic() + WORKER_START_TIMEOUT_SECONDS
+    launcher_exit_at = None
+    while time.monotonic() < deadline:
+        if running_pid(cfg) is not None:
+            if _authorize_worker_start(cfg, emit):
+                return True
+            break
+        if process.poll() is not None:
+            if launcher_exit_at is None:
+                launcher_exit_at = time.monotonic()
+            elif time.monotonic() - launcher_exit_at >= WORKER_LAUNCHER_EXIT_GRACE_SECONDS:
+                break
+        time.sleep(0.1)
+
+    # Close the timeout race: a worker can register just as the deadline expires.
+    if running_pid(cfg) is not None and _authorize_worker_start(cfg, emit):
+        return True
+    try:
+        worker_start_gate_path(cfg).unlink(missing_ok=True)
+        if os.name == "nt":
+            subprocess.run(
+                [system_taskkill_path(), "/PID", str(process.pid), "/T", "/F"],
+                capture_output=True, check=False, timeout=10,
+            )
+        if process.poll() is None:
+            process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        emit(
+            "Worker PID registration timed out and its child could not be "
+            f"stopped (PID {process.pid}): {exc}"
+        )
+        return False
+    if launcher_exit_at is not None:
+        emit(t("bg_failed", code=process.returncode, log=log_path))
+        return False
+    emit(
+        f"Worker process did not register its PID within "
+        f"{WORKER_START_TIMEOUT_SECONDS} seconds; PID {process.pid}; "
+        f"see log: {log_path}"
+    )
+    return False
+
+
 def child_cmd(args):
     if getattr(sys, "frozen", False):
         cmd = [sys.executable]
@@ -1750,7 +1887,12 @@ class Runner:
         self.dj_prev = []
         self.dj_started = 0.0
         self.dj_length = 0.0
-        self.last_status = -1e9 if cfg["status"]["set_on_start"] else time.monotonic()
+        now = time.monotonic()
+        if cfg["status"]["set_on_start"]:
+            switch_delay = float(cfg["status"]["interval_seconds"])
+            self.last_status = now - switch_delay + STATUS_STARTUP_DELAY_SECONDS
+        else:
+            self.last_status = now
         self.prev = []
         self.stats = {"started": dt.datetime.now().isoformat(timespec="seconds"),
                       "statuses": 0, "marquee_frames": 0, "replies": 0, "im_replies": 0, "failures": 0,
@@ -1820,7 +1962,13 @@ class Runner:
         LOG_TEXT = new["log"]["log_message_text"]
         if not LANG_LOCKED:
             LANG = resolve_lang(new["language"])
-        self.resolve()
+        try:
+            self.resolve()
+        except Exception as e:  # noqa: BLE001 - keep worker alive on any UIA reattach error
+            self.win = self.status_edit = self.apply_btn = None
+            self.marq = None
+            log.warning("Config reloaded but Camfrog re-attach failed: %s", e)
+            return
         log.info(t("reloaded"))
 
     def write_stats(self, now, force=False):
@@ -1870,6 +2018,7 @@ class Runner:
     def _do_resolve(self):
         cfg = self.cfg
         st, ar = cfg["status"], cfg["autoreply"]
+        self.win = self.status_edit = self.apply_btn = None
         self.win = get_window(cfg)
         self.status_edit, self.apply_btn = None, None
         self.status_edit = find(self.win, st["edit"]) if st["enabled"] else None
@@ -2075,7 +2224,9 @@ class Runner:
         frame = m["frames"][m["i"]]
         if not self.send(self.status_edit, frame, self.apply_btn):
             self.marq = None
-            self.last_status = now - st["interval_seconds"] + st["retry_seconds"]
+            self.last_status = now - st["interval_seconds"] + max(
+                st["retry_seconds"], st["interval_seconds"]
+            )
             raise RuntimeError(t("status_fail"))
         if m["i"] == 0 and st["history"]["enabled"] and st["history"]["record"]:
             self.hist.record(m["raw"])
@@ -2094,7 +2245,7 @@ class Runner:
             # writes can be slow; using `now` here could make delayed sends run
             # back-to-back and destabilize the ticker.
             m["next"] = time.monotonic() + max(
-                0.3, float(st["marquee"]["step_seconds"]))
+                MARQUEE_STEP_MIN, float(st["marquee"]["step_seconds"]))
             log.debug(t("status_set", text=shown(frame)))
 
     def do_chat(self, can_reply):
@@ -2334,19 +2485,62 @@ class Runner:
             self.write_stats(time.monotonic(), force=True)
 
 
+def _strict_status_start_blocked(cfg, emit=print):
+    """Fail closed before a status worker starts when live submit is unverified."""
+    if cfg.get("dry_run", True) or not cfg.get("status", {}).get("enabled", True):
+        return False
+    if cfg.get("status", {}).get("execution_mode") == "best_effort_background":
+        emit(
+            "BEST_EFFORT_BACKGROUND_DISABLED: Camfrog combo-post can take "
+            "desktop focus and interrupt keyboard input. Status worker refused."
+        )
+        return True
+    try:
+        from camfrog_status_engine import strict_background_submit_supported
+
+        supported = strict_background_submit_supported()
+    except (ImportError, AttributeError):
+        supported = False
+    if supported:
+        return False
+    emit(t("bg_status_failed", state="BACKGROUND_UNSUPPORTED",
+           code="STRICT_SUBMIT_UNVERIFIED"))
+    return True
+
+
 def run_guarded(cfg, cfg_path=None):
-    """Single-instance guard + PID file around Runner.run()."""
+    """Hold local status-write authority for this worker's full lifecycle."""
+    cfg = apply_app_profile(cfg)
+    if _strict_status_start_blocked(cfg):
+        return 2
     existing = running_pid(cfg)
     if existing and existing != os.getpid():
         print(t("already_running", pid=existing))
         return 3
-    pf = pid_path(cfg)
-    pf.write_text(str(os.getpid()))
     try:
-        return Runner(cfg, cfg_path).run()
+        from camfrog_status_engine import StatusResourceLock
+
+        writer_lock = StatusResourceLock(
+            resource_key="camfrog_status_writer", timeout_seconds=0.5
+        )
+        if not writer_lock.acquire():
+            raise TimeoutError("status writer is already owned")
+    except (ImportError, OSError, RuntimeError, ValueError) as exc:
+        log.error("Status writer ownership unavailable: %s", exc)
+        print("Another status worker owns the local Camfrog status writer.")
+        return 3
+    try:
+        pf = pid_path(cfg)
+        pf.write_text(str(os.getpid()))
+        try:
+            if not wait_for_worker_start_gate():
+                return 4
+            return Runner(cfg, cfg_path).run()
+        finally:
+            if read_pid(cfg) == os.getpid():
+                pf.unlink(missing_ok=True)
     finally:
-        if read_pid(cfg) == os.getpid():
-            pf.unlink(missing_ok=True)
+        writer_lock.release()
 
 
 # ---------- commands ----------
@@ -2929,7 +3123,7 @@ def build_parser():
     return p
 
 
-def cli_main(argv=None):
+def cli_main(argv=None, force_strict_background=False):
     global LANG, LANG_LOCKED
     a = build_parser().parse_args(argv)
     LANG = resolve_lang(a.lang)
@@ -2953,6 +3147,10 @@ def cli_main(argv=None):
         return cmd_init(cfg_path, a.force)
     try:
         cfg = apply_app_profile(load_cfg(cfg_path))
+        if force_strict_background and APP_PROFILE == "status":
+            status = cfg.setdefault("status", {})
+            if status.get("execution_mode") != "best_effort_background":
+                status["execution_mode"] = "strict_background"
     except Exception as e:
         print(t("cannot_load", e=e))
         return 2
@@ -3036,8 +3234,8 @@ class SingleInstanceGuard:
 
     def __init__(self, name: Optional[str] = None, allow_multiple: bool = False):
         self.mode = "random"
-        suffix = "" if self.mode == "both" else f"-{self.mode}"
-        self.name = name or f"CamfrogStatusChanger{suffix}"
+        self.name = name or "CamfrogStatusRandom"
+        self.window_title = f"ZChat {self.mode.title()} Status"
         self.allow_multiple = allow_multiple
         self.handle = None
         self.kernel32 = None
@@ -3091,8 +3289,7 @@ class SingleInstanceGuard:
                     if length > 0:
                         title = ctypes.create_unicode_buffer(256)
                         self.user32.GetWindowTextW(hwnd, title, 256)
-                        expected = ("Camfrog Status Changer" if self.mode == "both" else
-                                    f"Camfrog {self.mode.title()} Status")
+                        expected = self.window_title
                         if expected in title.value:
                             found.append(hwnd)
                             # Found it - send restore message
@@ -3124,9 +3321,7 @@ class SingleInstanceGuard:
             kernel32.OpenMutexW.restype = ctypes.c_void_p
             kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
             kernel32.CloseHandle.restype = ctypes.c_int
-            mode = "random"
-            suffix = "" if mode == "both" else f"-{mode}"
-            mutex_name = f"Local\\{name or 'CamfrogStatusChanger' + suffix}"
+            mutex_name = f"Local\\{name or 'CamfrogStatusRandom'}"
             handle = kernel32.OpenMutexW(0x1F0001, False, mutex_name)  # MUTEX_ALL_ACCESS
             if handle:
                 kernel32.CloseHandle(handle)
@@ -3158,7 +3353,7 @@ DEFAULTS = {
                "max_consecutive_failures": 5},
     "status": {
         "enabled": True,
-        "execution_mode": "interactive",  # or "strict_background" (no focus/input/clipboard/sound changes)
+        "execution_mode": "strict_background",
         "edit": {"class_name": "Edit", "auto_id": "1001", "index": 0},
         "apply_button": None,
         "background_enter_target": "edit",  # experimental "combo" targets the parent CComboBoxTS
@@ -3218,7 +3413,7 @@ DATA_DIR = Path(os.environ["ZCFATO_DATA_DIR"]) if os.environ.get("ZCFATO_DATA_DI
 RUNTIME_CONFIG = "camfrog-status-runtime.json"
 MARQUEE_STEP_MIN = 0.3
 MARQUEE_STRIDE_DEFAULT = 2
-RANDOM_INTERVAL_MIN = 0.3
+RANDOM_INTERVAL_MIN = 10
 RANDOM_INTERVAL_DEFAULT = 600
 RANDOM_INTERVAL_MAX = 86400
 STATUS_SLOTS = 10
@@ -3308,6 +3503,10 @@ def runtime_config(config):
     """Build isolated worker settings with PID and stop files owned by this app."""
     runtime = copy.deepcopy(config)
     status = runtime.setdefault("status", {})
+    if status.get("execution_mode") == "best_effort_background":
+        status["background_enter_target"] = "combo"
+    else:
+        status["execution_mode"] = "strict_background"
     status["random"] = True
     status.setdefault("marquee", {})["enabled"] = False
     runtime["autoreply"]["enabled"] = False
@@ -3352,6 +3551,8 @@ def apply_status_text(config_path, text):
 
 
 def cmd_start(cfg, args):
+    if _strict_status_start_blocked(cfg):
+        return 2
     pid = running_pid(cfg)
     if pid:
         print(t("already_running", pid=pid))
@@ -3362,16 +3563,25 @@ def cmd_start(cfg, args):
     if not cfg["log"]["file"]:
         print(t("bg_needs_log"))
         return 2
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    registered = read_pid(cfg)
+    if registered and pid_alive(registered):
+        print(f"Existing worker PID {registered} is alive but could not be verified; refusing another start.")
+        return 1
+    pid_path(cfg).unlink(missing_ok=True)
+    start_gate = worker_start_gate_path(cfg)
+    start_gate.unlink(missing_ok=True)
     logf = BASE / cfg["log"]["file"]
     flags = 0x08000000 | 0x00000200  # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+    env = child_env()
+    env["ZCFATO_WORKER_START_GATE"] = str(start_gate)
     p = subprocess.Popen(child_cmd(args) + ["run"], stdin=subprocess.DEVNULL,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          creationflags=flags, close_fds=True, cwd=str(BASE),
-                         env=child_env())
-    time.sleep(2.5)
-    if p.poll() is not None:
-        raise RuntimeError(t("bg_failed", code=p.returncode, log=logf))
-    print(t("bg_started", pid=p.pid, log=logf))
+                         env=env)
+    if not _wait_for_worker_registration(cfg, p, logf, print):
+        return 1
+    print(t("bg_started", pid=read_pid(cfg), log=logf))
     return 0
 
 def worker_cmd(args):
@@ -3391,33 +3601,42 @@ def worker_cmd(args):
         cfg_arg += ["--lang", args.lang]
     return command + cfg_arg
 
-def cmd_start_worker(cfg, args):
+def cmd_start_worker(cfg, args, report=None):
     """Start this app's hidden status worker in the background."""
+    emit = report if report is not None else print
+    if _strict_status_start_blocked(cfg, emit=emit):
+        return 2
     pid = running_pid(cfg)
     if pid:
-        print(t("already_running", pid=pid))
+        emit(t("already_running", pid=pid))
         return 1
     if os.name != "nt":
-        print(t("win_only"))
+        emit(t("win_only"))
         return 2
     if not cfg["log"]["file"]:
-        print(t("bg_needs_log"))
+        emit(t("bg_needs_log"))
         return 2
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    registered = read_pid(cfg)
+    if registered and pid_alive(registered):
+        emit(f"Existing worker PID {registered} is alive but could not be verified; refusing another start.")
+        return 1
+    pid_path(cfg).unlink(missing_ok=True)
+    start_gate = worker_start_gate_path(cfg)
+    start_gate.unlink(missing_ok=True)
     logf = DATA_DIR / cfg["log"]["file"]
     flags = 0x08000000 | 0x00000200  # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
     env = child_env()
     env["ZCFATO_DATA_DIR"] = str(DATA_DIR)
     env["ZCFATO_STATUS_MODE"] = STATUS_MODE
+    env["ZCFATO_WORKER_START_GATE"] = str(start_gate)
     p = subprocess.Popen(worker_cmd(args) + ["run"], stdin=subprocess.DEVNULL,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          creationflags=flags, close_fds=True, cwd=str(DATA_DIR),
                          env=env)
-    time.sleep(2.5)
-    if p.poll() is not None:
-        print(t("bg_failed", code=p.returncode, log=logf))
+    if not _wait_for_worker_registration(cfg, p, logf, emit):
         return 1
-    print(t("bg_started", pid=p.pid, log=logf))
+    emit(t("bg_started", pid=read_pid(cfg), log=logf))
     return 0
 
 def cmd_stop(cfg):
@@ -3746,12 +3965,12 @@ def build_app():
             self.root = tk.Tk()
             self.root.configure(background="#f4f1e8")
             self.app_name = "Random Status"
-            self.root.title(f"Camfrog {self.app_name}")
+            self.root.title(f"ZChat {self.app_name}")
             self.root.geometry("430x610")
             self.root.minsize(420, 600)
             self.root.resizable(True, True)
             try:
-                self.root.iconbitmap(str(BASE / "app.ico"))
+                self.root.iconbitmap(str(_application_icon_path()))
             except (tk.TclError, OSError):
                 pass
             self.busy = False
@@ -3765,7 +3984,7 @@ def build_app():
             try:
                 self.config = load_cfg(self.config_path)
             except Exception as exc:
-                messagebox.showerror(f"Camfrog {self.app_name}", str(exc), parent=self.root)
+                messagebox.showerror(f"ZChat {self.app_name}", str(exc), parent=self.root)
                 self.root.destroy()
                 raise SystemExit(2)
             global LANG
@@ -3780,13 +3999,17 @@ def build_app():
                 _interval_init = RANDOM_INTERVAL_DEFAULT
             self.interval = tk.StringVar(
                 value=str(max(RANDOM_INTERVAL_MIN, _interval_init)))
-            self.combo_enter = tk.BooleanVar(value=(
-                self.config["status"].get("background_enter_target", "edit") == "combo"))
+            self.execution_mode = tk.StringVar(
+                value=self.config["status"].get("execution_mode", "strict_background")
+                if self.config["status"].get("execution_mode") in (
+                    "strict_background", "best_effort_background"
+                ) else "strict_background"
+            )
             self.live_send = tk.BooleanVar(value=not self.config.get("dry_run", True))
             try:
                 self._load_fields()
             except (OSError, sqlite3.Error) as exc:
-                messagebox.showerror(f"Camfrog {self.app_name}", str(exc), parent=self.root)
+                messagebox.showerror(f"ZChat {self.app_name}", str(exc), parent=self.root)
                 self.root.destroy()
                 raise SystemExit(2)
             for variable in (self.random_fields + [self.interval, self.live_send]):
@@ -3798,6 +4021,7 @@ def build_app():
             self.root.protocol("WM_DELETE_WINDOW", self.close_app)
             self.task_poll_job = self.root.after(100, self.poll_task_results)
             self.state_job = self.root.after(500, self.refresh_state)
+            self.root.after(1000, self._discover_controls_on_start)
             self.root.after(2500, self._auto_update_check)
 
             # A second launch restores the visible standalone window.
@@ -3922,12 +4146,24 @@ def build_app():
             ).pack(side="left")
             ttk.Checkbutton(
                 options,
-                text=self._tr("Use background status updates", "ส่งสถานะเบื้องหลัง"),
-                variable=self.combo_enter,
-                command=self.schedule_save,
-            ).pack(side="left", padx=(8, 0))
+                text=self._tr("Submit mode", "โหมดส่งสถานะ"),
+                style="Hint.TLabel",
+            ).pack(side="left", padx=(8, 3))
+            ttk.Combobox(
+                options, textvariable=self.execution_mode, state="readonly", width=24,
+                values=("strict_background", "best_effort_background"),
+            ).pack(side="left")
+            self.execution_mode.trace_add("write", self.schedule_save)
+            ttk.Label(
+                outer,
+                text=self._tr(
+                    "Best-effort uses combo-post; Camfrog may flash or take focus. Strict currently refuses.",
+                    "Best-effort ใช้ combo-post; Camfrog อาจกระพริบหรือแย่งโฟกัส ส่วน Strict ยังปฏิเสธการส่ง",
+                ),
+                style="Hint.TLabel", wraplength=420,
+            ).pack(fill="x", pady=(0, 5))
             self._build_actions(outer)
-            ttk.Label(outer, text=f"CAMFROG {self.app_name.upper()}", style="Brand.TLabel",
+            ttk.Label(outer, text=f"ZCHAT {self.app_name.upper()}", style="Brand.TLabel",
                       anchor="center").pack(fill="x")
 
         def _build_page(self, page, mode):
@@ -4049,7 +4285,10 @@ def build_app():
                 load_cfg(self.config_path), self.live_send.get())
             config["language"] = self.language_preference
             st = config["status"]
-            st["background_enter_target"] = "combo" if self.combo_enter.get() else "edit"
+            st["execution_mode"] = self.execution_mode.get()
+            st["background_enter_target"] = (
+                "combo" if st["execution_mode"] == "best_effort_background" else "edit"
+            )
             mq = st["marquee"]
             try:
                 st["interval_seconds"] = parse_interval_seconds(self.interval.get())
@@ -4160,6 +4399,11 @@ def build_app():
                 return rc
             self.run_task(do, self._tr("Controls discovered", "ดึง control แล้ว"))
 
+        def _discover_controls_on_start(self):
+            """Save loaded settings and discover Camfrog controls after the GUI opens."""
+            if not self.close_requested:
+                self.discover()
+
         def set_enabled(self, mode, enabled):
             if self.busy:
                 return
@@ -4199,7 +4443,17 @@ def build_app():
             args = SimpleNamespace(config=str(self.runtime_config_path), lang=None)
 
             def start():
-                rc = cmd_start_worker(runtime, args)
+                messages = []
+                rc = cmd_start_worker(runtime, args, report=messages.append)
+                if rc != 0:
+                    detail = "\n".join(messages).strip()
+                    raise RuntimeError(
+                        detail
+                        or self._tr(
+                            "Could not start the status worker.",
+                            "เริ่ม worker สถานะไม่ได้",
+                        )
+                    )
                 if rc == 0:
                     deadline = time.monotonic() + 5.0
                     while time.monotonic() < deadline:
@@ -4309,7 +4563,7 @@ def build_app():
             except Exception as exc:
                 logging.exception("Could not prepare a clean Status Changer exit")
                 messagebox.showerror(
-                    f"Camfrog {self.app_name}",
+                    f"ZChat {self.app_name}",
                     self._tr(
                         f"Could not verify worker shutdown: {exc}",
                         f"ตรวจสอบการหยุด worker ไม่สำเร็จ: {exc}"),
@@ -4405,7 +4659,7 @@ def main(argv=None):
 
     if "--worker" in argv:
         argv.remove("--worker")
-        return cli_main(argv)
+        return cli_main(argv, force_strict_background=True)
 
     # Handle --cleanup-mutex before single-instance guard
     if "--cleanup-mutex" in argv:
@@ -4414,7 +4668,7 @@ def main(argv=None):
             return 2
         return 0 if SingleInstanceGuard.force_cleanup() else 1
 
-    parser = argparse.ArgumentParser(description="Camfrog Status Changer")
+    parser = argparse.ArgumentParser(description="ZChat Random Status")
     parser.add_argument("--config", help="use an alternate app-local config")
     parser.add_argument("--allow-multiple", action="store_true",
                         help="allow a second GUI instance")
@@ -4472,7 +4726,7 @@ def main(argv=None):
 # Read-only GitHub API (no token needed for public repos, stdlib only). Each
 # packaged app checks the same repo's latest release and downloads only its
 # own executable asset, verified against the release's SHA256SUMS.txt.
-APP_VERSION = "2.19.2"
+APP_VERSION = "2.19.3"
 GITHUB_REPO = os.environ.get("CAMFROG_UPDATE_REPO", "cvsz/zchat")
 UPDATE_ASSET_SUMS = "SHA256SUMS.txt"
 

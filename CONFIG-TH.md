@@ -22,12 +22,12 @@ key ที่ไม่ใส่จะใช้ค่าเริ่มต้น 
 | `safety.restore_previous_window` | `true` | ส่งเสร็จแล้วคืนโฟกัสให้หน้าต่างเดิม ตั้ง `false` เพื่อค้างหน้าต่างแชต Camfrog ไว้ด้านหน้า IM auto-reply จะเลื่อนข้อความ echo ฝั่งเครื่องเข้าพื้นที่แชตไม่ว่าค่านี้จะเป็นอะไร |
 | `safety.max_consecutive_failures` | `5` | หยุดเมื่อล้มเหลวติดกัน N ครั้ง |
 | `status.enabled` | `true` | หมุน status |
-| `status.execution_mode` | `interactive` | `interactive` คงพฤติกรรมเดิม (อาจดึงโฟกัส Camfrog และใช้ input หน้าสุด); `strict_background` ส่งคำสั่งผ่าน background engine กลางโดยไม่แย่งโฟกัส ไม่ใช้คีย์บอร์ด/เมาส์ส่วนกลาง ไม่แตะคลิปบอร์ด ไม่แก้การตั้งค่าเสียง Windows และรายงานสำเร็จเมื่อยืนยันสถานะที่เปลี่ยนแล้วเท่านั้น |
+| `status.execution_mode` | `interactive` | `interactive` ใช้อินพุต desktop จริงและอาจเปลี่ยนโฟกัส โดยรอให้ผู้ใช้ไม่ใช้งาน (ค่าเริ่มต้น 2 วินาที ปรับด้วย `ZCHAT_USER_IDLE_MS` รอสูงสุด 120 วินาที); `strict_background` ปฏิเสธด้วย `BACKGROUND_UNSUPPORTED`; `best_effort_background` เป็นค่า legacy ที่ worker สถานะปฏิเสธ เพราะ Camfrog อาจดึง focus และขัดจังหวะการพิมพ์ |
 | `status.edit` / `apply_button` | selectors / `null` | selector จาก `discover` ถ้าใส่ `apply_button` จะกดปุ่มแทน Enter |
-| `status.background_enter_target` | `edit` | เมื่อ Camfrog ไม่ได้อยู่หน้าสุด worker จะส่ง Enter ไปยัง `CComboBoxTS` แม่ของ Edit ที่ตรวจสอบแล้วโดยอัตโนมัติ; ค่า `combo` บังคับใช้เส้นทางเบื้องหลังแม้ Camfrog อยู่หน้าสุด ระบบอ่านข้อความกลับจาก Edit ก่อนส่ง ต้องเปิด Camfrog ค้างไว้ใน Windows session ของผู้ใช้เดิม ถ้าปิดโปรเซส Camfrog จะเปลี่ยนสถานะไม่ได้ |
+| `status.background_enter_target` | `edit` | คงค่าเลือกเป้าหมาย submit รุ่นเดิมเพื่อความเข้ากันได้ แต่ไม่ข้าม capability gate ของ strict mode และไม่ใช่หลักฐานว่ารองรับการส่งเบื้องหลังโดยไม่รบกวนผู้ใช้ |
 | `status.interval_seconds` | `600` | ขั้นต่ำ 0.3 |
 | `status.retry_seconds` | `30` | รอก่อนลองส่งใหม่เมื่อล้มเหลว (1–3600) |
-| `status.set_on_start` | `true` | ตั้ง status แรกทันที |
+| `status.set_on_start` | `true` | ตั้ง status แรกหลัง worker เริ่มทำงาน 10 วินาที |
 | `status.random` | `false` | สุ่มแทนเรียงลำดับ |
 | `status.language_mode` | `both` | สำหรับรายการแบบ `{th,en}`: `th`, `en`, `both` (ต่อกัน), `alternate` (สลับรอบ) |
 | `status.schedules[]` | `[]` | ชุดข้อความตามช่วงเวลา (ข้ามเที่ยงคืนได้) นอกช่วงใช้ `status.messages` |

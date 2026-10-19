@@ -441,10 +441,10 @@ def test_live_cycle_calls_perform_update_with_supported_arguments(monkeypatch, t
     calls = []
 
     def perform_update(opener, status, timeout, confirm=False, cancelled=None,
-                       on_post_started=None):
+                       on_post_started=None, expected_login=None):
         if on_post_started:
             on_post_started()
-        calls.append((status, timeout, confirm))
+        calls.append((status, timeout, confirm, expected_login))
         return True, "status acknowledged"
 
     monkeypatch.setattr(wsg, "perform_update", perform_update)
@@ -452,7 +452,7 @@ def test_live_cycle_calls_perform_update_with_supported_arguments(monkeypatch, t
 
     manager._cycle("Seaza", ["hello"], 30, 20.0, True, 0)
 
-    assert calls == [("hello", 20.0, True)]
+    assert calls == [("hello", 20.0, True, "Seaza")]
 
 
 def test_web_status_marquee_scrolls_each_message_and_settles_on_full_text():
@@ -481,7 +481,7 @@ def test_web_status_marquee_sends_one_slot_then_advances_to_next(monkeypatch, tm
     sent = []
     monkeypatch.setattr(wsg.urllib.request, "build_opener", lambda *args: object())
     def fake_update(opener, status, timeout, confirm=False, cancelled=None,
-                    on_post_started=None):
+                    on_post_started=None, expected_login=None):
         if on_post_started:
             on_post_started()
         sent.append(status)
@@ -506,16 +506,16 @@ def test_web_status_marquee_sends_one_slot_then_advances_to_next(monkeypatch, tm
     frames = wsg.web_status_frames(
         "This is a long web status message that should scroll.", enabled=True)
     assert sent == [frames[0]]
-    assert manager.root.scheduled[0][0] == 500
+    assert manager.root.scheduled[0][0] == 10_000
 
     for _ in range(len(frames) - 1):
         delay, callback, *args = manager.root.scheduled.pop(0)
-        assert delay == wsg.WEB_MARQUEE_STEP_SECONDS * 1000
+        assert delay == 10_000
         callback(*args)
 
     assert sent == frames
     next_delay, _callback, *next_args = manager.root.scheduled[0]
-    assert next_delay == wsg.WEB_MARQUEE_STEP_SECONDS * 1000
+    assert next_delay == 10_000
     assert next_args[-3] == 1
 
 
@@ -538,6 +538,47 @@ def test_web_status_switch_every_schedules_half_second_fractional_interval():
     manager._cycle("Seaza", ["first", "next"], 0.5, 2.0, False, 0)
 
     assert manager.root.scheduled[0][0] == 500
+
+
+@pytest.mark.parametrize(
+    ("live", "marquee", "configured", "expected"),
+    [
+        (True, True, 0.5, 10.0),
+        (True, True, 15.0, 15.0),
+        (True, False, 0.5, 10.0),
+        (False, True, 0.5, 0.5),
+        (False, False, 0.5, 0.5),
+    ],
+)
+def test_web_status_rotation_delay_obeys_live_rate_limit(
+        live, marquee, configured, expected):
+    assert wsg.web_status_rotation_delay(
+        configured, live, marquee=marquee, frame_seconds=configured
+    ) == expected
+
+
+def test_live_marquee_schedules_next_web_status_frame_no_faster_than_ten_seconds(
+        monkeypatch, tmp_path):
+    monkeypatch.setattr(wsg, "BASE", tmp_path)
+    manager = _bare_manager(cookie_paste="PHPSESSID=abc1234567890123")
+    manager.marquee_mode = _Value(True)
+    manager.switching = True
+    manager._cycle_marquee = True
+    manager._cycle_marquee_step_seconds = 0.5
+    manager.root = _Root()
+    manager._session_jar = lambda: object()
+    monkeypatch.setattr(wsg.urllib.request, "build_opener", lambda *args: object())
+    monkeypatch.setattr(wsg, "perform_update", lambda *args, **kwargs: (True, "ack"))
+
+    def run_bg(fn, force=False, on_done=None, on_error=None):
+        fn()
+        if on_done:
+            on_done()
+
+    manager._run_bg = run_bg
+    manager._cycle("Seaza", ["hello"], 30, 20.0, True, 0)
+
+    assert manager.root.scheduled[0][0] == 10_000
 
 
 def test_web_status_infinity_loop_wraps_from_last_populated_slot_to_first(monkeypatch,
@@ -622,6 +663,79 @@ def test_failed_live_marquee_update_stops_without_scheduling_another_frame(
     assert "hello" not in log
 
 
+def test_unknown_live_update_outcome_is_logged_and_not_retried(
+        monkeypatch, tmp_path):
+    monkeypatch.setattr(wsg, "BASE", tmp_path)
+    manager = _bare_manager(cookie_paste="PHPSESSID=abc1234567890123")
+    manager.switching = True
+    manager.root = _Root()
+    manager._session_jar = lambda: object()
+    monkeypatch.setattr(wsg.urllib.request, "build_opener", lambda *args: object())
+    monkeypatch.setattr(
+        wsg, "perform_update",
+        lambda *args, **kwargs: (
+            False, "update outcome unknown: POST timed out; "
+            "check the profile before retrying."))
+
+    def run_bg(fn, force=False, on_done=None, on_error=None):
+        try:
+            fn()
+        except Exception:
+            if on_error:
+                on_error()
+        else:
+            if on_done:
+                on_done()
+
+    manager._run_bg = run_bg
+    manager._cycle("Seaza", ["hello"], 30, 20.0, True, 0)
+
+    log = (tmp_path / "web_status.log").read_text(encoding="utf-8")
+    assert "Live status update outcome unknown" in log
+    assert "check the profile before retrying" in log
+    assert manager.root.scheduled == []
+    assert manager.switching is False
+
+
+def test_live_429_retry_uses_at_least_ten_seconds_end_to_end(
+        monkeypatch, tmp_path):
+    import io
+    import urllib.error
+
+    monkeypatch.setattr(wsg, "BASE", tmp_path)
+    manager = _bare_manager(cookie_paste="PHPSESSID=abc1234567890123")
+    manager.switching = True
+    manager.root = _Root()
+    manager._session_jar = lambda: object()
+    monkeypatch.setattr(wsg.urllib.request, "build_opener", lambda *args: object())
+    monkeypatch.setattr(
+        wsg, "fetch_profile",
+        lambda *args: "var _user_id = '1'; var nick = 'Seaza'; "
+        "var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';")
+    error = urllib.error.HTTPError(
+        wsg.WEB_UPDATE_URL, 429, "Too Many Requests",
+        {"Retry-After": "3"}, io.BytesIO(b'{"error":"slow down"}'))
+    monkeypatch.setattr(wsg, "_post", lambda *args: (_ for _ in ()).throw(error))
+
+    def run_bg(fn, force=False, on_done=None, on_error=None):
+        try:
+            fn()
+        except Exception:
+            if on_error:
+                on_error()
+        else:
+            if on_done:
+                on_done()
+
+    manager._run_bg = run_bg
+    manager._cycle("Seaza", ["hello"], 30, 20.0, True, 0)
+
+    assert manager.root.scheduled[0][0] == 10_000
+    log = (tmp_path / "web_status.log").read_text(encoding="utf-8")
+    assert "Live update retry scheduled" in log
+    assert "retry_in_s=10" in log
+
+
 def test_failed_live_http_error_logs_details_without_cookie_status_or_set_cookie(
         monkeypatch, tmp_path):
     import io
@@ -689,12 +803,14 @@ def test_perform_update_cancelled_after_profile_get_skips_post(monkeypatch):
 
     monkeypatch.setattr(
         wsg, "fetch_profile",
-        lambda *args: "<script>var csrf = '0123456789abcdef';</script>")
+        lambda *args: "<script>var _user_id = '1'; var nick = 'Seaza'; "
+        "var csrf = '0123456789abcdef';</script>")
     monkeypatch.setattr(wsg, "_post", lambda *args: posts.append(args))
 
     with pytest.raises(wsg.WebStatusUpdateCancelled):
         wsg.perform_update(
-            object(), "new status", 2.0, confirm=True, cancelled=is_cancelled)
+            object(), "new status", 2.0, confirm=True, cancelled=is_cancelled,
+            expected_login="Seaza")
 
     assert posts == []
 
@@ -712,7 +828,7 @@ def test_stop_during_live_post_logs_result_but_schedules_no_next_update(
     monkeypatch.setattr(wsg.urllib.request, "build_opener", lambda *args: object())
 
     def stop_then_succeed(opener, status, timeout, confirm=False, cancelled=None,
-                          on_post_started=None):
+                          on_post_started=None, expected_login=None):
         if on_post_started:
             on_post_started()
         manager.stop()
@@ -947,7 +1063,7 @@ def test_start_chains_login_then_rotation(tmp_path, monkeypatch):
     posted = []
 
     def fake_perform_update(opener, status, timeout, confirm=False, cancelled=None,
-                            on_post_started=None):
+                            on_post_started=None, expected_login=None):
         if on_post_started:
             on_post_started()
         posted.append((status, timeout, confirm))

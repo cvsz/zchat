@@ -17,6 +17,8 @@ def _isolated_credentials(tmp_path, monkeypatch):
     monkeypatch.setattr(ws, "BASE", tmp_path)
     monkeypatch.delenv("CAMFROG_USER", raising=False)
     monkeypatch.delenv("CAMFROG_PASSWORD", raising=False)
+    monkeypatch.delenv("WEBAUTH_USER", raising=False)
+    monkeypatch.delenv("WEBAUTH_BOT_USER", raising=False)
 
 
 class FakeResponse:
@@ -220,8 +222,11 @@ def test_perform_update_refused_until_confirmed():
 
 
 def test_perform_update_confirmed_needs_csrf(monkeypatch):
-    fake = _patch_opener(monkeypatch, b"<title>no token here</title>")
-    ok, message = ws.perform_update(fake, "hi", 1.0, confirm=True)
+    fake = _patch_opener(
+        monkeypatch,
+        b"<title>no token here</title>var _user_id = '1'; var nick = 'Seaza';")
+    ok, message = ws.perform_update(
+        fake, "hi", 1.0, confirm=True, expected_login="Seaza")
     assert ok is False
     assert "CSRF" in message
     assert fake.calls  # it did read the profile page first
@@ -230,6 +235,7 @@ def test_perform_update_confirmed_needs_csrf(monkeypatch):
 def test_perform_update_confirmed_posts_status(monkeypatch):
     page = (b"<title>Camfrog</title>"
             b"var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';"
+            b"var _user_id = '1';"
             b"var nick = 'Seaza';")
     fake = _patch_opener(monkeypatch, page)
     posted = {}
@@ -240,7 +246,8 @@ def test_perform_update_confirmed_posts_status(monkeypatch):
         return '{"response":"ok"}'
 
     monkeypatch.setattr(ws, "_post", fake_post)
-    ok, message = ws.perform_update(fake, "hi there", 1.0, confirm=True)
+    ok, message = ws.perform_update(
+        fake, "hi there", 1.0, confirm=True, expected_login="Seaza")
     assert ok is True, message
     assert posted["url"] == ws.WEB_UPDATE_URL
     assert posted["fields"] == {"status": "hi there",
@@ -358,6 +365,50 @@ def test_cookie_from_paste_rejects_garbage(bad):
     assert "devtools" in str(exc.value) or "home.php" in str(exc.value)
 
 
+@pytest.mark.parametrize(("key", "expected", "value"), [
+    ("WEBAUTH_USER", "PHPSESSID", "PHPSESSID=session-value"),
+    ("WEBAUTH_BOT_USER", "cloudbot", "cloudbot=bot-session-value"),
+])
+def test_environment_cookie_accepts_expected_single_cookie(
+        monkeypatch, key, expected, value):
+    monkeypatch.setenv(key, value)
+    assert ws.environment_cookie(key, expected) == value
+    assert wsg.environment_cookie(key, expected) == value
+
+
+def test_environment_cookie_rejects_wrong_or_multiple_cookie_names(monkeypatch):
+    monkeypatch.setenv("WEBAUTH_USER", "cloudbot=bot-session-value")
+    with pytest.raises(ValueError, match="PHPSESSID"):
+        ws.environment_cookie("WEBAUTH_USER", "PHPSESSID")
+    monkeypatch.setenv(
+        "WEBAUTH_USER", "PHPSESSID=session-value; other=extra-value")
+    with pytest.raises(ValueError, match="exactly one"):
+        wsg.environment_cookie("WEBAUTH_USER", "PHPSESSID")
+
+
+@pytest.mark.parametrize(("module", "entry"), [
+    (ws, "main"), (wsg, "cli_main"),
+])
+def test_live_cli_uses_env_cookie_without_password_or_post_when_unconfirmed(
+        tmp_path, monkeypatch, capsys, module, entry):
+    monkeypatch.setattr(wsg, "BASE", tmp_path)
+    secret = "PHPSESSID=synthetic-session-value"
+    monkeypatch.setenv("WEBAUTH_USER", secret)
+    monkeypatch.setattr(
+        module.getpass, "getpass",
+        lambda *_args: pytest.fail("cookie auth must not prompt for a password"))
+    monkeypatch.setattr(
+        module, "live_update",
+        lambda *_args, **_kwargs: pytest.fail("cookie auth must not use password login"))
+
+    assert getattr(module, entry)([
+        "--login", "Example", "--status", "synthetic", "--live"
+    ]) == 3
+    output = capsys.readouterr().out
+    assert "refused" in output
+    assert secret not in output
+
+
 def test_stored_account_reads_the_environment(monkeypatch):
     monkeypatch.setenv("CAMFROG_USER", "Seaza")
     monkeypatch.setenv("CAMFROG_PASSWORD", "pw")
@@ -375,15 +426,17 @@ def test_live_update_signs_in_then_updates(monkeypatch):
                                    "nav-user-logged")
     seen = {}
 
-    def fake_update(opener, status, timeout, confirm=False):
+    def fake_update(opener, status, timeout, confirm=False, expected_login=None):
         seen["confirm"] = confirm
         seen["status"] = status
+        seen["expected_login"] = expected_login
         return True, "status updated."
 
     monkeypatch.setattr(ws, "perform_update", fake_update)
     code, message = ws.live_update("Seaza", "pw", "hello", 1.0, confirm=True)
     assert code == ws.EXIT_OK, message
-    assert seen == {"confirm": True, "status": "hello"}
+    assert seen == {"confirm": True, "status": "hello",
+                    "expected_login": "Seaza"}
     assert "Seaza" in message
 
 
@@ -639,17 +692,54 @@ def test_chrome_aes_key_missing_file(tmp_path):
         ws.chrome_aes_key(str(tmp_path / "nothing"))
 
 
-@pytest.mark.parametrize("reply", [
-    '{}', '[]', 'null', '{"response":""}', '{"response":"   "}',
-    '{"response":null}', '{"error":true,"response":"denied"}',
+@pytest.mark.parametrize(("reply", "state"), [
+    ('{}', "outcome unknown"),
+    ('[]', "outcome unknown"),
+    ('null', "outcome unknown"),
+    ('{"response":""}', "outcome unknown"),
+    ('{"response":"   "}', "outcome unknown"),
+    ('{"response":null}', "outcome unknown"),
+    ('{"error":true,"response":"denied"}', "refused"),
 ])
-def test_perform_update_refuses_unacknowledged_server_reply(monkeypatch, reply):
+def test_perform_update_classifies_unacknowledged_server_reply(
+        monkeypatch, reply, state):
     monkeypatch.setattr(ws, "fetch_profile",
-                        lambda *a: "var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';")
+                        lambda *a: "var _user_id = '1'; var nick = 'Seaza'; "
+                        "var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';")
     monkeypatch.setattr(ws, "_post", lambda *a: reply)
-    ok, message = ws.perform_update(object(), "new status", 1.0, confirm=True)
+    ok, message = ws.perform_update(
+        object(), "new status", 1.0, confirm=True, expected_login="Seaza")
     assert not ok
-    assert "refused" in message or "unconfirmed" in message
+    assert state in message
+
+
+@pytest.mark.parametrize("module", [ws, wsg], ids=["cli", "gui"])
+def test_perform_update_rejects_mismatched_account_before_post(monkeypatch, module):
+    monkeypatch.setattr(
+        module, "fetch_profile",
+        lambda *a: "var _user_id = '2'; var nick = 'DifferentAccount'; "
+        "var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';")
+    posts = []
+    monkeypatch.setattr(module, "_post", lambda *a: posts.append(a))
+
+    ok, message = module.perform_update(
+        object(), "status", 2.0, confirm=True, expected_login="Seaza")
+
+    assert not ok
+    assert "does not match" in message
+    assert posts == []
+
+
+@pytest.mark.parametrize("module", [ws, wsg], ids=["cli", "gui"])
+def test_perform_update_requires_selected_account_before_fetch(monkeypatch, module):
+    fetches = []
+    monkeypatch.setattr(module, "fetch_profile", lambda *a: fetches.append(a))
+
+    ok, message = module.perform_update(object(), "status", 2.0, confirm=True)
+
+    assert not ok
+    assert "expected Camfrog account identity" in message
+    assert fetches == []
 
 
 def test_perform_update_reports_safe_response_diagnostics(monkeypatch):
@@ -660,12 +750,15 @@ def test_perform_update_reports_safe_response_diagnostics(monkeypatch):
         "<body><p>Rate limited for private status</p>"
         "<p>Contact admin@example.test, reference 123456789</p>"
         "<input type='hidden' name='csrf' value='{0}'></body></html>".format(csrf))
-    monkeypatch.setattr(wsg, "fetch_profile", lambda *a: "var csrf = '{0}';".format(csrf))
+    monkeypatch.setattr(
+        wsg, "fetch_profile",
+        lambda *a: "var _user_id = '1'; var nick = 'Seaza'; var csrf = '{0}';".format(csrf))
     monkeypatch.setattr(
         wsg, "_post", lambda *a: json.dumps({
             "error": True, "response": server_response, "ok": False}))
 
-    ok, message = wsg.perform_update(object(), "private status", 2.0, confirm=True)
+    ok, message = wsg.perform_update(
+        object(), "private status", 2.0, confirm=True, expected_login="Seaza")
 
     assert not ok
     assert "response_keys=error,ok,response" in message
@@ -682,30 +775,77 @@ def test_perform_update_reports_safe_response_diagnostics(monkeypatch):
 
 def test_perform_update_includes_http_metadata_for_unconfirmed_reply(monkeypatch):
     monkeypatch.setattr(wsg, "fetch_profile",
-                        lambda *a: "var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';")
+                        lambda *a: "var _user_id = '1'; var nick = 'Seaza'; "
+                        "var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';")
     monkeypatch.setattr(
         wsg, "_post",
         lambda *a: wsg.WebStatusReply(
             '{"response":""}', status_code=503,
             content_type="application/json"))
 
-    ok, message = wsg.perform_update(object(), "status", 2.0, confirm=True)
+    ok, message = wsg.perform_update(
+        object(), "status", 2.0, confirm=True, expected_login="Seaza")
 
     assert not ok
+    assert "outcome unknown" in message
     assert "http_status=503" in message
     assert "content_type=application/json" in message
-    assert "response_type=str" in message
-    assert "response_chars=0" in message
+    assert "response_chars=15" in message
+
+
+@pytest.mark.parametrize("module", [ws, wsg], ids=["cli", "gui"])
+def test_perform_update_rejects_non_success_http_even_with_success_json(
+        monkeypatch, module):
+    monkeypatch.setattr(
+        module, "fetch_profile",
+        lambda *a: "var _user_id = '1'; var nick = 'Seaza'; "
+        "var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';")
+    monkeypatch.setattr(
+        module, "_post",
+        lambda *a: wsg.WebStatusReply(
+            '{"response":"accepted"}', status_code=503,
+            content_type="application/json"))
+
+    ok, message = module.perform_update(
+        object(), "status", 2.0, confirm=True, expected_login="Seaza")
+
+    assert not ok
+    assert "HTTP" in message and "503" in message
+    assert "outcome unknown" in message
+
+
+@pytest.mark.parametrize("module", [ws, wsg], ids=["cli", "gui"])
+def test_perform_update_marks_post_transport_error_outcome_unknown(
+        monkeypatch, module):
+    monkeypatch.setattr(
+        module, "fetch_profile",
+        lambda *a: "var _user_id = '1'; var nick = 'Seaza'; "
+        "var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';")
+
+    def fail_post(*_args):
+        raise TimeoutError("simulated network timeout")
+
+    monkeypatch.setattr(module, "_post", fail_post)
+    ok, message = module.perform_update(
+        object(), "private status", 2.0, confirm=True,
+        expected_login="Seaza")
+
+    assert not ok
+    assert "outcome unknown" in message
+    assert "check the profile before retrying" in message
+    assert "private status" not in message
 
 
 @pytest.mark.parametrize("module", [ws, wsg], ids=["cli", "gui"])
 @pytest.mark.parametrize("reply", ['{"response":"new status"}', '{"response":"ok"}'])
 def test_perform_update_accepts_profile_ui_success_response(monkeypatch, module, reply):
     monkeypatch.setattr(module, "fetch_profile",
-                        lambda *a: "var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';")
+                        lambda *a: "var _user_id = '1'; var nick = 'Seaza'; "
+                        "var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';")
     monkeypatch.setattr(module, "_post", lambda *a: reply)
 
-    ok, message = module.perform_update(object(), "new status", 1.0, confirm=True)
+    ok, message = module.perform_update(
+        object(), "new status", 1.0, confirm=True, expected_login="Seaza")
 
     assert ok, message
 

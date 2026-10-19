@@ -62,6 +62,15 @@ def system_taskkill_path():
 BASE = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) \
     else Path(__file__).resolve().parent.parent
 
+if not getattr(sys, "frozen", False):
+    sys.path.insert(0, str(BASE / "camfrog"))
+from camfrog_profile_status import (  # noqa: E402
+    extract_csrf as _profile_extract_csrf,
+    extract_profile_identity as _profile_extract_identity,
+    fetch_profile as _profile_fetch,
+    post_profile_status as _profile_post_status,
+)
+
 LOGIN_URL = "https://www.camfrog.com/th/login/check.php"
 
 # camfrog's edge blocks the default Python-urllib User-Agent with HTTP 403;
@@ -141,6 +150,7 @@ WEB_STATUS_LOG_DETAIL_MAX_CHARS = 1000
 WEB_STATUS_LOG_FAILURE_EVENTS = frozenset((
     "session_verification_failed",
     "status_update_failed",
+    "status_update_unknown",
 ))
 WEB_STATUS_LOG_DETAIL_EVENTS = WEB_STATUS_LOG_FAILURE_EVENTS | frozenset((
     "dry_run_rotation_started",
@@ -159,8 +169,9 @@ WEB_STATUS_LOG_EVENTS = {
     "marquee_completed": "Marquee completed configured rounds",
     "rotation_completed": "Rotation completed configured rounds",
     "status_previewed": "Dry-run status previewed",
-    "status_update_succeeded": "Live status update succeeded",
+    "status_update_succeeded": "Server acknowledged the live status update",
     "status_update_failed": "Live status update failed",
+    "status_update_unknown": "Live status update outcome unknown",
     "live_retry_scheduled": "Live update retry scheduled",
     "rotation_stopped": "Rotation stopped",
 }
@@ -176,8 +187,9 @@ WEB_STATUS_LOG_LABELS_TH = {
     "Marquee completed configured rounds": "วนข้อความครบตามจำนวนรอบ",
     "Rotation completed configured rounds": "วนสถานะครบตามจำนวนรอบ",
     "Dry-run status previewed": "แสดงตัวอย่างสถานะแบบทดลอง",
-    "Live status update succeeded": "อัปเดตสถานะจริงสำเร็จ",
+    "Server acknowledged the live status update": "เซิร์ฟเวอร์ยืนยันรับคำขออัปเดตสถานะ",
     "Live status update failed": "อัปเดตสถานะจริงล้มเหลว",
+    "Live status update outcome unknown": "ไม่ทราบผลการอัปเดตสถานะจริง",
     "Live update retry scheduled": "ตั้งเวลาลองอัปเดตสถานะจริงอีกครั้ง",
     "Rotation stopped": "หยุดการวนสถานะ",
 }
@@ -1493,6 +1505,19 @@ def parse_marquee_step_seconds(raw):
                max(WEB_MARQUEE_STEP_SECONDS_MIN, value))
 
 
+def web_status_rotation_delay(interval, live, marquee=False,
+                              frame_seconds=WEB_MARQUEE_STEP_SECONDS_DEFAULT):
+    """Return the delay before the next frame or status submission.
+
+    Camfrog's web status endpoint rate-limits live updates. Apply that minimum
+    to both live rotations and live marquee frames; dry-run previews retain
+    their configured cadence.
+    """
+    configured_delay = frame_seconds if marquee else interval
+    return (max(configured_delay, LIVE_ROTATE_INTERVAL_MIN)
+            if live else configured_delay)
+
+
 def parse_loop_count(raw):
     """Return a status-pool pass count; zero means no limit."""
     value = str(raw).strip()
@@ -1651,17 +1676,19 @@ def _raise_if_update_cancelled(cancelled):
 
 
 def perform_update(opener, status, timeout, confirm=False, cancelled=None,
-                   on_post_started=None):
+                   on_post_started=None, expected_login=None):
     """Single gated send point for one rotation tick. Returns (ok, message).
 
-    Reads the profile page for its per-session CSRF token, then POSTs the new
-    status. Refuses unless confirm=True (fail closed until a live round-trip is
-    confirmed by the operator).
+    Reads the profile page, verifies the selected account nickname and provider
+    user ID, then obtains its per-session CSRF token before POSTing the status.
+    Refuses unless confirm=True and expected_login is supplied.
     """
     if not confirm:
         return False, ("update refused: endpoint captured from home.php but not "
                        "confirmed end to end yet; pass --confirm-update to send "
                        "for real (dry-run preview only).")
+    if not str(expected_login or "").strip():
+        return False, "update refused: expected Camfrog account identity is required."
     _raise_if_update_cancelled(cancelled)
     try:
         html = fetch_profile(opener, "", timeout)
@@ -1671,6 +1698,13 @@ def perform_update(opener, status, timeout, confirm=False, cancelled=None,
         return False, _web_status_request_error(
             "GET /home.php", exc, secrets=(status,))
     _raise_if_update_cancelled(cancelled)
+    identity = extract_profile_identity(html)
+    if identity is None:
+        return False, ("update refused: profile page did not provide a verifiable "
+                       "account identity.")
+    if identity["nickname"].casefold() != str(expected_login).strip().casefold():
+        return False, ("update refused: authenticated Camfrog account does not "
+                       "match the selected account.")
     csrf = extract_csrf(html)
     if not csrf:
         return False, ("update refused: no CSRF token on the profile page "
@@ -1683,8 +1717,12 @@ def perform_update(opener, status, timeout, confirm=False, cancelled=None,
         reply = _post(opener, WEB_UPDATE_URL,
                       {"status": status, "csrf": csrf}, timeout)
     except Exception as exc:
-        return False, _web_status_request_error(
+        detail = _web_status_request_error(
             "POST /ajax/update_status.php", exc, secrets=(status, csrf))
+        if isinstance(exc, urllib.error.HTTPError) and 400 <= exc.code < 500:
+            return False, "update refused by profile endpoint; {0}.".format(detail)
+        return False, ("update outcome unknown: {0}; check the profile before "
+                       "retrying.").format(detail)
     response_context = []
     status_code = getattr(reply, "status_code", None)
     content_type = getattr(reply, "content_type", None)
@@ -1699,6 +1737,14 @@ def perform_update(opener, status, timeout, confirm=False, cancelled=None,
         response_context = ["response " + ", ".join(response_context)]
     response_context.append("response_chars={0}".format(len(reply)))
     context = "; ".join(response_context)
+    if status_code is not None and status_code >= 500:
+        return False, ("update outcome unknown: profile endpoint returned "
+                       "HTTP status 5xx; {0}; check the profile before retrying."
+                       .format(context))
+    if status_code is not None and not 200 <= status_code < 300:
+        return False, "update refused: profile endpoint returned HTTP {0}; {1}.".format(
+            status_code,
+            context)
     try:
         data = json.loads(reply)
     except (TypeError, ValueError) as exc:
@@ -1706,11 +1752,12 @@ def perform_update(opener, status, timeout, confirm=False, cancelled=None,
         if isinstance(exc, json.JSONDecodeError):
             parser_detail += " ({0}, line={1}, column={2}, char={3})".format(
                 exc.msg, exc.lineno, exc.colno, exc.pos)
-        return False, "update refused: invalid JSON server reply; {0}; {1}.".format(
+        return False, "update outcome unknown: invalid JSON server reply; {0}; {1}.".format(
             parser_detail, context)
     if not isinstance(data, dict):
-        return False, ("update refused: expected a JSON object but received {0}; "
-                       "{1}.").format(type(data).__name__, context)
+        return False, ("update outcome unknown: expected a JSON object but "
+                       "received {0}; {1}; check the profile before retrying.").format(
+                           type(data).__name__, context)
     if retry_after is None:
         retry_after = _retry_after_seconds(data.get("retry_after"))
         if retry_after is not None:
@@ -1730,7 +1777,8 @@ def perform_update(opener, status, timeout, confirm=False, cancelled=None,
     if not isinstance(response, str) or not response.strip():
         response_type = "missing" if "response" not in data else type(response).__name__
         response_chars = (len(response) if isinstance(response, str) else "n/a")
-        return False, ("update unconfirmed: server did not acknowledge success; "
+        return False, ("update outcome unknown: server did not acknowledge "
+                       "success; check the profile before retrying; "
                        "response_type={0}; response_chars={1}; response_keys={2}; "
                        "{3}.").format(
                            response_type, response_chars,
@@ -2092,10 +2140,7 @@ def import_chrome_jar(user_data="", domains=CHROME_DOMAINS):
 
 def fetch_profile(opener, login, timeout):
     """The signed-in landing page: session markers plus the CSRF token."""
-    request = urllib.request.Request(HOME_URL, headers=dict(
-        BROWSER_HEADERS, Referer=HOME_URL))
-    with opener.open(request, timeout=timeout) as response:
-        return response.read().decode("utf-8", "replace")
+    return _profile_fetch(opener, timeout)
 
 
 def summarize_session(html):
@@ -2106,18 +2151,25 @@ def summarize_session(html):
         return ("logged-out",
                 "session is NOT signed in (page: {0!r}); log in via Chrome and "
                 "re-export cookies.".format(title))
-    user = re.search(r"var\s+_user_id\s*=\s*['\"](\d+)['\"]", html)
-    nick = re.search(r"var\s+nick\s*=\s*['\"]([^'\"]+)['\"]", html)
-    if user and nick:
+    identity = extract_profile_identity(html)
+    if identity:
         return ("signed-in",
                 "session is signed in as {0!r} (user id {1}, page {2!r}).".format(
-                    nick.group(1), user.group(1), title))
+                    identity["nickname"], identity["user_id"], title))
     return ("unconfirmed",
             "no login wall found (page: {0!r}, {1} chars) but no signed-in marker "
             "either; confirm visually before any live use.".format(title, len(html)))
 
 
+def extract_profile_identity(html):
+    """Return the signed-in provider identity exposed by the profile page."""
+    return _profile_extract_identity(html)
+
+
 def _post(opener, url, fields, timeout):
+    if url == WEB_UPDATE_URL and set(fields) == {"status", "csrf"}:
+        return _profile_post_status(
+            opener, fields["status"], fields["csrf"], timeout)
     data = urllib.parse.urlencode(fields).encode("utf-8")
     request = urllib.request.Request(url, data=data, headers=dict(
         BROWSER_HEADERS, Referer=LOGIN_PAGE_URL))
@@ -2130,6 +2182,11 @@ def _post(opener, url, fields, timeout):
             body, status_code=getattr(response, "status", None)
             or (response.getcode() if hasattr(response, "getcode") else None),
             content_type=content_type, retry_after=retry_after)
+
+
+def extract_csrf(html):
+    """The per-session CSRF token embedded in the logged-in profile page."""
+    return _profile_extract_csrf(html)
 
 
 class WebStatusReply(str):
@@ -2187,7 +2244,8 @@ def live_update(login, password, status, timeout, confirm=False):
         guidance = (" Use --confirm-update for live changes; a verified signed-in "
                     "session is also required.") if not confirm else ""
         return EXIT_BLOCKED, "status update blocked: session not confirmed signed in." + guidance
-    ok, update_message = perform_update(opener, status, timeout, confirm=confirm)
+    ok, update_message = perform_update(
+        opener, status, timeout, confirm=confirm, expected_login=login)
     return (EXIT_OK if ok else EXIT_BLOCKED), "{0}\n{1}".format(detail, update_message)
 
 
@@ -2223,12 +2281,13 @@ def load_dotenv(path):
     .env.enc is written by the GUI account setup (Save encrypted) and only
     decrypts under the Windows user that saved it.
     """
-    if load_env_enc():
-        return True
+    # Load encrypted values first; plaintext .env only fills keys that are not
+    # already present, so the protected store remains authoritative.
+    encrypted_loaded = load_env_enc()
     try:
         text = Path(path).read_text(encoding="utf-8-sig")
     except OSError:
-        return False
+        return encrypted_loaded
     for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -2241,6 +2300,19 @@ def load_dotenv(path):
             value = value[1:-1]
         os.environ[key] = value
     return True
+
+
+def environment_cookie(name, expected_cookie):
+    """Return one validated cookie pair from the environment, without logging it."""
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return ""
+    jar = cookie_from_paste(raw)
+    cookies = list(jar)
+    if len(cookies) != 1 or cookies[0].name != expected_cookie:
+        raise ValueError("{0} must contain exactly one {1} cookie.".format(
+            name, expected_cookie))
+    return "{0}={1}".format(cookies[0].name, cookies[0].value)
 
 
 def save_credentials(user, password):
@@ -2314,7 +2386,12 @@ def cli_main(argv=None):
                 jar = load_cookie_jar(args.cookies_file)
                 print("loaded session: {0}".format(cookie_summary(jar)))
             else:
-                build_parser().error("--probe requires --cookies-file or --chrome")
+                env_cookie = environment_cookie("WEBAUTH_USER", "PHPSESSID")
+                if not env_cookie:
+                    build_parser().error(
+                        "--probe requires --cookies-file, --chrome, or WEBAUTH_USER in .env")
+                jar = cookie_from_paste(env_cookie)
+                print("loaded configured session from WEBAUTH_USER (value hidden).")
         except (OSError, ValueError) as exc:
             print(exc)
             return EXIT_USAGE
@@ -2331,6 +2408,19 @@ def cli_main(argv=None):
     if not args.live:
         print(build_plan(args.login, args.status))
         return EXIT_OK
+    try:
+        env_cookie = environment_cookie("WEBAUTH_USER", "PHPSESSID")
+    except ValueError as exc:
+        print(str(exc))
+        return EXIT_USAGE
+    if env_cookie:
+        jar = cookie_from_paste(env_cookie)
+        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+        ok, message = perform_update(
+            opener, args.status, args.timeout, confirm=args.confirm_update,
+            expected_login=args.login)
+        print(message)
+        return EXIT_OK if ok else EXIT_BLOCKED
     env_password = os.environ.get("CAMFROG_PASSWORD")
     if env_password:
         password = env_password  # from .env / environment; never printed or logged
@@ -3515,9 +3605,11 @@ class WebStatusManager:
         row2.pack(fill="x")
         self._language_button(row2, "open_login",
                               command=self.open_login_page).pack(side="left")
-        self.cookie_paste_var = self.tk.StringVar(value="")
+        self.cookie_paste_var = self.tk.StringVar(value=environment_cookie(
+            "WEBAUTH_USER", "PHPSESSID"))
         self.ttk.Entry(row2, textvariable=self.cookie_paste_var,
-                       width=18).pack(side="left", padx=6, fill="x", expand=True)
+                       width=18, show="*").pack(
+                           side="left", padx=6, fill="x", expand=True)
         session_actions = self.ttk.Frame(browser)
         session_actions.pack(fill="x", pady=(4, 0))
         self.btn_login = self._language_button(
@@ -4111,7 +4203,8 @@ class WebStatusManager:
         cloudbot_label = self.ttk.Label(
             header, text="cloudbot parameter", style="BotHeader.TLabel")
         cloudbot_label.grid(row=1, column=0, sticky="w")
-        self.bot_cloudbot_var = self.tk.StringVar(value="")
+        self.bot_cloudbot_var = self.tk.StringVar(value=environment_cookie(
+            "WEBAUTH_BOT_USER", "cloudbot"))
         self.bot_cloudbot_entry = self.ttk.Entry(
             header, textvariable=self.bot_cloudbot_var, show="*", width=28)
         self.bot_cloudbot_entry.grid(row=1, column=1, sticky="ew", padx=6)
@@ -5737,11 +5830,13 @@ class WebStatusManager:
                     type(exc).__name__))
         self._append_log_line(entry)
 
-    def _rotation_settings_detail(self, interval, timeout, live, pool):
-        delay_source = "switch_every"
-        delay = interval
-        effective_delay = (max(delay, LIVE_ROTATE_INTERVAL_MIN)
-                           if live else delay)
+    def _rotation_settings_detail(self, interval, timeout, live, pool,
+                                  marquee=False, frame_seconds=None):
+        delay_source = "marquee_frame" if marquee else "switch_every"
+        delay = frame_seconds if marquee and frame_seconds is not None else interval
+        effective_delay = web_status_rotation_delay(
+            interval, live, marquee=marquee,
+            frame_seconds=delay if marquee else WEB_MARQUEE_STEP_SECONDS_DEFAULT)
         loop_count = getattr(self, "_cycle_loop_count", 0)
         loop_label = "{0} (infinite)".format(loop_count) if loop_count == 0 \
             else str(loop_count)
@@ -6307,14 +6402,15 @@ class WebStatusManager:
         frame_index = min(frame_index, len(frames) - 1)
         frame = frames[frame_index]
         slot_index = index % len(pool)
-        step_delay = (frame_seconds if marquee else
-                      max(interval, LIVE_ROTATE_INTERVAL_MIN) if live else interval)
+        step_delay = web_status_rotation_delay(
+            interval, live, marquee=marquee, frame_seconds=frame_seconds)
         cookie_secrets = _session_cookie_redaction_values(
             getattr(self, "cookie_paste", ""))
         diagnostic_secrets = (frame, login) + cookie_secrets
         failure_detail = []
         retry_context = []
         post_started = []
+        unknown_outcome = []
 
         def cancelled():
             return (getattr(self, "_closed", False)
@@ -6337,11 +6433,14 @@ class WebStatusManager:
                     urllib.request.HTTPCookieProcessor(jar))
                 ok, message = perform_update(
                     opener, frame, timeout, confirm=True, cancelled=cancelled,
-                    on_post_started=lambda: post_started.append(True))
+                    on_post_started=lambda: post_started.append(True),
+                    expected_login=login)
                 if not ok:
                     diagnostic = _sanitize_web_status_detail(
                         message, secrets=diagnostic_secrets)
                     failure_detail[:] = [diagnostic]
+                    if message.startswith("update outcome unknown:"):
+                        unknown_outcome[:] = [True]
                     retry_policy = _web_status_retry_policy(
                         diagnostic, retry_attempt)
                     if retry_policy:
@@ -6401,11 +6500,17 @@ class WebStatusManager:
                     detail = "retry_attempts={0}; {1}".format(
                         retry_attempt, detail)
                 detail += "; " + self._rotation_settings_detail(
-                    interval, timeout, live, pool)
+                    interval, timeout, live, pool,
+                    marquee=marquee, frame_seconds=frame_seconds)
                 self._record_activity(
-                    "status_update_failed",
+                    "status_update_unknown" if unknown_outcome
+                    else "status_update_failed",
                     detail=detail,
                     secrets=diagnostic_secrets)
+                if unknown_outcome:
+                    self._set_note(
+                        "Status update outcome is unknown. Check the Camfrog "
+                        "profile before sending again.")
             else:
                 self._record_activity("rotation_stopped")
             if generation != getattr(self, "_start_generation", 0):
@@ -6440,7 +6545,9 @@ class WebStatusManager:
                     LIVE_RETRY_MAX_ATTEMPTS,
                     retry_delay,
                     retry_detail,
-                    self._rotation_settings_detail(interval, timeout, live, pool),
+                    self._rotation_settings_detail(
+                        interval, timeout, live, pool,
+                        marquee=marquee, frame_seconds=frame_seconds),
                 )
                 self._record_activity(
                     "live_retry_scheduled",
@@ -6794,7 +6901,7 @@ def _cookies_to_string(cookies):
 # Read-only GitHub API (no token needed for public repos, stdlib only). Each
 # packaged app checks the same repo's latest release and downloads only its
 # own executable asset, verified against the release's SHA256SUMS.txt.
-APP_VERSION = "2.19.2"
+APP_VERSION = "2.19.3"
 GITHUB_REPO = os.environ.get("CAMFROG_UPDATE_REPO", "cvsz/zchat")
 UPDATE_ASSET_SUMS = "SHA256SUMS.txt"
 

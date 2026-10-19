@@ -7,7 +7,18 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [2.19.3] - 2026-10-19
+
+### Fixed
+- Refuse live status submissions through `best_effort_background` and targeted combo-post when Camfrog is not already foreground. Windows runtime evidence showed combo-post can activate Camfrog and interrupt keyboard input; workers now fail closed before writing status text.
+- Room Control, IM Auto-reply, Music DJ, and Chat IM Private now attempt Camfrog control discovery after startup and persist detected selectors only after config validation. The combined Status Changer saves both Random and Marquee status pools and configs before starting discovery. Each app retains its inlined discovery implementation and remains an independent one-file executable.
+- Create each status app data directory before clearing PID/start-gate files or launching its worker, so a fresh install can register and authorize the worker instead of leaving an unverified child running.
+- Document the current status submit trade-offs, interactive user-activity wait, automatic standalone status-app setup, and worker startup handshake consistently across the English and Thai guides.
+
 ### Added
+- Added process-level runtime-adapter regression tests for identity revalidation and ownership, plus Windows-only GUI/HWND cases using a controlled fixture process.
+- Added an approximate build countdown to the full-build logger, calibrated from the median duration of recent successful builds with a ten-minute fallback.
+- Added a Windows-only CreateDesktop Camfrog launcher for manual isolation testing. Native Camfrog behavior remains unverified until tested in a Windows session.
 - Added repository structure and Markdown-link validation to the main GitHub CI job.
 - Added the LINE unit suite to the fast Linux CI job as well as its Windows packaging gate.
 - Added ZChat client and LINE unit suites to the cross-platform `make test` target.
@@ -30,16 +41,29 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Added a read-only Camfrog public presence probe that fingerprints bounded GIF responses and persists raw evidence locally while classifying every observation as UNKNOWN.
 
 ### Fixed
+- Status workers now wait for parent authorization after PID registration before entering the status loop. A failed or delayed PID check therefore cannot let a hidden worker submit statuses while the GUI reports startup failure.
+- Status worker startup accepts the registered runtime PID when a PyInstaller one-file launcher PID differs; timeout cleanup terminates the launcher process tree.
+- Status Changer, Random Status, and Marquee Status now save their loaded settings and discover Camfrog controls automatically after the standalone window opens.
+- Status workers now wait 10 seconds before the first automatic status change after start; later changes keep the configured interval.
+- Preserve an explicitly selected `best_effort_background` mode in the hidden Status Changer worker, and wait for worker PID registration during frozen executable startup instead of failing after a short fixed delay.
+- Use the probe-validated Enter key scan code and transition flags for best-effort status submissions in Status Changer, Random Status, and Marquee Status.
+- Require both the expected Win32 control ID and class when revalidating Camfrog status HWNDs, rejecting recycled handles that only match one identifier.
 - Camfrog window selection now fails closed when the configured title filter spans multiple or unverifiable processes instead of choosing the first matching client.
 - Release publishing now uploads the flat checksum manifest as `SHA256SUMS.txt`, matching the name expected by existing app updaters.
 - Fixed `validate_repo.py` performance and exclusion list with `os.walk` directory pruning, reducing scan execution time by 98%.
 - Fixed GitHub Actions supply-chain security by pinning actions to immutable commit SHAs with least-privilege `contents: read` permissions.
 
 ### Changed
+- Raised the minimum Random interval and Marquee frame delay to 10 seconds across the standalone and combined Status Changer apps. Legacy settings are clamped on load, and retry scheduling cannot submit faster than the configured interval.
+- Status worker logs now label successful local dispatch as unverified instead of claiming the provider status was set.
+- Changed the opt-in unverified Status Changer test route from Edit Enter to combo-parent Enter to avoid the observed Edit-control ding; the combo route can activate Camfrog and remains unsupported for strict background use.
+- Removed the legacy Random and Marquee submit-time writes to Windows sound registry values; status submission no longer tries to mute or restore system sound settings.
 - Updated the architecture guide to describe the maintained desktop apps, ZChat services, repository tooling, and deployment boundaries.
 - Web Status now defaults to switching non-empty status slots every 60 seconds.
 - Status Changer records completed status text in its worker log and clears its status logs daily at 12:00 local time.
 - Music DJ queue paths are restricted to the app data folder.
+- MCP discovery and authenticated read-only resource results now declare private, zero-TTL caching; response data is not reusable across authorization contexts.
+
 
 ## [2.19.2] - 2026-10-11
 

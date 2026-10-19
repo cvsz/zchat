@@ -7,7 +7,7 @@ Full user manual: [`docs/USER-MANUAL-EN.md`](docs/USER-MANUAL-EN.md) (Thai: [`do
 - English: [`README-EN.md`](README-EN.md)
 - ไทย: [`README-TH.md`](README-TH.md)
 
-Windows only. Uses UI Automation — run `detect` first (details in either language file above).
+Windows only. Selector-based standalone apps discover Camfrog controls on startup and save valid selector proposals automatically. Use **Setup → Auto-detect** or **Discover controls** to retry; Web Status uses website controls and does not discover Camfrog controls.
 
 ## ZChat Control Server
 

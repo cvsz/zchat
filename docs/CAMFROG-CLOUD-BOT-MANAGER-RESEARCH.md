@@ -2,6 +2,10 @@
 
 Researched 2026-10-13. Sources are Camfrog's own public pages and anonymous HTTPS GETs. No login, cookies, credentials, or form submissions were used.
 
+Follow-up on 2026-10-18: after operator authorization, one read-only GET using the local development `WEBAUTH_BOT_USER` cookie loaded the authenticated `/bot/profile` form. No account values were recorded and no form was submitted. This confirms the current local cookie can read that page; it does not establish a supported API contract or verify any Bot Manager mutation.
+
+Follow-up on 2026-10-19: one operator-authorized sign-on attempt used the existing ignored `.env` keys `CAMFROG_BOT_USER` and `CAMFROG_BOT_PASSWORD` against the official HTTPS `/bot/signon` form. The response remained on `/bot/signon`; a `cloudbot` cookie was set, but this did not establish an authenticated session. The attempted credentials were not retried, `/bot/room` was not fetched in this attempt, and no room action was submitted. The public form exposes `_1` and `_2` text/password inputs and a submit button; no CAPTCHA marker appeared in the anonymous page markup, which does not rule out server-side verification. The application code does not consume the `CAMFROG_BOT_USER` or `CAMFROG_BOT_PASSWORD` keys; its Bot Manager flow accepts a `cloudbot=<token>` cookie via `WEBAUTH_BOT_USER`.
+
 ## Public route checks
 
 | Route | Anonymous result | What this establishes |

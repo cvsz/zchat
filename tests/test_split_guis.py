@@ -108,7 +108,7 @@ def test_start_reports_success_only_after_worker_pid_is_registered(
         name, tmp_path, monkeypatch, capsys):
     mod = load(name)
     monkeypatch.setattr(mod, "BASE", tmp_path)
-    monkeypatch.setattr(mod.os, "name", "nt")
+    monkeypatch.setattr(mod, "os", SimpleNamespace(name="nt"))
     monkeypatch.setattr(mod, "child_cmd", lambda _args: ["pythonw.exe", "entry.py"])
     monkeypatch.setattr(mod, "child_env", lambda: {})
     states = iter([None, None, 123])
@@ -225,10 +225,522 @@ def test_profiles_and_modes_are_pinned():
         load("status_random_gui").DEFAULTS)["status"]["random"] is True
     assert load("status_marquee_gui").runtime_config(
         load("status_marquee_gui").DEFAULTS)["status"]["marquee"]["enabled"] is True
+    assert load("status_random_gui").runtime_config(
+        load("status_random_gui").DEFAULTS)["status"]["execution_mode"] == "strict_background"
+    assert load("status_marquee_gui").runtime_config(
+        load("status_marquee_gui").DEFAULTS)["status"]["execution_mode"] == "strict_background"
+    assert load("status_random_gui").SingleInstanceGuard().name != load(
+        "status_marquee_gui").SingleInstanceGuard().name
+    assert load("status_random_gui").SingleInstanceGuard().window_title == "ZChat Random Status"
+    assert load("status_marquee_gui").SingleInstanceGuard().window_title == "ZChat Marquee Status"
     combined = load("status_changer_gui")
     assert combined.runtime_config(combined.DEFAULTS, "random")["status"]["random"] is True
     assert combined.runtime_config(
         combined.DEFAULTS, "marquee")["status"]["marquee"]["enabled"] is True
+
+
+@pytest.mark.parametrize("name", ["status_random_gui", "status_marquee_gui"])
+@pytest.mark.parametrize("entry", ["cmd_start", "cmd_start_worker"])
+def test_split_status_start_waits_for_worker_pid_registration(
+    name, entry, monkeypatch, tmp_path
+):
+    mod = load(name)
+    monkeypatch.setattr(mod, "BASE", tmp_path)
+    monkeypatch.setattr(mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(mod, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(mod, "_strict_status_start_blocked", lambda *_a, **_k: False)
+    monkeypatch.setattr(mod, "child_env", lambda: {})
+    monkeypatch.setattr(mod, "child_cmd", lambda _args: ["status-worker.exe"])
+    monkeypatch.setattr(mod, "worker_cmd", lambda _args: ["status-worker.exe", "--worker"])
+    states = iter([None, None, 321, 321])
+    monkeypatch.setattr(mod, "running_pid", lambda _cfg: next(states))
+    monkeypatch.setattr(mod, "read_pid", lambda _cfg: 321)
+    monkeypatch.setattr(mod, "pid_alive", lambda _pid: False)
+    clock = [0.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        mod.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+
+    class Child:
+        pid = 321
+        returncode = None
+
+        @staticmethod
+        def poll():
+            return None
+
+    child = Child()
+    launch = {}
+
+    def start_child(*args, **kwargs):
+        launch.update(kwargs)
+        return child
+
+    monkeypatch.setattr(mod.subprocess, "Popen", start_child)
+    cfg = copy.deepcopy(mod.DEFAULTS)
+    cfg["dry_run"] = True
+    args = SimpleNamespace(config=None, lang=None)
+    messages = []
+
+    if entry == "cmd_start":
+        rc = mod.cmd_start(cfg, args)
+    else:
+        rc = mod.cmd_start_worker(cfg, args, report=messages.append)
+
+    assert rc == 0
+    assert clock[0] >= 0.1
+    assert "PID 321" in ("\n".join(messages) if messages else "") or entry == "cmd_start"
+    gate = mod.worker_start_gate_path(cfg)
+    assert gate.exists()
+    assert launch["env"]["ZCFATO_WORKER_START_GATE"] == str(gate)
+
+
+@pytest.mark.parametrize("name", ["status_random_gui", "status_marquee_gui"])
+@pytest.mark.parametrize("entry", ["cmd_start", "cmd_start_worker"])
+def test_split_status_accepts_registered_inner_pid_from_onefile_launcher(
+    name, entry, monkeypatch, tmp_path, capsys
+):
+    mod = load(name)
+    monkeypatch.setattr(mod, "BASE", tmp_path)
+    monkeypatch.setattr(mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(mod, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(mod, "_strict_status_start_blocked", lambda *_a, **_k: False)
+    monkeypatch.setattr(mod, "child_env", lambda: {})
+    monkeypatch.setattr(mod, "child_cmd", lambda _args: ["status-worker.exe"])
+    monkeypatch.setattr(mod, "worker_cmd", lambda _args: ["status-worker.exe", "--worker"])
+    states = iter([None, 654, 654])
+    monkeypatch.setattr(mod, "running_pid", lambda _cfg: next(states))
+    monkeypatch.setattr(mod, "read_pid", lambda _cfg: 654)
+    monkeypatch.setattr(mod, "pid_alive", lambda _pid: False)
+
+    class Launcher:
+        pid = 321
+        returncode = None
+
+        @staticmethod
+        def poll():
+            return None
+
+    monkeypatch.setattr(mod.subprocess, "Popen", lambda *_a, **_k: Launcher())
+    cfg = copy.deepcopy(mod.DEFAULTS)
+    cfg["dry_run"] = True
+    args = SimpleNamespace(config=None, lang=None)
+    reports = []
+    if entry == "cmd_start_worker":
+        rc = mod.cmd_start_worker(cfg, args, report=reports.append)
+        output = "\n".join(reports)
+    else:
+        rc = mod.cmd_start(cfg, args)
+        output = capsys.readouterr().out
+
+    assert rc == 0
+    assert "PID 654" in output
+
+
+@pytest.mark.parametrize("name", ["status_random_gui", "status_marquee_gui"])
+@pytest.mark.parametrize("entry", ["cmd_start", "cmd_start_worker"])
+def test_split_status_accepts_registration_after_launcher_exits(
+    name, entry, monkeypatch, tmp_path, capsys
+):
+    mod = load(name)
+    monkeypatch.setattr(mod, "BASE", tmp_path)
+    monkeypatch.setattr(mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(mod, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(mod, "_strict_status_start_blocked", lambda *_a, **_k: False)
+    monkeypatch.setattr(mod, "child_env", lambda: {})
+    monkeypatch.setattr(mod, "child_cmd", lambda _args: ["status-worker.exe"])
+    monkeypatch.setattr(mod, "worker_cmd", lambda _args: ["status-worker.exe", "--worker"])
+    clock = [0.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        mod.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+    monkeypatch.setattr(
+        mod, "running_pid", lambda _cfg: 654 if clock[0] >= 0.5 else None
+    )
+    monkeypatch.setattr(mod, "read_pid", lambda _cfg: 654)
+    monkeypatch.setattr(mod, "pid_alive", lambda _pid: False)
+
+    class ExitedLauncher:
+        pid = 321
+        returncode = 0
+
+        @staticmethod
+        def poll():
+            return 0
+
+    monkeypatch.setattr(
+        mod.subprocess, "Popen", lambda *_args, **_kwargs: ExitedLauncher()
+    )
+    cfg = copy.deepcopy(mod.DEFAULTS)
+    cfg["dry_run"] = True
+    args = SimpleNamespace(config=None, lang=None)
+    reports = []
+
+    if entry == "cmd_start":
+        rc = mod.cmd_start(cfg, args)
+        output = capsys.readouterr().out
+    else:
+        rc = mod.cmd_start_worker(cfg, args, report=reports.append)
+        output = "\n".join(reports)
+
+    assert rc == 0
+    assert clock[0] >= 0.5
+    assert "PID 654" in output
+
+
+@pytest.mark.parametrize("name", ["status_random_gui", "status_marquee_gui"])
+@pytest.mark.parametrize("entry", ["cmd_start", "cmd_start_worker"])
+def test_split_status_start_stops_child_that_never_registers_pid(
+    name, entry, monkeypatch, tmp_path, capsys
+):
+    mod = load(name)
+    monkeypatch.setattr(mod, "BASE", tmp_path)
+    monkeypatch.setattr(mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(mod, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(mod, "_strict_status_start_blocked", lambda *_a, **_k: False)
+    monkeypatch.setattr(mod, "child_env", lambda: {})
+    monkeypatch.setattr(mod, "child_cmd", lambda _args: ["status-worker.exe"])
+    monkeypatch.setattr(mod, "worker_cmd", lambda _args: ["status-worker.exe", "--worker"])
+    monkeypatch.setattr(mod, "running_pid", lambda _cfg: None)
+    monkeypatch.setattr(mod, "system_taskkill_path", lambda: "taskkill.exe")
+    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_k: SimpleNamespace(returncode=0))
+    clock = [0.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        mod.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+
+    class Child:
+        pid = 321
+        returncode = None
+        terminated = False
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            return 0
+
+    child = Child()
+    monkeypatch.setattr(mod.subprocess, "Popen", lambda *_a, **_k: child)
+    cfg = copy.deepcopy(mod.DEFAULTS)
+    cfg["dry_run"] = True
+    args = SimpleNamespace(config=None, lang=None)
+    messages = []
+
+    if entry == "cmd_start":
+        rc = mod.cmd_start(cfg, args)
+    else:
+        rc = mod.cmd_start_worker(cfg, args, report=messages.append)
+
+    assert rc == 1
+    assert child.terminated is True
+    assert clock[0] >= mod.WORKER_START_TIMEOUT_SECONDS
+    output = "\n".join(messages)
+    assert "did not register its PID" in (output or capsys.readouterr().out)
+
+
+@pytest.mark.parametrize("name", ["status_random_gui", "status_marquee_gui"])
+def test_split_status_worker_entry_forces_strict_background(name, monkeypatch):
+    mod = load(name)
+    calls = []
+    monkeypatch.setattr(
+        mod, "cli_main", lambda argv, **kwargs: calls.append((argv, kwargs)) or 0
+    )
+    assert mod.main(["--worker", "--config", "legacy.json", "run"]) == 0
+    assert calls == [
+        (["--config", "legacy.json", "run"], {"force_strict_background": True})
+    ]
+
+
+@pytest.mark.parametrize(
+    "name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"]
+)
+def test_worker_start_gate_releases_only_after_parent_authorization(
+    name, monkeypatch, tmp_path
+):
+    mod = load(name)
+    gate = tmp_path / "worker.start"
+    monkeypatch.setenv("ZCFATO_WORKER_START_GATE", str(gate))
+    monkeypatch.setattr(mod, "WORKER_START_GATE_TIMEOUT_SECONDS", 1)
+    clock = [0.0]
+
+    def sleep(seconds):
+        clock[0] += seconds
+        if clock[0] >= 0.1:
+            gate.write_text("start\n", encoding="ascii")
+
+    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(mod.time, "sleep", sleep)
+
+    assert mod.wait_for_worker_start_gate() is True
+    assert not gate.exists()
+
+
+@pytest.mark.parametrize(
+    "name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"]
+)
+def test_worker_start_gate_times_out_without_authorization(name, monkeypatch, tmp_path):
+    mod = load(name)
+    gate = tmp_path / "worker.start"
+    monkeypatch.setenv("ZCFATO_WORKER_START_GATE", str(gate))
+    monkeypatch.setattr(mod, "WORKER_START_GATE_TIMEOUT_SECONDS", 0.2)
+    clock = [0.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        mod.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+
+    assert mod.wait_for_worker_start_gate() is False
+    assert not gate.exists()
+
+
+@pytest.mark.parametrize(
+    "name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"]
+)
+def test_run_guarded_does_not_enter_runner_without_start_authorization(
+    name, monkeypatch, tmp_path
+):
+    mod = load(name)
+    import camfrog_status_engine as engine
+
+    monkeypatch.setattr(mod, "BASE", tmp_path)
+    monkeypatch.setattr(mod, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(mod, "_strict_status_start_blocked", lambda *_a, **_k: False)
+    monkeypatch.setattr(mod, "running_pid", lambda _cfg: None)
+    monkeypatch.setattr(mod, "WORKER_START_GATE_TIMEOUT_SECONDS", 0.2)
+    gate = tmp_path / "worker.start"
+    monkeypatch.setenv("ZCFATO_WORKER_START_GATE", str(gate))
+    clock = [0.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        mod.time, "sleep", lambda seconds: clock.__setitem__(0, clock[0] + seconds)
+    )
+
+    class WriterLock:
+        def __init__(self, **_kwargs):
+            self.released = False
+
+        def acquire(self):
+            return True
+
+        def release(self):
+            self.released = True
+
+    lock = WriterLock()
+    monkeypatch.setattr(engine, "StatusResourceLock", lambda **_kwargs: lock)
+    monkeypatch.setattr(
+        mod, "Runner", lambda *_a, **_k: pytest.fail("Runner must remain gated")
+    )
+
+    result = mod.run_guarded(copy.deepcopy(mod.DEFAULTS))
+
+    assert result == 4
+    assert not gate.exists()
+    assert mod.read_pid(copy.deepcopy(mod.DEFAULTS)) is None
+    assert lock.released is True
+
+
+@pytest.mark.parametrize(
+    "name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"]
+)
+def test_status_workers_hold_one_shared_writer_lock_for_their_lifecycle(
+    name, monkeypatch, tmp_path
+):
+    mod = load(name)
+    events = []
+
+    class WriterLock:
+        def __init__(self, resource_key, timeout_seconds):
+            events.append(("lock", resource_key, timeout_seconds))
+
+        def acquire(self):
+            events.append("acquired")
+            return True
+
+        def release(self):
+            events.append("released")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "camfrog_status_engine",
+        SimpleNamespace(StatusResourceLock=WriterLock),
+    )
+    pid_file = tmp_path / f"{name}.pid"
+    monkeypatch.setattr(mod, "running_pid", lambda _cfg: None)
+    monkeypatch.setattr(mod, "pid_path", lambda _cfg: pid_file)
+    monkeypatch.setattr(mod, "read_pid", lambda _cfg: mod.os.getpid())
+
+    class Runner:
+        def __init__(self, cfg, *_args):
+            assert cfg["status"]["execution_mode"] == "strict_background"
+            events.append("runner-created")
+
+        def run(self):
+            events.append("runner-ran")
+            return 0
+
+    monkeypatch.setattr(mod, "Runner", Runner)
+    legacy_cfg = {
+        "autoreply": {"enabled": True},
+        "autoreply_im": {"enabled": True},
+        "status": {"execution_mode": "interactive"},
+    }
+    assert mod.run_guarded(legacy_cfg, None) == 0
+    assert events == [
+        ("lock", "camfrog_status_writer", 0.5),
+        "acquired",
+        "runner-created",
+        "runner-ran",
+        "released",
+    ]
+    assert not pid_file.exists()
+
+
+@pytest.mark.parametrize(
+    "name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"]
+)
+def test_status_worker_fails_closed_without_shared_writer_lock(
+    name, monkeypatch, tmp_path, capsys
+):
+    mod = load(name)
+
+    class WriterLock:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def acquire(self):
+            raise TimeoutError("writer already owned")
+
+        def release(self):
+            pass
+
+    monkeypatch.setitem(
+        sys.modules,
+        "camfrog_status_engine",
+        SimpleNamespace(StatusResourceLock=WriterLock),
+    )
+    pid_file = tmp_path / f"{name}.pid"
+    monkeypatch.setattr(mod, "running_pid", lambda _cfg: None)
+    monkeypatch.setattr(mod, "pid_path", lambda _cfg: pid_file)
+    monkeypatch.setattr(mod, "Runner", lambda *_args: pytest.fail("writer lock must fail closed"))
+    assert mod.run_guarded(
+        {
+            "autoreply": {"enabled": True},
+            "autoreply_im": {"enabled": True},
+            "status": {"execution_mode": "interactive"},
+        },
+        None,
+    ) == 3
+    assert not pid_file.exists()
+    assert "Another status worker owns" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"]
+)
+def test_status_standalone_profile_overrides_legacy_interactive_mode(name):
+    mod = load(name)
+    legacy = copy.deepcopy(mod.DEFAULTS)
+    legacy["status"]["execution_mode"] = "interactive"
+
+    configured = mod.apply_app_profile(legacy)
+
+    assert configured["status"]["execution_mode"] == "strict_background"
+    assert legacy["status"]["execution_mode"] == "interactive"
+
+
+@pytest.mark.parametrize(
+    "name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"]
+)
+def test_status_profile_preserves_explicit_best_effort_mode(name):
+    mod = load(name)
+    configured = copy.deepcopy(mod.DEFAULTS)
+    configured["status"]["execution_mode"] = "best_effort_background"
+
+    profiled = mod.apply_app_profile(configured)
+    runtime = mod.runtime_config(profiled) if name != "status_changer_gui" else mod.runtime_config(profiled, "random")
+
+    assert profiled["status"]["execution_mode"] == "best_effort_background"
+    assert runtime["status"]["execution_mode"] == "best_effort_background"
+    assert runtime["status"]["background_enter_target"] == "combo"
+
+
+@pytest.mark.parametrize(
+    "name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"]
+)
+def test_status_commit_strict_mode_never_uses_foreground_input(name, monkeypatch):
+    mod = load(name)
+    win = SimpleNamespace(handle=100)
+    ctrl = SimpleNamespace(
+        set_focus=lambda: pytest.fail("strict status commit must not set focus"),
+        click_input=lambda: pytest.fail("strict status commit must not click"),
+        type_keys=lambda *_args, **_kwargs: pytest.fail(
+            "strict status commit must not inject keys"
+        ),
+    )
+    calls = []
+    monkeypatch.setattr(
+        mod, "commit_background", lambda text, dry=False: calls.append((text, dry)) or True
+    )
+
+    assert mod.commit(
+        win,
+        ctrl,
+        "background status",
+        False,
+        execution_mode="strict_background",
+    )
+    assert calls == [("background status", False)]
+
+
+@pytest.mark.parametrize(
+    "name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"]
+)
+def test_live_status_worker_fails_before_spawn_when_strict_submit_is_unverified(
+    name, monkeypatch, capsys
+):
+    mod = load(name)
+    monkeypatch.setitem(
+        sys.modules,
+        "camfrog_status_engine",
+        SimpleNamespace(strict_background_submit_supported=lambda: False),
+    )
+    monkeypatch.setattr(mod, "running_pid", lambda _cfg: None)
+    monkeypatch.setattr(
+        mod.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail("unsupported worker must not spawn"),
+    )
+    config = copy.deepcopy(mod.DEFAULTS)
+    config["dry_run"] = False
+    config["status"]["enabled"] = True
+    args = SimpleNamespace(config=None, lang=None)
+
+    # Both CLI entry points must reject before creating a child or entering the
+    # retrying worker loop. The GUI button has a separate start adapter too.
+    assert mod.cmd_start(config, args) == 2
+    assert "BACKGROUND_UNSUPPORTED" in capsys.readouterr().out
+    assert mod.run_guarded(config) == 2
+    assert "BACKGROUND_UNSUPPORTED" in capsys.readouterr().out
+
+    messages = []
+    assert mod.cmd_start_worker(
+        config, args, report=messages.append,
+    ) == 2
+    assert len(messages) == 1
+    assert "BACKGROUND_UNSUPPORTED" in messages[0]
+    assert capsys.readouterr().out == ""
+
+    assert mod.cmd_start_worker(
+        config, SimpleNamespace(config=None, lang=None)
+    ) == 2
+    assert "BACKGROUND_UNSUPPORTED" in capsys.readouterr().out
 
 
 def test_room_and_im_profiles_disable_other_features():
@@ -318,10 +830,10 @@ def test_status_changer_logs_the_completed_status_text(caplog, monkeypatch):
     mod.Runner._finish_status(
         runner_state, {"slot_index": None, "raw": "status text sent"}, "status text sent")
 
-    assert "status set: 'status text sent'" in caplog.text
+    assert "status submission dispatched (provider outcome unverified)" in caplog.text
 
 
-def test_status_changer_combo_submit_does_not_focus_or_type_keys(monkeypatch):
+def test_status_changer_refuses_combo_submit_if_it_may_take_focus(monkeypatch):
     from types import SimpleNamespace
 
     mod = load("status_changer_gui")
@@ -336,11 +848,164 @@ def test_status_changer_combo_submit_does_not_focus_or_type_keys(monkeypatch):
         type_keys=lambda *_a, **_k: pytest.fail("background update must not simulate typing"),
     )
     monkeypatch.setattr(mod, "is_web", lambda _ctrl: False)
-    monkeypatch.setattr(mod, "write_text", lambda _ctrl, _text: True)
+    writes = []
+    monkeypatch.setattr(mod, "write_text", lambda _ctrl, _text: writes.append(_text) or True)
 
-    assert mod.commit(SimpleNamespace(handle=123), ctrl, "status", False,
-                      require_fg=True, background_enter_target="combo")
-    assert posted == [(77, 0x0100, 0x0D, 0), (77, 0x0101, 0x0D, 0)]
+    assert not mod.commit(SimpleNamespace(handle=123), ctrl, "status", False,
+                          require_fg=True, background_enter_target="combo")
+    assert writes == []
+    assert posted == []
+
+
+@pytest.mark.parametrize("name", ["status_random_gui", "status_marquee_gui"])
+def test_standalone_status_startup_discovers_controls(name):
+    app_class = load(name).build_app()
+    app = object.__new__(app_class)
+    app.close_requested = False
+    discovered = []
+    app.discover = lambda: discovered.append(True)
+
+    app._discover_controls_on_start()
+    assert discovered == [True]
+    app.close_requested = True
+    app._discover_controls_on_start()
+    assert discovered == [True]
+
+
+@pytest.mark.parametrize("name", ["room_control_gui", "im_autoreply_gui", "camfrog_music_gui"])
+def test_camfrog_apps_schedule_and_run_startup_discovery(name, monkeypatch):
+    mod = load(name)
+    app_class = mod.build_app()
+    app = object.__new__(app_class)
+    app._closing = False
+    app.busy = False
+    app.model = SimpleNamespace(path="settings.json", cfg={"seed": True})
+    tasks = []
+    app.run_bg = lambda fn, kind: tasks.append((fn, kind))
+    called = []
+    monkeypatch.setattr(mod, "cmd_detect", lambda *args: called.append(args) or 0)
+
+    app._discover_controls_on_start()
+    assert len(tasks) == 1
+    assert tasks[0][1] == "startup-detect"
+    assert tasks[0][0]() == 0
+    assert called == [({"seed": True}, "settings.json", True, True)]
+
+    app._closing = True
+    app._discover_controls_on_start()
+    assert len(tasks) == 1
+
+
+@pytest.mark.parametrize("name", [
+    "room_control_gui", "im_autoreply_gui", "camfrog_music_gui",
+    "status_random_gui", "status_marquee_gui", "status_changer_gui",
+    "chat_im_private_gui",
+])
+def test_each_camfrog_standalone_saves_only_valid_detected_selectors(
+        name, tmp_path, monkeypatch, capsys):
+    mod = load(name)
+    cfg = {"status": {"edit": {}}, "autoreply": {"history": {}, "input": {}}}
+    window = SimpleNamespace(handle=42)
+    control_rows = [{
+        "class_name": "Edit", "control_type": "Edit", "name": "",
+        "auto_id": "statusEdit", "visible": True, "enabled": True,
+        "left": 10, "top": 10, "w": 180, "h": 24,
+        "parent_class": "CComboBoxTS",
+    }]
+    monkeypatch.setattr(mod, "BASE", tmp_path)
+    monkeypatch.setattr(mod, "get_window", lambda _cfg: window)
+    monkeypatch.setattr(mod, "process_windows", lambda _window: [])
+    monkeypatch.setattr(mod, "describe_controls", lambda _window: control_rows)
+    monkeypatch.setattr(mod, "validate", lambda _candidate: ([], []))
+    path = tmp_path / "settings.json"
+
+    assert mod.cmd_detect(cfg, path, apply=True) == 0
+    capsys.readouterr()
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["status"]["edit"]["auto_id"] == "statusEdit"
+    assert saved["status"]["edit"]["index"] == 0
+
+
+@pytest.mark.parametrize("name", [
+    "room_control_gui", "im_autoreply_gui", "camfrog_music_gui", "chat_im_private_gui",
+])
+def test_camfrog_standalones_schedule_startup_discovery(name):
+    import ast
+
+    path = ROOT / "src" / "features" / f"{name}.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    scheduled = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr != "after" or len(node.args) < 2:
+            continue
+        callback = node.args[1]
+        if (isinstance(callback, ast.Attribute)
+                and isinstance(callback.value, ast.Name)
+                and callback.value.id == "self"
+                and callback.attr == "_discover_controls_on_start"):
+            scheduled.append(node.args[0])
+    assert scheduled, f"{name} does not schedule startup control discovery"
+    assert any(isinstance(delay, ast.Constant) and delay.value >= 500 for delay in scheduled)
+
+def test_combined_status_startup_saves_and_discovers_both_modes(monkeypatch):
+    mod = load("status_changer_gui")
+    app = object.__new__(mod.build_app())
+    app.embedded = False
+    app.close_requested = False
+    app.busy = False
+    app.mode = "random"
+    app.save_job = "pending-save"
+    events = []
+    app.root = SimpleNamespace(after_cancel=lambda job: events.append(("cancel", job)))
+    app.config_paths = {"random": "random.json", "marquee": "marquee.json"}
+    app.runtime_config_paths = {
+        "random": "random-runtime.json", "marquee": "marquee-runtime.json"
+    }
+    app.config_path = "random.json"
+    app.random_fields = [SimpleNamespace(get=lambda: "random text")]
+    app.marquee_fields = [SimpleNamespace(get=lambda: "marquee text")]
+    app._fields_for_mode = lambda mode: (
+        app.random_fields if mode == "random" else app.marquee_fields
+    )
+    app.save_settings = lambda: events.append(("save-active", "random")) or {}
+    app._log_activity = lambda message, mode: events.append(("saved", mode))
+    tasks = []
+    app.run_task = lambda function, *_args, **_kwargs: tasks.append(function)
+    app._tr = lambda en, _th: en
+    configs = {
+        path: {"status": {"messages": ["old"]}}
+        for path in app.config_paths.values()
+    }
+    monkeypatch.setattr(mod, "load_cfg", lambda path: configs[path])
+    monkeypatch.setattr(mod, "validate", lambda _config: ([], []))
+    monkeypatch.setattr(
+        mod,
+        "write_config",
+        lambda path, config: events.append(("write", path, config["status"]["messages"])),
+    )
+    monkeypatch.setattr(mod, "runtime_config", lambda config, _mode: config)
+    monkeypatch.setattr(
+        mod, "run_control_discovery", lambda path: events.append(("discover", path))
+    )
+
+    app._discover_controls_on_start()
+    assert app.save_job is None
+    assert len(tasks) == 1
+    assert tasks[0]() == 0
+    assert events == [
+        ("cancel", "pending-save"),
+        ("save-active", "random"),
+        ("write", "random.json", ["random text"]),
+        ("write", "random-runtime.json", ["random text"]),
+        ("write", "marquee.json", ["marquee text"]),
+        ("write", "marquee-runtime.json", ["marquee text"]),
+        ("saved", "marquee"),
+        ("discover", "random.json"),
+        ("discover", "marquee.json"),
+    ]
+    assert app.config == configs["random.json"]
 
 
 def test_status_logs_clear_at_local_noon_once_per_day(tmp_path):
@@ -680,21 +1345,21 @@ def test_marquee_runner_scrolls_frames_and_rotates_lines(monkeypatch):
     cfg["dry_run"] = True
     cfg["status"]["enabled"] = True
     cfg["status"]["messages"] = ["AAA line one here", "BBB line two here"]
-    cfg["status"]["interval_seconds"] = 0.3
+    cfg["status"]["interval_seconds"] = 10
     cfg["status"]["history"]["enabled"] = False
     cfg["status"]["marquee"].update(enabled=True, scroll=True, width=10, stride=2,
-                                    step_seconds=0.3, cycles=1, max_frames=80)
+                                    step_seconds=10, cycles=1, max_frames=80)
     assert m.validate(cfg)[0] == []
+    clock = [0.0]
+    monkeypatch.setattr(m.time, "monotonic", lambda: clock[0])
     r = m.Runner(cfg)
     r.status_edit, r.apply_btn, r.win = object(), None, object()
     sent = []
     monkeypatch.setattr(r, "send", lambda ctrl, text, btn=None, win=None:
                         sent.append(text) or True)
-    clock = [0.0]
-    monkeypatch.setattr(m.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(m.time, "sleep", lambda s: None)
     for _ in range(400):
-        clock[0] += 0.1
+        clock[0] += 10
         r.do_status(clock[0])
     assert len(sent) > 10, "frames never advanced"
     assert len({s[:3] for s in sent}) > 1, "lines never rotated"
@@ -708,22 +1373,21 @@ def test_marquee_slot_loop_advances_after_finishing_scroll_frames(monkeypatch):
     cfg["dry_run"] = True
     cfg["status"]["enabled"] = True
     cfg["status"]["messages"] = ["AAA status that is long enough", "BBB next status long enough"]
-    cfg["status"]["interval_seconds"] = 3.0
+    cfg["status"]["interval_seconds"] = 10.0
     cfg["status"]["history"]["enabled"] = False
     cfg["status"]["marquee"].update(
-        enabled=True, scroll=True, width=10, stride=2, step_seconds=0.5,
+        enabled=True, scroll=True, width=10, stride=2, step_seconds=10,
         cycles=1, max_frames=5, loop_slots=True, infinite_loop=False)
     assert m.validate(cfg)[0] == []
 
+    clock = [0.0]
+    monkeypatch.setattr(m.time, "monotonic", lambda: clock[0])
     r = m.Runner(cfg)
     r.status_edit, r.apply_btn, r.win = object(), None, object()
     sent = []
     monkeypatch.setattr(r, "send", lambda ctrl, text, btn=None, win=None:
                         sent.append(text) or True)
-    clock = [0.0]
-    monkeypatch.setattr(m.time, "monotonic", lambda: clock[0])
-
-    for instant in (0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0):
+    for instant in (10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0):
         clock[0] = instant
         r.do_status(instant)
 
@@ -748,16 +1412,15 @@ def test_marquee_without_scroll_uses_frame_delay_not_legacy_interval(name, monke
     cfg["status"]["history"]["enabled"] = False
     cfg["status"]["marquee"].update(
         enabled=True, scroll=False, loop_slots=True, infinite_loop=False,
-        step_seconds=0.5,
+        step_seconds=10,
     )
+    clock = [0.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
     runner = mod.Runner(cfg)
     runner.status_edit, runner.apply_btn, runner.win = object(), None, object()
     sent = []
     runner.send = lambda _ctrl, text, btn=None: sent.append(text) or True
-    clock = [0.0]
-    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
-
-    for instant in (0.0, 0.49, 0.5, 1.0, 1.49, 1.5):
+    for instant in (0.0, 9.99, 10.0, 19.99, 20.0, 29.99, 30.0, 39.99, 40.0):
         clock[0] = instant
         runner.do_status(instant)
 
@@ -821,9 +1484,8 @@ def test_foreground_status_commit_writes_frame_before_enter(name, monkeypatch):
 
 
 @pytest.mark.parametrize("name", ["status_changer_gui", "status_marquee_gui"])
-def test_combo_enter_option_uses_background_target_even_when_foreground_is_required(
-        name, monkeypatch):
-    """The explicit combo test option must bypass the normal foreground Enter path."""
+def test_combo_enter_option_refuses_when_camfrog_is_not_foreground(name, monkeypatch):
+    """Targeted combo Enter can activate Camfrog, so non-foreground sends fail closed."""
     mod = load(name)
     events = []
     win = SimpleNamespace(handle=77)
@@ -848,16 +1510,67 @@ def test_combo_enter_option_uses_background_target_even_when_foreground_is_requi
         lambda target_ctrl, target: events.append(("background_enter", target_ctrl, target)),
     )
 
-    assert mod.commit(
+    assert not mod.commit(
         win, ctrl, "slot 2", False, require_fg=True, restore=True,
         background_enter_target="combo")
-    assert events == [("write", "slot 2"), ("background_enter", ctrl, "combo")]
+    assert events == []
+
+
+@pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"]
+)
+def test_best_effort_worker_start_is_refused_before_launch(name):
+    mod = load(name)
+    cfg = copy.deepcopy(mod.DEFAULTS)
+    cfg["dry_run"] = False
+    cfg["status"]["enabled"] = True
+    cfg["status"]["execution_mode"] = "best_effort_background"
+    messages = []
+
+    assert mod._strict_status_start_blocked(cfg, emit=messages.append)
+    assert len(messages) == 1
+    assert "interrupt keyboard input" in messages[0]
+
+
+@pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"]
+)
+def test_best_effort_mode_refuses_unisolated_combo_submit(name, monkeypatch, caplog):
+    mod = load(name)
+    events = []
+    win = SimpleNamespace(handle=77)
+    ctrl = SimpleNamespace(
+        handle=88,
+        set_focus=lambda: pytest.fail("best-effort must not focus Camfrog"),
+        type_keys=lambda *_args: pytest.fail("best-effort must not inject keys"),
+    )
+    user32 = SimpleNamespace(
+        GetForegroundWindow=lambda: 55,
+        IsWindow=lambda _hwnd: True,
+        SetForegroundWindow=lambda _hwnd: pytest.fail("best-effort must not restore focus"),
+    )
+    monkeypatch.setattr(mod.ctypes, "windll", SimpleNamespace(user32=user32), raising=False)
+    monkeypatch.setattr(mod, "is_web", lambda _ctrl: False)
+    writes = []
+    monkeypatch.setattr(mod, "write_text", lambda _ctrl, _text: writes.append(_text) or True)
+    monkeypatch.setattr(
+        mod, "_background_enter",
+        lambda _ctrl, target: events.append(target),
+    )
+
+    assert not mod.commit(
+        win, ctrl, "test", False, require_fg=True, restore=True,
+        execution_mode="best_effort_background",
+    )
+    assert events == []
+    assert writes == []
+    assert "interrupt keyboard input" in caplog.text
 
 
 @pytest.mark.parametrize(
     "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"])
-def test_status_update_uses_combo_when_camfrog_is_not_foreground(name, monkeypatch):
-    """Background status changes never activate Camfrog or steal current focus."""
+def test_status_update_refuses_combo_when_camfrog_is_not_foreground(name, monkeypatch):
+    """Targeted Enter can activate Camfrog, so non-foreground submits fail closed."""
     mod = load(name)
     events = []
     win = SimpleNamespace(handle=77)
@@ -881,10 +1594,59 @@ def test_status_update_uses_combo_when_camfrog_is_not_foreground(name, monkeypat
         mod, "_background_enter",
         lambda target_ctrl, target: events.append(("background_enter", target_ctrl, target)))
 
-    assert mod.commit(
+    assert not mod.commit(
         win, ctrl, "slot 2", False, require_fg=True, restore=True,
         background_enter_target="edit", background_if_not_foreground=True)
-    assert events == [("write", "slot 2"), ("background_enter", ctrl, "combo")]
+    assert events == []
+
+
+@pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_random_gui", "status_marquee_gui"]
+)
+def test_status_submit_never_imports_or_mutates_windows_sound_registry(name, monkeypatch):
+    import builtins
+
+    mod = load(name)
+    sent = []
+    user32 = SimpleNamespace(PostMessageW=lambda *args: sent.append(args) or 1)
+    monkeypatch.setattr(mod.ctypes, "windll", SimpleNamespace(user32=user32), raising=False)
+    monkeypatch.setattr(mod.os, "name", "nt")
+    monkeypatch.setattr(mod.time, "sleep", lambda _seconds: None)
+    original_import = builtins.__import__
+
+    def guarded_import(module_name, *args, **kwargs):
+        if module_name == "winreg":
+            raise AssertionError("Status submission must not access Windows sound registry")
+        return original_import(module_name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    combo = SimpleNamespace(class_name="CComboBoxTS", handle=77)
+    edit = SimpleNamespace(handle=88, element_info=SimpleNamespace(parent=combo))
+
+    mod._background_enter(edit, "combo")
+
+    assert sent == [
+        (77, 0x0100, 0x0D, 0x001C0001),
+        (77, 0x0101, 0x0D, 0xC01C0001),
+    ]
+
+
+@pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_random_gui", "status_marquee_gui"]
+)
+def test_status_submit_fails_closed_without_hwnd_instead_of_sending_keys(name):
+    mod = load(name)
+    events = []
+    ctrl = SimpleNamespace(
+        handle=0,
+        element_info=SimpleNamespace(handle=0),
+        send_keystrokes=lambda keys: events.append(("keys", keys)),
+    )
+
+    with pytest.raises(LookupError, match="refusing keyboard-input fallback"):
+        mod._background_enter(ctrl, "edit")
+
+    assert events == []
 
 
 @pytest.mark.parametrize(
@@ -905,8 +1667,11 @@ def test_non_status_commit_keeps_foreground_requirement(name, monkeypatch):
     assert events == []
 
 
-def test_status_window_discovery_includes_hidden_windows(monkeypatch):
-    mod = load("status_changer_gui")
+@pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"]
+)
+def test_status_window_discovery_includes_hidden_windows(name, monkeypatch):
+    mod = load(name)
     native = SimpleNamespace(
         handle=77,
         class_name=lambda: "#32770",
@@ -940,6 +1705,70 @@ def test_status_window_discovery_includes_hidden_windows(monkeypatch):
     assert calls == [{"title_re": ".*Camfrog.*", "visible_only": False}]
 
 
+@pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"]
+)
+def test_status_window_discovery_uses_matching_status_control_to_disambiguate_processes(
+        name, monkeypatch):
+    mod = load(name)
+    windows = [
+        SimpleNamespace(handle=77, process_id=lambda: None,
+                        class_name=lambda: "#32770", window_text=lambda: "Camfrog one"),
+        SimpleNamespace(handle=88, process_id=lambda: 202,
+                        class_name=lambda: "#32770", window_text=lambda: "Camfrog two"),
+    ]
+    wrappers = {77: SimpleNamespace(handle=77), 88: SimpleNamespace(handle=88)}
+
+    class NativeDesktop:
+        def windows(self, **_kwargs):
+            return windows
+
+    class UiaDesktop:
+        def window(self, handle):
+            return SimpleNamespace(wrapper_object=lambda: wrappers[handle])
+
+    monkeypatch.setattr(
+        mod, "find", lambda win, _selector: (
+            object() if win.handle == 88 else (_ for _ in ()).throw(LookupError("no control"))))
+
+    def desktop_factory(**kwargs):
+        return NativeDesktop() if kwargs["backend"] == "win32" else UiaDesktop()
+
+    cfg = {"window_title_regex": ".*Camfrog.*", "status": {"edit": {"class_name": "Edit"}}}
+    assert mod.get_status_window(cfg, desktop_factory) is wrappers[88]
+
+
+@pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"]
+)
+def test_status_window_discovery_fails_when_status_control_matches_multiple_processes(
+        name, monkeypatch):
+    mod = load(name)
+    windows = [
+        SimpleNamespace(handle=77, process_id=lambda: 101,
+                        class_name=lambda: "#32770", window_text=lambda: "Camfrog one"),
+        SimpleNamespace(handle=88, process_id=lambda: 202,
+                        class_name=lambda: "#32770", window_text=lambda: "Camfrog two"),
+    ]
+
+    class NativeDesktop:
+        def windows(self, **_kwargs):
+            return windows
+
+    class UiaDesktop:
+        def window(self, handle):
+            return SimpleNamespace(wrapper_object=lambda: SimpleNamespace(handle=handle))
+
+    monkeypatch.setattr(mod, "find", lambda _win, _selector: object())
+
+    def desktop_factory(**kwargs):
+        return NativeDesktop() if kwargs["backend"] == "win32" else UiaDesktop()
+
+    cfg = {"window_title_regex": ".*Camfrog.*", "status": {"edit": {"class_name": "Edit"}}}
+    with pytest.raises(RuntimeError, match="processes match"):
+        mod.get_status_window(cfg, desktop_factory)
+
+
 @pytest.mark.parametrize("name", ["status_changer_gui", "status_marquee_gui"])
 def test_marquee_submits_frames_only_after_configured_step(name, monkeypatch):
     mod = load(name)
@@ -950,7 +1779,7 @@ def test_marquee_submits_frames_only_after_configured_step(name, monkeypatch):
                          set_on_start=True)
     cfg["status"]["history"]["enabled"] = False
     cfg["status"]["marquee"].update(
-        enabled=True, scroll=True, width=8, stride=2, step_seconds=0.5,
+        enabled=True, scroll=True, width=8, stride=2, step_seconds=10,
         cycles=1, max_frames=5, loop_slots=False, infinite_loop=False)
     clock = [0.0]
     monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
@@ -959,11 +1788,98 @@ def test_marquee_submits_frames_only_after_configured_step(name, monkeypatch):
     sent_at = []
     runner.send = lambda _ctrl, _text, btn=None: sent_at.append(clock[0]) or True
 
-    for instant in (0.0, 0.25, 0.49, 0.5, 0.75, 0.99, 1.0):
+    for instant in (0.0, 9.99, 10.0, 19.99, 20.0, 29.99, 30.0):
         clock[0] = instant
         runner.do_status(instant)
 
-    assert sent_at == [0.0, 0.5, 1.0]
+    assert sent_at == [10.0, 20.0, 30.0]
+
+
+@pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_random_gui", "status_marquee_gui"]
+)
+def test_status_retry_never_bypasses_ten_second_minimum(name, monkeypatch):
+    mod = load(name)
+    cfg = copy.deepcopy(mod.DEFAULTS)
+    cfg["dry_run"] = True
+    cfg["status"].update(
+        enabled=True,
+        random=name != "status_marquee_gui",
+        messages=["Retry status"],
+        interval_seconds=10,
+        retry_seconds=1,
+    )
+    cfg["status"]["history"]["enabled"] = False
+    cfg["status"]["marquee"]["enabled"] = name == "status_marquee_gui"
+    cfg["status"]["marquee"]["scroll"] = False
+    clock = [90.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
+    runner = mod.Runner(cfg)
+    runner.status_edit, runner.apply_btn, runner.win = object(), None, object()
+    sends = []
+    runner.send = lambda _ctrl, _text, btn=None: (
+        sends.append(True), len(sends) > 1
+    )[1]
+
+    with pytest.raises(RuntimeError):
+        runner.do_status(100)
+
+    runner.do_status(109.99)
+    assert len(sends) == 1
+    runner.do_status(110)
+    assert len(sends) == 2
+
+
+@pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_random_gui", "status_marquee_gui"]
+)
+def test_status_startup_waits_ten_seconds_before_first_change(name, monkeypatch):
+    mod = load(name)
+    cfg = copy.deepcopy(mod.DEFAULTS)
+    cfg["dry_run"] = True
+    cfg["status"].update(
+        enabled=True,
+        random=name == "status_random_gui",
+        messages=["Startup delay status"],
+        interval_seconds=600,
+        set_on_start=True,
+    )
+    cfg["status"]["history"]["enabled"] = False
+    cfg["status"]["marquee"].update(
+        enabled=name != "status_random_gui", step_seconds=0.5, scroll=False
+    )
+    clock = [100.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
+    runner = mod.Runner(cfg)
+    runner.status_edit, runner.apply_btn, runner.win = object(), None, object()
+    sends = []
+    runner.send = lambda *_args, **_kwargs: sends.append(clock[0]) or True
+
+    runner.do_status(clock[0])
+    clock[0] = 109.99
+    runner.do_status(clock[0])
+    assert sends == []
+    clock[0] = 110.0
+    runner.do_status(clock[0])
+    assert sends == [110.0]
+
+
+@pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_random_gui", "status_marquee_gui"]
+)
+def test_marquee_step_minimum_is_point_three_seconds_in_every_standalone(name, tmp_path):
+    mod = load(name)
+    config_path = tmp_path / f"{name}.json"
+    config_path.write_text(
+        json.dumps({"status": {"marquee": {"step_seconds": 0.2}}}),
+        encoding="utf-8",
+    )
+
+    cfg = mod.load_cfg(config_path)
+
+    assert mod.MARQUEE_STEP_MIN == 0.3
+    assert cfg["status"]["marquee"]["step_seconds"] == 0.3
+    assert mod.DEFAULTS["status"]["marquee"]["step_seconds"] == 0.5
 
 
 @pytest.mark.parametrize("name", ["status_changer_gui", "status_marquee_gui"])
@@ -984,21 +1900,21 @@ def test_marquee_uses_each_slot_once_then_wraps_only_when_loop_is_enabled(
     cfg["status"]["history"].update(
         enabled=True, use_as_source=True, seed_from_messages=False)
     cfg["status"]["marquee"].update(
-        enabled=True, scroll=scroll, width=8, stride=2, step_seconds=0.5,
+        enabled=True, scroll=scroll, width=8, stride=2, step_seconds=10,
         cycles=1, max_frames=3, loop_slots=loop_slots, infinite_loop=False)
     caplog.set_level("INFO")
+    clock = [0.0]
+    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
     runner = mod.Runner(cfg)
     runner.hist.pick = lambda *_args, **_kwargs: "HISTORY OVERRIDE"
     runner.status_edit, runner.apply_btn, runner.win = object(), None, object()
     runner.send = lambda _ctrl, _text, btn=None: True
 
-    clock = [0.0]
-    monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
     completed = []
     previous_count = 0
     expected = messages + messages[:1] if loop_slots else messages
-    for tick in range(1501):
-        now = tick * 0.1
+    for tick in range(1201):
+        now = tick * 1.0
         clock[0] = now
         runner.do_status(now)
         count = runner.stats["statuses"]
@@ -1067,9 +1983,10 @@ def test_apply_sends_frames_immediately_when_scroll_on(monkeypatch):
     cfg = copy.deepcopy(m.DEFAULTS)
     cfg["dry_run"] = True
     cfg["status"]["enabled"] = True
+    cfg["status"]["execution_mode"] = "interactive"
     cfg["status"]["max_length"] = 120
     cfg["status"]["marquee"].update(enabled=True, scroll=True, width=10, stride=2,
-                                    step_seconds=0.3, cycles=1, max_frames=80)
+                                    step_seconds=10, cycles=1, max_frames=80)
     monkeypatch.setattr(m, "get_window", lambda config: object())
     monkeypatch.setattr(m, "find", lambda win, spec: object())
     seen, sleeps = [], []
@@ -1079,7 +1996,7 @@ def test_apply_sends_frames_immediately_when_scroll_on(monkeypatch):
     assert m.apply_status_scrolling("dummy.json", "status message that scrolls on") == 0
     assert len(seen) > 1, "expected several frames sent in order"
     assert seen == sorted(seen, key=lambda t: seen.index(t)) and len(set(seen)) > 1
-    assert sleeps and all(s >= 0.3 for s in sleeps)
+    assert sleeps and all(s >= 10 for s in sleeps)
 
 
 def test_apply_falls_back_to_single_shot_when_scroll_off(monkeypatch):
@@ -1089,6 +2006,7 @@ def test_apply_falls_back_to_single_shot_when_scroll_off(monkeypatch):
     cfg = copy.deepcopy(m.DEFAULTS)
     cfg["dry_run"] = True
     cfg["status"]["enabled"] = True
+    cfg["status"]["execution_mode"] = "interactive"
     cfg["status"]["marquee"].update(enabled=True, scroll=False)
     monkeypatch.setattr(m, "get_window", lambda config: object())
     monkeypatch.setattr(m, "find", lambda win, spec: object())
@@ -1097,3 +2015,87 @@ def test_apply_falls_back_to_single_shot_when_scroll_off(monkeypatch):
     monkeypatch.setattr(m, "load_cfg", lambda path: cfg)
     assert m.apply_status_scrolling("dummy.json", "hello") == 0
     assert seen == ["hello"]
+
+
+@pytest.mark.parametrize("scrolling", [False, True])
+def test_strict_background_failure_does_not_fall_back_to_uia_discovery(
+        monkeypatch, scrolling):
+    """A strict submit rejection must not trigger legacy window discovery."""
+    import status_marquee_gui as m
+
+    cfg = copy.deepcopy(m.DEFAULTS)
+    cfg["dry_run"] = False
+    cfg["status"]["enabled"] = True
+    cfg["status"]["execution_mode"] = "strict_background"
+    cfg["status"]["marquee"].update(enabled=scrolling, scroll=scrolling,
+                                     width=8, stride=1, cycles=1)
+    monkeypatch.setattr(m, "load_cfg", lambda _path: cfg)
+    monkeypatch.setattr(
+        m, "commit_background",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(
+            "background status failed (state=BACKGROUND_UNSUPPORTED, "
+            "code=STRICT_SUBMIT_UNVERIFIED)")),
+    )
+    monkeypatch.setattr(
+        m, "cmd_detect",
+        lambda *_args, **_kwargs: pytest.fail("strict failure must not run UIA discovery"),
+    )
+
+    apply = m.apply_status_scrolling if scrolling else m.apply_status_text
+    with pytest.raises(RuntimeError, match="STRICT_SUBMIT_UNVERIFIED"):
+        apply("dummy.json", "strict background test")
+
+
+@pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"]
+)
+def test_status_worker_reload_attach_failure_clears_stale_status_handles(
+        name, monkeypatch, tmp_path, caplog):
+    import logging
+
+    m = load(name)
+
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text("{}", encoding="utf-8")
+    cfg = copy.deepcopy(m.DEFAULTS)
+    cfg["reload_config"] = True
+    runner = object.__new__(m.Runner)
+    runner.cfg_path = cfg_path
+    runner._mtime = 0
+    runner._next_reload = 0
+    runner.cfg = cfg
+    runner.win = runner.status_edit = runner.apply_btn = object()
+    runner.marq = {"raw": "stale"}
+    runner.apply_cfg = lambda _cfg: None
+    runner.resolve = lambda: (_ for _ in ()).throw(
+        RuntimeError("multiple or unverifiable Camfrog processes"))
+
+    monkeypatch.setattr(m, "apply_app_profile", lambda cfg: cfg)
+    monkeypatch.setattr(m, "load_cfg", lambda _path: cfg)
+    monkeypatch.setattr(m, "validate", lambda _cfg: ([], []))
+    monkeypatch.setattr(m, "LANG_LOCKED", True)
+    caplog.set_level(logging.WARNING, logger="camfrog_status")
+
+    runner.maybe_reload(1)
+
+    assert runner.win is runner.status_edit is runner.apply_btn is runner.marq is None
+    assert "Config reloaded but Camfrog re-attach failed" in caplog.text
+    assert "Traceback" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"]
+)
+def test_status_worker_resolve_invalidates_stale_handles_before_discovery(name, monkeypatch):
+    m = load(name)
+
+    runner = object.__new__(m.Runner)
+    runner.cfg = {"status": {"enabled": True}, "autoreply": {"enabled": False}}
+    runner.win = runner.status_edit = runner.apply_btn = object()
+    monkeypatch.setattr(m, "get_window", lambda _cfg: (_ for _ in ()).throw(
+        RuntimeError("ambiguous Camfrog process")))
+
+    with pytest.raises(RuntimeError, match="ambiguous Camfrog process"):
+        runner._do_resolve()
+
+    assert runner.win is runner.status_edit is runner.apply_btn is None

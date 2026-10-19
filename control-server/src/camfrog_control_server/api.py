@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .account_identity import account_nickname_key
+from .feature_capabilities import get_feature_capabilities
 from .models import (
     Account,
     AccountNicknameClaim,
@@ -55,12 +56,15 @@ from .schemas import (
     CommandCreate,
     CommandPollResponse,
     CommandRead,
+    CommandReconciliationRequest,
+    CommandResultCode,
     CommandResultRequest,
     CommandState,
     HeartbeatRequest,
     HeartbeatResponse,
     OperatorChatMessageCreate,
     Overview,
+    ZChatWorkforceCapabilitiesV1,
 )
 from .security import (
     hash_token,
@@ -97,6 +101,66 @@ def require_admin(
             detail="Invalid or expired dashboard token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+def require_zworkforce_integration(
+    request: Request,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+) -> None:
+    expected = request.app.state.settings.zworkforce_integration_token
+    if not expected:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ZChat–zWorkforce integration is not configured.",
+        )
+    if (
+        credentials is None
+        or credentials.scheme.lower() != "bearer"
+        or not hmac.compare_digest(
+            credentials.credentials.encode("utf-8"), expected.encode("utf-8")
+        )
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Valid zWorkforce service credentials are required.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+@router.get(
+    "/integrations/zworkforce/v1/capabilities",
+    response_model=ZChatWorkforceCapabilitiesV1,
+)
+def zworkforce_capabilities(
+    _service: Annotated[None, Depends(require_zworkforce_integration)],
+    request: Request,
+) -> ZChatWorkforceCapabilitiesV1:
+    """Read-only capability negotiation for the authenticated zWorkforce service."""
+    return ZChatWorkforceCapabilitiesV1(
+        protocol="zchat-zworkforce",
+        protocol_version="1.0",
+        compatible_versions=["1.0"],
+        server_version=request.app.version,
+        read_only_resources=["health", "capabilities"],
+        features=get_feature_capabilities(),
+    )
+
+
+@router.get("/integrations/zworkforce/v1/health")
+def zworkforce_health(
+    _service: Annotated[None, Depends(require_zworkforce_integration)],
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, str]:
+    """Report control-plane and database reachability without exposing configuration."""
+    try:
+        db.execute(select(1))
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ZChat database is unavailable.",
+        ) from exc
+    return {"status": "healthy", "database": "reachable"}
 
 
 @router.post("/auth/session")
@@ -319,13 +383,23 @@ def revoke_agent(
         .with_for_update()
     ).all()
     pending_canceled = 0
-    claimed_canceled = 0
+    claimed_effect_unknown = 0
     for command in outstanding:
         if command.state == CommandState.pending.value:
             pending_canceled += 1
+            command.state = CommandState.canceled.value
         else:
-            claimed_canceled += 1
-        command.state = CommandState.canceled.value
+            claimed_effect_unknown += 1
+            command.state = CommandState.effect_unknown.value
+            add_audit(
+                db,
+                actor_type="admin",
+                actor_id="admin",
+                action="command.effect_unknown",
+                resource_type="command",
+                resource_id=str(command.id),
+                details={"operation": command.operation, "reason": "agent_revoked"},
+            )
         command.claim_token_hash = None
         command.claim_expires_at = None
         command.finished_at = now
@@ -340,13 +414,23 @@ def revoke_agent(
         .with_for_update()
     ).all()
     pending_messages_canceled = 0
-    claimed_messages_canceled = 0
+    claimed_messages_unknown = 0
     for message in outstanding_messages:
         if message.state == ChatMessageState.queued.value:
             pending_messages_canceled += 1
+            message.state = ChatMessageState.canceled.value
         else:
-            claimed_messages_canceled += 1
-        message.state = ChatMessageState.canceled.value
+            claimed_messages_unknown += 1
+            message.state = ChatMessageState.delivery_unknown.value
+            add_audit(
+                db,
+                actor_type="admin",
+                actor_id="admin",
+                action="chat_message.delivery_unknown",
+                resource_type="chat_message",
+                resource_id=str(message.id),
+                details={"reason": "agent_revoked"},
+            )
         message.claim_token_hash = None
         message.claim_expires_at = None
 
@@ -359,9 +443,9 @@ def revoke_agent(
         resource_id=str(agent.id),
         details={
             "pending_commands_canceled": pending_canceled,
-            "claimed_commands_canceled": claimed_canceled,
+            "claimed_commands_effect_unknown": claimed_effect_unknown,
             "pending_messages_canceled": pending_messages_canceled,
-            "claimed_messages_canceled": claimed_messages_canceled,
+            "claimed_messages_delivery_unknown": claimed_messages_unknown,
         },
     )
     db.commit()
@@ -600,11 +684,23 @@ def assign_account_agent(
     for command in pending:
         command.state = CommandState.canceled.value
         command.finished_at = now
-    canceled_messages = [*pending_messages, *expired_claimed_messages]
-    for message in canceled_messages:
+    for message in pending_messages:
         message.state = ChatMessageState.canceled.value
         message.claim_token_hash = None
         message.claim_expires_at = None
+    for message in expired_claimed_messages:
+        message.state = ChatMessageState.delivery_unknown.value
+        message.claim_token_hash = None
+        message.claim_expires_at = None
+        add_audit(
+            db,
+            actor_type="admin",
+            actor_id="admin",
+            action="chat_message.delivery_unknown",
+            resource_type="chat_message",
+            resource_id=str(message.id),
+            details={"reason": "account_reassigned"},
+        )
     account.agent_id = body.agent_id
     previous_agent = agents_by_id.get(previous_agent_id) if previous_agent_id is not None else None
     if previous_agent is not None:
@@ -622,7 +718,7 @@ def assign_account_agent(
             "agent_id": str(body.agent_id) if body.agent_id else None,
             "pending_commands_canceled": len(pending),
             "pending_messages_canceled": len(pending_messages),
-            "expired_claimed_messages_canceled": len(expired_claimed_messages),
+            "expired_claimed_messages_delivery_unknown": len(expired_claimed_messages),
         },
     )
     try:
@@ -812,6 +908,19 @@ def create_command(
             status_code=status.HTTP_409_CONFLICT,
             detail="Account assignment changed; retry with current state.",
         )
+    has_unknown_effect = db.scalar(
+        select(ControlCommand.id)
+        .where(
+            ControlCommand.account_id == account.id,
+            ControlCommand.state == CommandState.effect_unknown.value,
+        )
+        .limit(1)
+    )
+    if has_unknown_effect is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Account is blocked by an unresolved external command outcome.",
+        )
 
     command = ControlCommand(
         agent_id=agent.id,
@@ -878,6 +987,84 @@ def cancel_command(
         resource_type="command",
         resource_id=str(command.id),
         details={"operation": command.operation},
+    )
+    db.commit()
+    db.refresh(command)
+    return command
+
+
+@router.post("/commands/{command_id}/reconcile", response_model=CommandRead)
+def reconcile_command(
+    command_id: UUID,
+    body: CommandReconciliationRequest,
+    _admin: Annotated[None, Depends(require_admin)],
+    db: Annotated[Session, Depends(get_db)],
+) -> ControlCommand:
+    """Record an explicit operator attestation for an uncertain external effect.
+
+    This does not verify provider state. The evidence digest identifies operator-held
+    evidence; the control server does not fetch or validate that evidence.
+    """
+    command = db.scalar(
+        select(ControlCommand).where(ControlCommand.id == command_id).with_for_update()
+    )
+    if command is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Command not found.")
+    expected_details = {
+        "outcome": body.outcome.value,
+        "evidence_sha256": body.evidence_sha256,
+        "observed_at": body.observed_at.isoformat(),
+        "attestation": "operator_reported_not_provider_verified",
+    }
+    if command.state == CommandState.operator_reconciled.value:
+        audit_event = db.scalar(
+            select(AuditEvent)
+            .where(
+                AuditEvent.action == "command.operator_reconciled",
+                AuditEvent.resource_type == "command",
+                AuditEvent.resource_id == str(command.id),
+            )
+            .order_by(AuditEvent.created_at.desc())
+            .limit(1)
+        )
+        if audit_event is not None and all(
+            audit_event.details.get(key) == value for key, value in expected_details.items()
+        ):
+            return command
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Command was reconciled with different evidence.",
+        )
+    if command.state != CommandState.effect_unknown.value:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only commands with an unresolved external outcome can be reconciled.",
+        )
+    created_at = command.created_at
+    if created_at.tzinfo is None:
+        # SQLite drops timezone metadata for DATETIME values; stored values are UTC.
+        created_at = created_at.replace(tzinfo=UTC)
+    if body.observed_at < created_at:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Evidence observation time cannot precede command creation.",
+        )
+
+    now = utcnow()
+    command.state = CommandState.operator_reconciled.value
+    command.result_code = CommandResultCode.operator_reconciled.value
+    command.finished_at = now
+    add_audit(
+        db,
+        actor_type="admin",
+        actor_id="operator",
+        action="command.operator_reconciled",
+        resource_type="command",
+        resource_id=str(command.id),
+        details={
+            "operation": command.operation,
+            **expected_details,
+        },
     )
     db.commit()
     db.refresh(command)
@@ -1080,17 +1267,17 @@ def claim_next_chat_message(
         .with_for_update(skip_locked=True)
     ).all()
     for message in expired:
-        message.state = ChatMessageState.failed.value
+        message.state = ChatMessageState.delivery_unknown.value
         message.claim_token_hash = None
         message.claim_expires_at = None
         add_audit(
             db,
             actor_type="system",
             actor_id=None,
-            action="chat_message.lease_expired",
+            action="chat_message.delivery_unknown",
             resource_type="chat_message",
             resource_id=str(message.id),
-            details={"account_id": str(message.account_id)},
+            details={"account_id": str(message.account_id), "reason": "lease_retry_limit"},
         )
 
     eligible = or_(
@@ -1212,7 +1399,6 @@ def claim_next_command(
     db: Annotated[Session, Depends(get_db)],
 ) -> CommandPollResponse:
     now = utcnow()
-    maximum_attempts = request.app.state.settings.command_max_attempts
 
     expired = db.scalars(
         select(ControlCommand)
@@ -1220,12 +1406,11 @@ def claim_next_command(
             ControlCommand.agent_id == agent.id,
             ControlCommand.state == CommandState.claimed.value,
             ControlCommand.claim_expires_at <= now,
-            ControlCommand.claim_attempts >= maximum_attempts,
         )
         .with_for_update(skip_locked=True)
     ).all()
     for command in expired:
-        command.state = CommandState.failed.value
+        command.state = CommandState.effect_unknown.value
         command.result_code = "lease_expired"
         command.claim_token_hash = None
         command.claim_expires_at = None
@@ -1234,19 +1419,12 @@ def claim_next_command(
             db,
             actor_type="system",
             actor_id=None,
-            action="command.lease_expired",
+            action="command.effect_unknown",
             resource_type="command",
             resource_id=str(command.id),
             details={"operation": command.operation},
         )
 
-    eligible = or_(
-        ControlCommand.state == CommandState.pending.value,
-        and_(
-            ControlCommand.state == CommandState.claimed.value,
-            ControlCommand.claim_expires_at <= now,
-        ),
-    )
     command = db.scalar(
         select(ControlCommand)
         .join(Account, Account.id == ControlCommand.account_id)
@@ -1256,8 +1434,16 @@ def claim_next_command(
             Account.agent_id == agent.id,
             Account.enabled.is_(True),
             Agent.revoked_at.is_(None),
-            eligible,
-            ControlCommand.claim_attempts < maximum_attempts,
+            ControlCommand.state == CommandState.pending.value,
+            ~select(ControlCommand.id)
+            .where(
+                ControlCommand.account_id == Account.id,
+                ControlCommand.state.in_(
+                    (CommandState.claimed.value, CommandState.effect_unknown.value)
+                ),
+            )
+            .correlate(Account)
+            .exists(),
         )
         .order_by(ControlCommand.created_at.asc())
         .with_for_update(skip_locked=True, of=(ControlCommand, Account))
@@ -1293,6 +1479,7 @@ def claim_next_command(
             operation=command.operation,
             payload=command.payload,
             claim_token=claim_token,
+            claim_issued_at=now,
             claim_expires_at=command.claim_expires_at,
         )
     )
@@ -1334,6 +1521,17 @@ def report_command_result(
     if not hmac.compare_digest(command.claim_token_hash, hash_token(body.claim_token)):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="Claim token is stale or invalid."
+        )
+    uri_handoff_operations = {"join_room", "add_friend", "open_im"}
+    if command.operation in uri_handoff_operations and body.state == "succeeded":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="URI handoff cannot be reported as externally verified success.",
+        )
+    if body.code == "handoff_accepted" and command.operation not in uri_handoff_operations:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="URI handoff result does not match the command operation.",
         )
 
     now = utcnow()
