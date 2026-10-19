@@ -77,6 +77,12 @@ BASE = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) \
 
 APP_PROFILE = "status"
 APP_PROFILES = {"full", "room", "im_reply", "status", "music"}
+UNVERIFIED_STATUS_TEST_ENV = "ZCHAT_STATUS_TEST_UNVERIFIED_SUBMIT"
+
+
+def _unverified_status_test_submit_enabled():
+    """Allow interactive status testing only when explicitly opted in."""
+    return os.environ.get(UNVERIFIED_STATUS_TEST_ENV, "").strip() == "1"
 
 # Standalone executables can pin runtime state to their own directory. Status
 # workers use ZCFATO_DATA_DIR, which takes precedence over the GUI app directory.
@@ -416,9 +422,13 @@ def apply_app_profile(cfg):
     elif APP_PROFILE == "status":
         result["autoreply"]["enabled"] = False
         result["autoreply_im"]["enabled"] = False
-        # Preserve only the explicit opt-in best-effort mode; legacy configs stay fail-closed.
+        # Preserve interactive only for an explicitly enabled test run.
         status = result.setdefault("status", {})
-        if status.get("execution_mode") != "best_effort_background":
+        if not (
+            status.get("execution_mode") == "best_effort_background"
+            or (status.get("execution_mode") == "interactive"
+                and _unverified_status_test_submit_enabled())
+        ):
             status["execution_mode"] = "strict_background"
     elif APP_PROFILE == "music":
         result["status"]["enabled"] = False
@@ -1210,14 +1220,19 @@ class UserActivityGuard:
             return None
 
     def wait_until_idle(self):
-        """True once the user is idle (or activity cannot be measured); False on timeout."""
+        """Wait for idle input; refuse unsafe injection when Windows input is unknown."""
         if self.idle_ms <= 0:
             return True
         deadline = self._clock() + self.max_wait
         noted = False
         while True:
             idle = self.user_idle_ms()
-            if idle is None or idle >= self.idle_ms:
+            if idle is None:
+                if os.name == "nt":
+                    log.error("Cannot verify Windows user activity; refusing desktop input injection")
+                    return False
+                return True
+            if idle >= self.idle_ms:
                 return True
             if self._clock() >= deadline:
                 return False
@@ -2633,6 +2648,15 @@ def _strict_status_start_blocked(cfg, emit=print):
             "desktop focus and interrupt keyboard input. Status worker refused."
         )
         return True
+    if cfg.get("status", {}).get("execution_mode") == "interactive":
+        if not _unverified_status_test_submit_enabled():
+            emit("INTERACTIVE_TEST_DISABLED: explicit Windows test opt-in required.")
+            return True
+        emit(
+            "UNVERIFIED TEST MODE: interactive status submission may activate "
+            "Camfrog and interrupt desktop input; independently verify provider state."
+        )
+        return False
     try:
         from camfrog_status_engine import strict_background_submit_supported
 
@@ -3287,7 +3311,11 @@ def cli_main(argv=None, force_strict_background=False):
         cfg = apply_app_profile(load_cfg(cfg_path))
         if force_strict_background and APP_PROFILE == "status":
             status = cfg.setdefault("status", {})
-            if status.get("execution_mode") != "best_effort_background":
+            if not (
+                status.get("execution_mode") == "best_effort_background"
+                or (status.get("execution_mode") == "interactive"
+                    and _unverified_status_test_submit_enabled())
+            ):
                 status["execution_mode"] = "strict_background"
     except Exception as e:
         print(t("cannot_load", e=e))
@@ -3641,7 +3669,12 @@ def runtime_config(config):
     """Build isolated worker settings with PID and stop files owned by this app."""
     runtime = copy.deepcopy(config)
     status = runtime.setdefault("status", {})
-    if status.get("execution_mode") == "best_effort_background":
+    if (
+        status.get("execution_mode") == "interactive"
+        and _unverified_status_test_submit_enabled()
+    ):
+        status["background_enter_target"] = "combo"
+    elif status.get("execution_mode") == "best_effort_background":
         status["background_enter_target"] = "combo"
     else:
         status["execution_mode"] = "strict_background"
@@ -4140,7 +4173,9 @@ def build_app():
             self.execution_mode = tk.StringVar(
                 value=self.config["status"].get("execution_mode", "strict_background")
                 if self.config["status"].get("execution_mode") in (
-                    "strict_background", "best_effort_background"
+                    ("strict_background", "best_effort_background", "interactive")
+                    if _unverified_status_test_submit_enabled()
+                    else ("strict_background", "best_effort_background")
                 ) else "strict_background"
             )
             self.live_send = tk.BooleanVar(value=not self.config.get("dry_run", True))
@@ -4291,14 +4326,18 @@ def build_app():
             ).pack(side="left", padx=(8, 3))
             ttk.Combobox(
                 options, textvariable=self.execution_mode, state="readonly", width=24,
-                values=("strict_background", "best_effort_background"),
+                values=(
+                    ("strict_background", "best_effort_background", "interactive")
+                    if _unverified_status_test_submit_enabled()
+                    else ("strict_background", "best_effort_background")
+                ),
             ).pack(side="left")
             self.execution_mode.trace_add("write", self.schedule_save)
             ttk.Label(
                 outer,
                 text=self._tr(
-                    "Best-effort uses combo-post; Camfrog may flash or take focus. Strict currently refuses.",
-                    "Best-effort ใช้ combo-post; Camfrog อาจกระพริบหรือแย่งโฟกัส ส่วน Strict ยังปฏิเสธการส่ง",
+                    "Live background sending is unverified and disabled. Interactive testing requires an explicit opt-in and may take focus.",
+                    "การส่งสถานะเบื้องหลังยังไม่ผ่านการยืนยันและถูกปิดอยู่ โหมดทดสอบต้องเปิดเองและอาจแย่งโฟกัส",
                 ),
                 style="Hint.TLabel", wraplength=420,
             ).pack(fill="x", pady=(0, 5))

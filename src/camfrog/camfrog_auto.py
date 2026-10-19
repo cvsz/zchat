@@ -1384,14 +1384,19 @@ class UserActivityGuard:
             return None
 
     def wait_until_idle(self):
-        """True once the user is idle (or activity cannot be measured); False on timeout."""
+        """Wait for idle input; refuse unsafe injection when Windows input is unknown."""
         if self.idle_ms <= 0:
             return True
         deadline = self._clock() + self.max_wait
         noted = False
         while True:
             idle = self.user_idle_ms()
-            if idle is None or idle >= self.idle_ms:
+            if idle is None:
+                if os.name == "nt":
+                    log.error("Cannot verify Windows user activity; refusing desktop input injection")
+                    return False
+                return True
+            if idle >= self.idle_ms:
                 return True
             if self._clock() >= deadline:
                 return False
@@ -2970,46 +2975,13 @@ def release_run_mutex(handle):
 
 
 def toggle_worker(cfg, action: str) -> str:
-    """Start or stop the background worker via hotkey (F3=start, F4=stop)."""
-    import json as _json
-    from pathlib import Path
-    
-    stop_file = BASE / cfg["safety"]["stop_file"]
-    pid_path_fn = pid_path(cfg)
-    
+    """Delegate hotkey requests to the validated worker lifecycle commands."""
     if action == "start":
-        pid = running_pid(cfg)
-        if pid:
-            return f"already running (PID {pid})"
-        if worker_mutex_active():
-            return "another instance already running"
-        write_pid(cfg, os.getpid())
-        stop_file.unlink(missing_ok=True)
-        pid_path_fn.write_text(_json.dumps({"pid": os.getpid(), "creation_time": pid_creation_time(os.getpid())}), encoding="utf-8")
-        return f"worker started (PID {os.getpid()}), use F4 to stop"
-    
-    elif action == "stop":
-        if not stop_file.exists():
-            return "not running"
-        stop_file.write_text("stop")
-        for _ in range(200):
-            if not worker_mutex_active():
-                break
-            import time as _t
-            _t.sleep(0.1)
-        pid = running_pid(cfg)
-        if pid and pid_alive(pid):
-            try:
-                import subprocess
-                subprocess.run([system_taskkill_path(), "/PID", str(pid), "/F"],
-                              capture_output=True, check=False, timeout=10)
-            except Exception:
-                pass
-        stop_file.unlink(missing_ok=True)
-        pid_path_fn.unlink(missing_ok=True)
-        return "worker stopped"
-    
-    return "unknown action"
+        args = argparse.Namespace(config=None, lang=None)
+        return "worker started" if cmd_start(cfg, args) == 0 else "worker start failed"
+    if action == "stop":
+        return "worker stopped" if cmd_stop(cfg) == 0 else "worker stop failed"
+    return "invalid worker action"
 
 
 def name_changer_init(cfg) -> dict:
@@ -3077,49 +3049,8 @@ def name_changer_set_delay(cfg, delay_seconds: float) -> str:
 
 
 def name_changer_apply(cfg) -> str:
-    """Apply a name change to Camfrog's profile."""
-    import time as _t
-    from pathlib import Path
-    
-    nc = name_changer_init(cfg)
-    if not nc["enabled"]:
-        return "name changer is not enabled"
-    
-    cycle_index = nc["cycle_index"]
-    mode = nc.get("mode", "manual")
-    
-    total_names = len(nc["thai_names"]) + len(nc["english_names"])
-    if mode == "auto":
-        idx = cycle_index % total_names if total_names > 0 else 0
-        if idx < len(nc["thai_names"]):
-            current_name = nc["thai_names"][idx]
-        else:
-            thai_idx = idx - len(nc["thai_names"])
-            current_name = nc["english_names"][thai_idx] if thai_idx < len(nc["english_names"]) else "Camfrog User"
-    else:
-        if cycle_index < len(nc["thai_names"]):
-            current_name = nc["thai_names"][cycle_index]
-        else:
-            thai_idx = cycle_index - len(nc["thai_names"])
-            current_name = nc["english_names"][thai_idx] if thai_idx < len(nc["english_names"]) else "Camfrog User"
-    
-    try:
-        win = get_window(cfg)
-        status_edit = find(win, cfg["status"]["edit"]) if cfg["status"]["enabled"] else None
-        
-        if status_edit:
-            success = write_text(status_edit, current_name)
-            if success:
-                from camfrog_auto import _background_enter
-                _background_enter(status_edit, "edit")
-                nc["cycle_index"] = (cycle_index + 1) % total_names if total_names > 0 else 0
-                nc["last_change"] = _t.monotonic()
-                cfg["_name_changer"] = nc
-                return f"name changed to: {current_name} (applied successfully)"
-            return f"failed to write name: {current_name}"
-        return "could not find status edit control - run `discover` to set selectors"
-    except Exception as e:
-        return f"name changer error: {str(e)[:100]}"
+    """Refuse to impersonate a profile update via the unrelated status control."""
+    return "NAME_CHANGE_UNVERIFIED: No validated Camfrog nickname editing adapter exists; status text is not the account nickname."
 
 
 def name_changer_tick(cfg) -> str:
@@ -3207,47 +3138,8 @@ def color_cycle_set_delay(cfg, delay_seconds: float) -> str:
 
 
 def color_cycle_apply(cfg) -> str:
-    """Apply the current color to Camfrog's profile."""
-    import time as _t
-    
-    cc = color_cycle_init(cfg)
-    if not cc["enabled"]:
-        return "color cycle is not enabled"
-    
-    mode = cc.get("mode", "auto")
-    colors = cc.get("colors", ["red", "orange", "yellow", "green", "cyan", "blue", "purple", "pink", "brown", "gray"])
-    thai_colors = cc.get("thai_colors", ["แดง", "ส้ม", "เหลือง", "เขียว", "ฟ้า", "น้ำเงิน", "ม่วง", "ชมพู"])
-    
-    cycle_index = cc.get("cycle_index", 0)
-    
-    if mode == "auto":
-        if cycle_index < len(colors):
-            current_color = colors[cycle_index]
-        else:
-            current_color = colors[0] if colors else "red"
-    else:
-        if cycle_index < len(thai_colors):
-            current_color = thai_colors[cycle_index]
-        else:
-            current_color = thai_colors[0] if thai_colors else "แดง"
-    
-    try:
-        win = get_window(cfg)
-        status_edit = find(win, cfg["status"]["edit"]) if cfg["status"]["enabled"] else None
-        
-        if status_edit:
-            success = write_text(status_edit, current_color)
-            if success:
-                from camfrog_auto import _background_enter
-                _background_enter(status_edit, "edit")
-                cc["cycle_index"] = (cycle_index + 1) % len(colors) if colors else 0
-                cc["last_change"] = _t.monotonic()
-                cfg["_color_cycle"] = cc
-                return f"color changed to: {current_color} (applied successfully)"
-            return f"failed to write color: {current_color}"
-        return "could not find status edit control - run `discover` to set selectors"
-    except Exception as e:
-        return f"color cycle error: {str(e)[:100]}"
+    """Refuse to impersonate a profile update via the unrelated status control."""
+    return "PROFILE_COLOR_UNVERIFIED: No validated Camfrog profile color adapter exists; writing a color name to status does not change profile color."
 
 
 def color_cycle_tick(cfg) -> str:

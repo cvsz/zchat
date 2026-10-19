@@ -1,12 +1,14 @@
 # Camfrog status submit modes
 
-Status Changer, Random Status, and Marquee Status expose two execution modes.
-The default remains fail-closed.
+Status Changer, Random Status, and Marquee Status expose two normal execution
+modes. The default remains fail-closed. An explicitly opted-in interactive
+mode is available only for local Windows acceptance testing.
 
 | Mode | Behavior | Evidence and limitation |
 |---|---|---|
 | `strict_background` | Uses the strict submit engine and refuses while its safety gate is closed. | Current Camfrog 8.5 evidence does not establish a non-activating submit route. |
 | `best_effort_background` | Disabled for live status workers and status commits. | Windows testing confirmed that Camfrog can take desktop focus during `combo-post`, interrupting keyboard input. Existing configurations are rejected before a worker starts or status text is written. |
+| `interactive` (test only) | Permitted only with `ZCHAT_STATUS_TEST_UNVERIFIED_SUBMIT=1`. Random Status and Marquee Status require selecting `interactive` in the mode dropdown; Status Changer uses its existing test route. | May activate Camfrog, interfere with other apps, and does not prove the provider accepted the change. Never use as background production automation. |
 
 Use `strict_background` for live workers. It currently refuses before writing
 because no submit route has been proven not to activate Camfrog. Stop any
@@ -14,6 +16,13 @@ already-running older worker with the app's Stop control; this guard applies
 after rebuilding and restarting the app. Do not use the previous
 `best_effort_background` route on the normal desktop. Provider delivery remains
 unverified.
+
+For a supervised Windows acceptance test, set the environment variable in
+the process launching the GUI, open Random Status or Marquee Status, select
+`interactive`, enable live sending, and observe Camfrog on the local desktop
+and the changed profile from a second signed-in Camfrog account. Close the
+test session and unset the variable afterward. This mode is not a workaround
+for unattended background operation.
 
 Interactive submission can focus Camfrog, click controls, or send real
 keystrokes. Before these input-injecting paths, the app waits for 2 seconds of
@@ -45,13 +54,16 @@ Before each send it waits until the user has been idle for 2 seconds
 (`GetLastInputInfo`; override with `ZCHAT_USER_IDLE_MS`, `0` disables). Input
 produced by the app's own injection is not counted as user activity. If the user
 stays active for 120 seconds the send is skipped with a `Deferred` log line rather
-than taking over the mouse or keyboard. For a marquee this means frames pause
-while you work and resume when you stop.
+than taking over the mouse or keyboard. On Windows, inability to read user
+activity now also blocks the injection. For a marquee this means frames pause
+while you work and resume when you stop, provided each attempt can be verified.
+The guard does not guarantee input isolation if the user resumes activity
+between the check and a send.
 
 `strict_background` and `best_effort_background` never use global input and are
 not gated. Evidence: guard logic is unit-tested with injected clocks
 (`VERIFIED`); behavior against a live Camfrog on Windows is `UNVERIFIED`.
-For fully hands-free use pick `best_effort_background`.
+There is currently no validated hands-free background status mode.
 
 ## Separate desktop launcher
 

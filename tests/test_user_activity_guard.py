@@ -113,10 +113,19 @@ def test_tick_wraparound():
     assert g.user_idle_ms() == 2001
 
 
-def test_unmeasurable_activity_never_blocks():
+def test_unmeasurable_activity_is_noop_outside_windows():
     ns = _load_guard_class()
     g, c = make(ns, lambda c: None)
     assert g.wait_until_idle() is True
+
+
+def test_unmeasurable_activity_fails_closed_on_windows():
+    from types import SimpleNamespace
+
+    ns = _load_guard_class()
+    ns["os"] = SimpleNamespace(name="nt")
+    g, c = make(ns, lambda c: None)
+    assert g.wait_until_idle() is False
 
 
 def test_disabled_with_zero():

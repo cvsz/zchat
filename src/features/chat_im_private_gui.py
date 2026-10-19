@@ -1169,14 +1169,19 @@ class UserActivityGuard:
             return None
 
     def wait_until_idle(self):
-        """True once the user is idle (or activity cannot be measured); False on timeout."""
+        """Wait for idle input; refuse unsafe injection when Windows input is unknown."""
         if self.idle_ms <= 0:
             return True
         deadline = self._clock() + self.max_wait
         noted = False
         while True:
             idle = self.user_idle_ms()
-            if idle is None or idle >= self.idle_ms:
+            if idle is None:
+                if os.name == "nt":
+                    log.error("Cannot verify Windows user activity; refusing desktop input injection")
+                    return False
+                return True
+            if idle >= self.idle_ms:
                 return True
             if self._clock() >= deadline:
                 return False
