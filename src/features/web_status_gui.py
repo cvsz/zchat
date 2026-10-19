@@ -6857,7 +6857,7 @@ def browser_login(timeout=WAIT_TIMEOUT, on_status=None, browser=None,
                     ws = _WebSocket(_find_page_target(port))
                 cookies = _cdp_call(ws, "Network.getAllCookies").get(
                     "result", {}).get("cookies", [])
-                if any(c.get("name") == SESSION_COOKIE and "camfrog" in (c.get("domain") or "")
+                if any(c.get("name") == SESSION_COOKIE and _is_camfrog_cookie_domain(c.get("domain"))
                        for c in cookies):
                     return _cookies_to_string(cookies), (
                         str(tmp) if keep_browser or not temporary_profile else None)
@@ -6881,11 +6881,20 @@ def browser_login(timeout=WAIT_TIMEOUT, on_status=None, browser=None,
                 shutil.rmtree(tmp, ignore_errors=True)
 
 
+
+def _is_camfrog_cookie_domain(domain):
+    """Accept only the Camfrog registrable domain or a real subdomain."""
+    if not isinstance(domain, str):
+        return False
+    host = domain.lstrip(".").lower()
+    return host == "camfrog.com" or host.endswith(".camfrog.com")
+
+
 def _cookies_to_string(cookies):
     seen, parts = set(), []
     for cookie in cookies:
         domain = (cookie.get("domain") or "").lstrip(".").lower()
-        if not domain.endswith("camfrog.com"):
+        if not _is_camfrog_cookie_domain(domain):
             continue
         name, value = cookie.get("name") or "", cookie.get("value") or ""
         if not name or not value or name in seen:
