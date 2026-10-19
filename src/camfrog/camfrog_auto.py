@@ -2969,6 +2969,345 @@ def release_run_mutex(handle):
         log.debug("Could not close worker mutex handle: %s", ctypes.get_last_error())
 
 
+def toggle_worker(cfg, action: str) -> str:
+    """Start or stop the background worker via hotkey (F3=start, F4=stop)."""
+    import json as _json
+    from pathlib import Path
+    
+    stop_file = BASE / cfg["safety"]["stop_file"]
+    pid_path_fn = pid_path(cfg)
+    
+    if action == "start":
+        pid = running_pid(cfg)
+        if pid:
+            return f"already running (PID {pid})"
+        if worker_mutex_active():
+            return "another instance already running"
+        write_pid(cfg, os.getpid())
+        stop_file.unlink(missing_ok=True)
+        pid_path_fn.write_text(_json.dumps({"pid": os.getpid(), "creation_time": pid_creation_time(os.getpid())}), encoding="utf-8")
+        return f"worker started (PID {os.getpid()}), use F4 to stop"
+    
+    elif action == "stop":
+        if not stop_file.exists():
+            return "not running"
+        stop_file.write_text("stop")
+        for _ in range(200):
+            if not worker_mutex_active():
+                break
+            import time as _t
+            _t.sleep(0.1)
+        pid = running_pid(cfg)
+        if pid and pid_alive(pid):
+            try:
+                import subprocess
+                subprocess.run([system_taskkill_path(), "/PID", str(pid), "/F"],
+                              capture_output=True, check=False, timeout=10)
+            except Exception:
+                pass
+        stop_file.unlink(missing_ok=True)
+        pid_path_fn.unlink(missing_ok=True)
+        return "worker stopped"
+    
+    return "unknown action"
+
+
+def name_changer_init(cfg) -> dict:
+    """Initialize the name-changer state."""
+    default_thai = ["ผู้ใช้ camfrog", "สายคามฟร็อก", "เบอร์คามฟร็อก"]
+    default_en = ["Camfrog User", "Camfrog Line", "Camfrog DJ"]
+    
+    nc = cfg.get("_name_changer", {})
+    if not nc.get("initialized", False):
+        nc = {
+            "enabled": False,
+            "mode": "manual",
+            "cycle_index": 0,
+            "thai_names": nc.get("thai_names", default_thai),
+            "english_names": nc.get("english_names", default_en),
+            "delay_seconds": nc.get("delay_seconds", 30),
+            "last_change": 0,
+            "initialized": True,
+        }
+        cfg["_name_changer"] = nc
+    
+    return nc
+
+
+def name_changer_toggle(cfg, enable: bool = None) -> str:
+    """Toggle the name-changer on/off."""
+    nc = name_changer_init(cfg)
+    if enable is None:
+        nc["enabled"] = not nc["enabled"]
+    else:
+        nc["enabled"] = enable
+    status = "enabled" if nc["enabled"] else "disabled"
+    nc["mode"] = nc.get("mode", "manual")
+    cfg["_name_changer"] = nc
+    return f"name changer {status} (mode: {nc['mode']})"
+
+
+def name_changer_set_mode(cfg, mode: str) -> str:
+    """Set the name-changer mode: 'manual' or 'auto'."""
+    nc = name_changer_init(cfg)
+    if mode in ("manual", "auto"):
+        nc["mode"] = mode
+        cfg["_name_changer"] = nc
+        return f"name changer mode set to {mode}"
+    return f"invalid mode: {mode}, use 'manual' or 'auto'"
+
+
+def name_changer_set_names(cfg, thai_names: list = None, english_names: list = None) -> str:
+    """Set the name lists."""
+    nc = name_changer_init(cfg)
+    if thai_names is not None:
+        nc["thai_names"] = thai_names
+    if english_names is not None:
+        nc["english_names"] = english_names
+    cfg["_name_changer"] = nc
+    return f"name changer names updated (thai={len(nc['thai_names'])}, english={len(nc['english_names'])})"
+
+
+def name_changer_set_delay(cfg, delay_seconds: float) -> str:
+    """Set the delay in seconds between auto name changes."""
+    nc = name_changer_init(cfg)
+    nc["delay_seconds"] = max(1.0, delay_seconds)
+    cfg["_name_changer"] = nc
+    return f"name changer delay set to {nc['delay_seconds']} seconds"
+
+
+def name_changer_apply(cfg) -> str:
+    """Apply a name change to Camfrog's profile."""
+    import time as _t
+    from pathlib import Path
+    
+    nc = name_changer_init(cfg)
+    if not nc["enabled"]:
+        return "name changer is not enabled"
+    
+    cycle_index = nc["cycle_index"]
+    mode = nc.get("mode", "manual")
+    
+    total_names = len(nc["thai_names"]) + len(nc["english_names"])
+    if mode == "auto":
+        idx = cycle_index % total_names if total_names > 0 else 0
+        if idx < len(nc["thai_names"]):
+            current_name = nc["thai_names"][idx]
+        else:
+            thai_idx = idx - len(nc["thai_names"])
+            current_name = nc["english_names"][thai_idx] if thai_idx < len(nc["english_names"]) else "Camfrog User"
+    else:
+        if cycle_index < len(nc["thai_names"]):
+            current_name = nc["thai_names"][cycle_index]
+        else:
+            thai_idx = cycle_index - len(nc["thai_names"])
+            current_name = nc["english_names"][thai_idx] if thai_idx < len(nc["english_names"]) else "Camfrog User"
+    
+    try:
+        win = get_window(cfg)
+        status_edit = find(win, cfg["status"]["edit"]) if cfg["status"]["enabled"] else None
+        
+        if status_edit:
+            success = write_text(status_edit, current_name)
+            if success:
+                from camfrog_auto import _background_enter
+                _background_enter(status_edit, "edit")
+                nc["cycle_index"] = (cycle_index + 1) % total_names if total_names > 0 else 0
+                nc["last_change"] = _t.monotonic()
+                cfg["_name_changer"] = nc
+                return f"name changed to: {current_name} (applied successfully)"
+            return f"failed to write name: {current_name}"
+        return "could not find status edit control - run `discover` to set selectors"
+    except Exception as e:
+        return f"name changer error: {str(e)[:100]}"
+
+
+def name_changer_tick(cfg) -> str:
+    """Tick the name-changer in auto mode."""
+    import time as _t
+    
+    nc = name_changer_init(cfg)
+    if not nc["enabled"]:
+        return "name changer is not enabled"
+    
+    mode = nc.get("mode", "manual")
+    delay = nc.get("delay_seconds", 30)
+    
+    if mode == "auto":
+        last = nc.get("last_change", 0)
+        if _t.monotonic() - last >= delay:
+            result = name_changer_apply(cfg)
+            return result
+        return f"name changer active (auto mode) - next change in {delay - (_t.monotonic() - last):.1f}s"
+    return "name changer in manual mode - no automatic changes"
+
+
+def color_cycle_init(cfg) -> dict:
+    """Initialize the color-cycling profile state."""
+    default_colors = ["red", "orange", "yellow", "green", "cyan", "blue", "purple", "pink", "brown", "gray"]
+    default_thai_colors = ["แดง", "ส้ม", "เหลือง", "เขียว", "ฟ้า", "น้ำเงิน", "ม่วง", "ชมพู"]
+    
+    cc = cfg.get("_color_cycle", {})
+    if not cc.get("initialized", False):
+        cc = {
+            "enabled": False,
+            "mode": "auto",
+            "colors": cc.get("colors", default_colors),
+            "thai_colors": cc.get("thai_colors", default_thai_colors),
+            "cycle_index": 0,
+            "delay_seconds": cc.get("delay_seconds", 15),
+            "last_change": 0,
+            "initialized": True,
+        }
+        cfg["_color_cycle"] = cc
+    
+    return cc
+
+
+def color_cycle_toggle(cfg, enable: bool = None) -> str:
+    """Toggle the color-cycling profile on/off."""
+    cc = color_cycle_init(cfg)
+    if enable is None:
+        cc["enabled"] = not cc["enabled"]
+    else:
+        cc["enabled"] = enable
+    status = "enabled" if cc["enabled"] else "disabled"
+    cc["mode"] = cc.get("mode", "auto")
+    cfg["_color_cycle"] = cc
+    return f"color cycle {status} (mode: {cc['mode']})"
+
+
+def color_cycle_set_mode(cfg, mode: str) -> str:
+    """Set the color-cycling mode: 'manual' or 'auto'."""
+    cc = color_cycle_init(cfg)
+    if mode in ("manual", "auto"):
+        cc["mode"] = mode
+        cfg["_color_cycle"] = cc
+        return f"color cycle mode set to {mode}"
+    return f"invalid mode: {mode}, use 'manual' or 'auto'"
+
+
+def color_cycle_set_colors(cfg, colors: list = None, thai_colors: list = None) -> str:
+    """Set the color lists."""
+    cc = color_cycle_init(cfg)
+    if colors is not None:
+        cc["colors"] = colors
+    if thai_colors is not None:
+        cc["thai_colors"] = thai_colors
+    cfg["_color_cycle"] = cc
+    return f"color cycle colors updated (={len(cc['colors'])})"
+
+
+def color_cycle_set_delay(cfg, delay_seconds: float) -> str:
+    """Set the delay in seconds between color changes."""
+    cc = color_cycle_init(cfg)
+    cc["delay_seconds"] = max(1.0, delay_seconds)
+    cfg["_color_cycle"] = cc
+    return f"color cycle delay set to {cc['delay_seconds']} seconds"
+
+
+def color_cycle_apply(cfg) -> str:
+    """Apply the current color to Camfrog's profile."""
+    import time as _t
+    
+    cc = color_cycle_init(cfg)
+    if not cc["enabled"]:
+        return "color cycle is not enabled"
+    
+    mode = cc.get("mode", "auto")
+    colors = cc.get("colors", ["red", "orange", "yellow", "green", "cyan", "blue", "purple", "pink", "brown", "gray"])
+    thai_colors = cc.get("thai_colors", ["แดง", "ส้ม", "เหลือง", "เขียว", "ฟ้า", "น้ำเงิน", "ม่วง", "ชมพู"])
+    
+    cycle_index = cc.get("cycle_index", 0)
+    
+    if mode == "auto":
+        if cycle_index < len(colors):
+            current_color = colors[cycle_index]
+        else:
+            current_color = colors[0] if colors else "red"
+    else:
+        if cycle_index < len(thai_colors):
+            current_color = thai_colors[cycle_index]
+        else:
+            current_color = thai_colors[0] if thai_colors else "แดง"
+    
+    try:
+        win = get_window(cfg)
+        status_edit = find(win, cfg["status"]["edit"]) if cfg["status"]["enabled"] else None
+        
+        if status_edit:
+            success = write_text(status_edit, current_color)
+            if success:
+                from camfrog_auto import _background_enter
+                _background_enter(status_edit, "edit")
+                cc["cycle_index"] = (cycle_index + 1) % len(colors) if colors else 0
+                cc["last_change"] = _t.monotonic()
+                cfg["_color_cycle"] = cc
+                return f"color changed to: {current_color} (applied successfully)"
+            return f"failed to write color: {current_color}"
+        return "could not find status edit control - run `discover` to set selectors"
+    except Exception as e:
+        return f"color cycle error: {str(e)[:100]}"
+
+
+def color_cycle_tick(cfg) -> str:
+    """Tick the color-cycling profile in auto mode."""
+    import time as _t
+    
+    cc = color_cycle_init(cfg)
+    if not cc["enabled"]:
+        return "color cycle is not enabled"
+    
+    mode = cc.get("mode", "auto")
+    delay = cc.get("delay_seconds", 15)
+    
+    if mode == "auto":
+        last = cc.get("last_change", 0)
+        if _t.monotonic() - last >= delay:
+            result = color_cycle_apply(cfg)
+            return result
+        return f"color cycle active (auto mode) - next change in {delay - (_t.monotonic() - last):.1f}s"
+    return "color cycle in manual mode - no automatic changes"
+
+
+def register_hotkey_handler(cfg):
+    """Register F3/F4 hotkeys for worker start/stop."""
+    import os as _os
+    if _os.name != "nt":
+        return
+    
+    cfg["_hotkey_registered"] = True
+    cfg["_hotkey_f3_pressed"] = False
+    cfg["_hotkey_f4_pressed"] = False
+    log.info("F3/F4 hotkey handler registered (poll-based)")
+
+
+def check_hotkeys(cfg):
+    """Check for F3/F4 hotkey presses. Call periodically in main loop."""
+    import ctypes
+    import os as _os
+    import time as _t
+    
+    if _os.name != "nt":
+        return
+    
+    user32 = ctypes.windll.user32
+    f3_pressed = user32.GetAsyncKeyState(0x72) & 0x8000
+    f4_pressed = user32.GetAsyncKeyState(0x73) & 0x8000
+    
+    if f3_pressed:
+        result = toggle_worker(cfg, "start")
+        log.info(f"F3 hotkey: {result}")
+        cfg["_hotkey_f3_pressed"] = True
+        _t.sleep(0.3)
+    
+    if f4_pressed:
+        result = toggle_worker(cfg, "stop")
+        log.info(f"F4 hotkey: {result}")
+        cfg["_hotkey_f4_pressed"] = True
+        _t.sleep(0.3)
+
+
 def run_guarded(cfg, cfg_path=None):
     """Single-instance guard + PID file around Runner.run()."""
     mutex = acquire_run_mutex()
