@@ -1187,7 +1187,25 @@ def _escape_keys(text):
     return "".join("{%s}" % c if c in "{}()+^%~" else c for c in text)
 
 
-def commit_web(win, ctrl, text: str, require_fg: bool = True, restore: bool = False) -> bool:
+def _type_human_like(text: str, keyboard_module=None, min_jitter: float = 0.015, max_jitter: float = 0.055):
+    """Simulate authentic human typing rhythm with randomized inter-keystroke jitter."""
+    if keyboard_module is None:
+        from pywinauto import keyboard as keyboard_module
+    import random
+    # Human reaction / thinking pause before starting to type
+    time.sleep(random.uniform(0.12, 0.35))
+    for char in text:
+        escaped = "{%s}" % char if char in "{}()+^%~" else char
+        keyboard_module.send_keys(escaped, pause=0.005, with_spaces=True)
+        # Jitter delay per keystroke (simulates 50-70 WPM typing cadence)
+        delay = random.uniform(min_jitter, max_jitter)
+        # Occasional micro-pause at spaces or punctuation (natural cadence)
+        if char in " .,!?\n":
+            delay += random.uniform(0.04, 0.12)
+        time.sleep(delay)
+
+
+def commit_web(win, ctrl, text: str, require_fg: bool = True, restore: bool = False, human_like: bool = True) -> bool:
     """Send into Camfrog's web chat box. There is no text control to write to, so: bring the room to
     front, click the box, paste (clipboard is restored) or type, press Enter. Never types unless the
     room window is verified foreground, re-checked right before Enter."""
@@ -1203,11 +1221,16 @@ def commit_web(win, ctrl, text: str, require_fg: bool = True, restore: bool = Fa
         log.error(t("not_fg"))
         return False
     old = _clip_get()
-    pasted = _clip_set(text)
+    pasted = False
+    if not human_like:
+        pasted = _clip_set(text)
     try:
         keyboard.send_keys("^a", pause=0.02)
-        keyboard.send_keys("^v" if pasted else _escape_keys(text), pause=0.01, with_spaces=True)
-        time.sleep(0.2)
+        if human_like or not pasted:
+            _type_human_like(text, keyboard)
+        else:
+            keyboard.send_keys("^v", pause=0.01, with_spaces=True)
+        time.sleep(0.15)
     finally:
         if pasted and old is not None:
             time.sleep(0.2)
@@ -1280,7 +1303,150 @@ def _background_enter(ctrl, target="edit"):
         time.sleep(0.02)
 
 
-def commit(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply_btn=None,
+# --- user-activity guard (kept identical in every self-contained module) ---
+class UserActivityGuard:
+    """Yield the desktop to the human before any command that injects global input.
+
+    Commands that move the mouse, steal focus or send real keystrokes must not run
+    while the user is working. Wait (bounded) until the user has been idle for
+    `idle_ms`; input produced by our own injection is not counted as user activity.
+    Windows only: elsewhere `user_idle_ms()` is None and the guard never blocks.
+    """
+
+    def __init__(self, idle_ms=None, poll=0.25, max_wait=120.0, tick=None,
+                 last_input=None, sleep=None, clock=None):
+        if idle_ms is None:
+            try:
+                idle_ms = int(os.environ.get("ZCHAT_USER_IDLE_MS", "2000"))
+            except ValueError:
+                idle_ms = 2000
+        self.idle_ms = max(0, idle_ms)
+        self.poll = poll
+        self.max_wait = max_wait
+        self._tick = tick or self._win_tick
+        self._last_input = last_input or self._win_last_input
+        self._sleep = sleep or time.sleep
+        self._clock = clock or time.monotonic
+        self._own = None  # (start_tick, end_tick) of our latest injection
+        self._user_tick = None
+
+    @staticmethod
+    def _win_tick():
+        try:
+            kernel32 = getattr(getattr(ctypes, "windll", None), "kernel32", None)
+            if kernel32 and hasattr(kernel32, "GetTickCount"):
+                return kernel32.GetTickCount() & 0xFFFFFFFF
+        except Exception:
+            pass
+        return int(time.monotonic() * 1000) & 0xFFFFFFFF
+
+    @staticmethod
+    def _win_last_input():
+        if os.name != "nt":
+            return None
+        try:
+            user32 = getattr(getattr(ctypes, "windll", None), "user32", None)
+            if not user32 or not hasattr(user32, "GetLastInputInfo"):
+                return None
+
+            class LASTINPUTINFO(ctypes.Structure):
+                _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+
+            info = LASTINPUTINFO()
+            info.cbSize = ctypes.sizeof(info)
+            if not user32.GetLastInputInfo(ctypes.byref(info)):
+                return None
+            return info.dwTime
+        except Exception:
+            return None
+
+    def mark_own(self, start, end, slack=400):
+        self._own = (start, (end + slack) & 0xFFFFFFFF)
+
+    def _is_own(self, last):
+        if not self._own:
+            return False
+        start, end = self._own
+        return ((last - start) & 0xFFFFFFFF) <= ((end - start) & 0xFFFFFFFF)
+
+    def user_idle_ms(self):
+        """Milliseconds since the last *user* input, or None when unknown."""
+        try:
+            last = self._last_input()
+            if last is None:
+                return None
+            if not self._is_own(last):
+                self._user_tick = last
+            if self._user_tick is None:
+                return 10 ** 9  # only our own input seen so far
+            return (self._tick() - self._user_tick) & 0xFFFFFFFF
+        except Exception:
+            return None
+
+    def wait_until_idle(self):
+        """Wait for idle input; refuse unsafe injection when Windows input is unknown."""
+        if self.idle_ms <= 0:
+            return True
+        deadline = self._clock() + self.max_wait
+        noted = False
+        while True:
+            idle = self.user_idle_ms()
+            if idle is None:
+                if os.name == "nt":
+                    log.error("Cannot verify Windows user activity; refusing desktop input injection")
+                    return False
+                return True
+            if idle >= self.idle_ms:
+                return True
+            if self._clock() >= deadline:
+                return False
+            if not noted:
+                log.info("User is active; deferring input injection until the desktop is idle")
+                noted = True
+            self._sleep(self.poll)
+
+    def run(self, func, *args, **kwargs):
+        start = self._tick() if os.name == "nt" else 0
+        try:
+            return func(*args, **kwargs)
+        finally:
+            if os.name == "nt":
+                self.mark_own(start, self._tick())
+
+
+USER_GUARD = UserActivityGuard()
+_BACKGROUND_MODES = ("strict_background", "best_effort_background")
+
+
+def _injects_global_input(bound) -> bool:
+    if bound.get("dry"):
+        return False
+    if bound.get("execution_mode", "interactive") in _BACKGROUND_MODES:
+        return False
+    if is_web(bound.get("ctrl")):
+        return True
+    if bound.get("apply_btn") is not None:
+        return True
+    if bound.get("background_enter_target") == "combo" or not bound.get("require_fg", True):
+        return False
+    return True
+
+
+def commit(*args, **kwargs) -> bool:
+    """Gate `_commit_impl` so input-injecting sends never run while the user is active."""
+    import inspect
+    bound = inspect.signature(_commit_impl).bind(*args, **kwargs)
+    bound.apply_defaults()
+    if not _injects_global_input(bound.arguments):
+        return _commit_impl(*args, **kwargs)
+    if not USER_GUARD.wait_until_idle():
+        log.error("Deferred: user stayed active; not taking over mouse/keyboard")
+        return False
+    return USER_GUARD.run(_commit_impl, *args, **kwargs)
+# --- end user-activity guard ---
+
+
+def _commit_impl(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply_btn=None,
            restore: bool = False, background_enter_target: str = "edit") -> bool:
     """Write text, verify read-back, confirm Camfrog is foreground, send, restore focus."""
     if dry:
@@ -2559,11 +2725,14 @@ class Runner:
 
     def dj_command(self, queue, dj, cmd, arg, nick, owner):
         """One DJ chat command -> reply text (None = not a DJ command)."""
-        if cmd in ("request", "req", "song"):
+        if cmd in ("play", "request", "req", "song"):
             title = arg
+            if not title:
+                raise DJError("please specify a song title to play: !play <song name>")
             if dj.get("audio_backend", "chat") == "local":
                 song = dj_find_song(BASE / dj.get("music_dir", "music"), arg)
                 if song is None:
+                    # Extended fallback: search in music directory with looser match
                     raise DJError(f'not found as .wav in music/: "{arg}"')
                 title = song.stem
             if queue.current is not None \
@@ -2594,7 +2763,7 @@ class Runner:
                 return "[dj] skipped, queue is empty"
             return dj["announce_now"].format(title=nxt["title"], user=nxt["user"])
         if cmd == "help":
-            return "[dj] commands: !request <song> !queue !current !skip"
+            return "[dj] commands: !play <song> !request <song> !queue !current !skip"
         return None
 
     def dj_start_playback(self, queue, dj):
@@ -2803,6 +2972,234 @@ def release_run_mutex(handle):
     kernel32.CloseHandle.restype = ctypes.c_int
     if not kernel32.CloseHandle(handle):
         log.debug("Could not close worker mutex handle: %s", ctypes.get_last_error())
+
+
+def toggle_worker(cfg, action: str, config_path=None) -> str:
+    """Delegate hotkey requests to the validated worker lifecycle commands."""
+    if action == "start":
+        if config_path is None or not Path(config_path).is_file():
+            return "worker start failed: verified configuration path required"
+        args = argparse.Namespace(config=str(Path(config_path).resolve()), lang=None)
+        return "worker started" if cmd_start(cfg, args) == 0 else "worker start failed"
+    if action == "stop":
+        return "worker stopped" if cmd_stop(cfg) == 0 else "worker stop failed"
+    return "invalid worker action"
+
+
+def name_changer_init(cfg) -> dict:
+    """Initialize the name-changer state."""
+    default_thai = ["ผู้ใช้ camfrog", "สายคามฟร็อก", "เบอร์คามฟร็อก"]
+    default_en = ["Camfrog User", "Camfrog Line", "Camfrog DJ"]
+    
+    nc = cfg.get("_name_changer", {})
+    if not nc.get("initialized", False):
+        nc = {
+            "enabled": False,
+            "mode": "manual",
+            "cycle_index": 0,
+            "thai_names": nc.get("thai_names", default_thai),
+            "english_names": nc.get("english_names", default_en),
+            "delay_seconds": nc.get("delay_seconds", 30),
+            "last_change": 0,
+            "initialized": True,
+        }
+        cfg["_name_changer"] = nc
+    
+    return nc
+
+
+def name_changer_toggle(cfg, enable: bool = None) -> str:
+    """Toggle the name-changer on/off."""
+    nc = name_changer_init(cfg)
+    if enable is None:
+        nc["enabled"] = not nc["enabled"]
+    else:
+        nc["enabled"] = enable
+    status = "enabled" if nc["enabled"] else "disabled"
+    nc["mode"] = nc.get("mode", "manual")
+    cfg["_name_changer"] = nc
+    return f"name changer {status} (mode: {nc['mode']})"
+
+
+def name_changer_set_mode(cfg, mode: str) -> str:
+    """Set the name-changer mode: 'manual' or 'auto'."""
+    nc = name_changer_init(cfg)
+    if mode in ("manual", "auto"):
+        nc["mode"] = mode
+        cfg["_name_changer"] = nc
+        return f"name changer mode set to {mode}"
+    return f"invalid mode: {mode}, use 'manual' or 'auto'"
+
+
+def name_changer_set_names(cfg, thai_names: list = None, english_names: list = None) -> str:
+    """Set the name lists."""
+    nc = name_changer_init(cfg)
+    if thai_names is not None:
+        nc["thai_names"] = thai_names
+    if english_names is not None:
+        nc["english_names"] = english_names
+    cfg["_name_changer"] = nc
+    return f"name changer names updated (thai={len(nc['thai_names'])}, english={len(nc['english_names'])})"
+
+
+def name_changer_set_delay(cfg, delay_seconds: float) -> str:
+    """Set the delay in seconds between auto name changes."""
+    nc = name_changer_init(cfg)
+    nc["delay_seconds"] = max(1.0, delay_seconds)
+    cfg["_name_changer"] = nc
+    return f"name changer delay set to {nc['delay_seconds']} seconds"
+
+
+def name_changer_apply(cfg) -> str:
+    """Refuse to impersonate a profile update via the unrelated status control."""
+    return "NAME_CHANGE_UNVERIFIED: No validated Camfrog nickname editing adapter exists; status text is not the account nickname."
+
+
+def name_changer_tick(cfg) -> str:
+    """Tick the name-changer in auto mode."""
+    import time as _t
+    
+    nc = name_changer_init(cfg)
+    if not nc["enabled"]:
+        return "name changer is not enabled"
+    
+    mode = nc.get("mode", "manual")
+    delay = nc.get("delay_seconds", 30)
+    
+    if mode == "auto":
+        last = nc.get("last_change", 0)
+        if _t.monotonic() - last >= delay:
+            result = name_changer_apply(cfg)
+            return result
+        return f"name changer active (auto mode) - next change in {delay - (_t.monotonic() - last):.1f}s"
+    return "name changer in manual mode - no automatic changes"
+
+
+def color_cycle_init(cfg) -> dict:
+    """Initialize the color-cycling profile state."""
+    default_colors = ["red", "orange", "yellow", "green", "cyan", "blue", "purple", "pink", "brown", "gray"]
+    default_thai_colors = ["แดง", "ส้ม", "เหลือง", "เขียว", "ฟ้า", "น้ำเงิน", "ม่วง", "ชมพู"]
+    
+    cc = cfg.get("_color_cycle", {})
+    if not cc.get("initialized", False):
+        cc = {
+            "enabled": False,
+            "mode": "auto",
+            "colors": cc.get("colors", default_colors),
+            "thai_colors": cc.get("thai_colors", default_thai_colors),
+            "cycle_index": 0,
+            "delay_seconds": cc.get("delay_seconds", 15),
+            "last_change": 0,
+            "initialized": True,
+        }
+        cfg["_color_cycle"] = cc
+    
+    return cc
+
+
+def color_cycle_toggle(cfg, enable: bool = None) -> str:
+    """Toggle the color-cycling profile on/off."""
+    cc = color_cycle_init(cfg)
+    if enable is None:
+        cc["enabled"] = not cc["enabled"]
+    else:
+        cc["enabled"] = enable
+    status = "enabled" if cc["enabled"] else "disabled"
+    cc["mode"] = cc.get("mode", "auto")
+    cfg["_color_cycle"] = cc
+    return f"color cycle {status} (mode: {cc['mode']})"
+
+
+def color_cycle_set_mode(cfg, mode: str) -> str:
+    """Set the color-cycling mode: 'manual' or 'auto'."""
+    cc = color_cycle_init(cfg)
+    if mode in ("manual", "auto"):
+        cc["mode"] = mode
+        cfg["_color_cycle"] = cc
+        return f"color cycle mode set to {mode}"
+    return f"invalid mode: {mode}, use 'manual' or 'auto'"
+
+
+def color_cycle_set_colors(cfg, colors: list = None, thai_colors: list = None) -> str:
+    """Set the color lists."""
+    cc = color_cycle_init(cfg)
+    if colors is not None:
+        cc["colors"] = colors
+    if thai_colors is not None:
+        cc["thai_colors"] = thai_colors
+    cfg["_color_cycle"] = cc
+    return f"color cycle colors updated (={len(cc['colors'])})"
+
+
+def color_cycle_set_delay(cfg, delay_seconds: float) -> str:
+    """Set the delay in seconds between color changes."""
+    cc = color_cycle_init(cfg)
+    cc["delay_seconds"] = max(1.0, delay_seconds)
+    cfg["_color_cycle"] = cc
+    return f"color cycle delay set to {cc['delay_seconds']} seconds"
+
+
+def color_cycle_apply(cfg) -> str:
+    """Refuse to impersonate a profile update via the unrelated status control."""
+    return "PROFILE_COLOR_UNVERIFIED: No validated Camfrog profile color adapter exists; writing a color name to status does not change profile color."
+
+
+def color_cycle_tick(cfg) -> str:
+    """Tick the color-cycling profile in auto mode."""
+    import time as _t
+    
+    cc = color_cycle_init(cfg)
+    if not cc["enabled"]:
+        return "color cycle is not enabled"
+    
+    mode = cc.get("mode", "auto")
+    delay = cc.get("delay_seconds", 15)
+    
+    if mode == "auto":
+        last = cc.get("last_change", 0)
+        if _t.monotonic() - last >= delay:
+            result = color_cycle_apply(cfg)
+            return result
+        return f"color cycle active (auto mode) - next change in {delay - (_t.monotonic() - last):.1f}s"
+    return "color cycle in manual mode - no automatic changes"
+
+
+def register_hotkey_handler(cfg):
+    """Register F3/F4 hotkeys for worker start/stop."""
+    import os as _os
+    if _os.name != "nt":
+        return
+    
+    cfg["_hotkey_registered"] = True
+    cfg["_hotkey_f3_pressed"] = False
+    cfg["_hotkey_f4_pressed"] = False
+    log.info("F3/F4 hotkey handler registered (poll-based)")
+
+
+def check_hotkeys(cfg, config_path=None):
+    """Check for F3/F4 hotkey presses. Call periodically in main loop."""
+    import ctypes
+    import os as _os
+    import time as _t
+    
+    if _os.name != "nt":
+        return
+    
+    user32 = ctypes.windll.user32
+    f3_pressed = user32.GetAsyncKeyState(0x72) & 0x8000
+    f4_pressed = user32.GetAsyncKeyState(0x73) & 0x8000
+    
+    if f3_pressed:
+        result = toggle_worker(cfg, "start", config_path=config_path)
+        log.info(f"F3 hotkey: {result}")
+        cfg["_hotkey_f3_pressed"] = True
+        _t.sleep(0.3)
+    
+    if f4_pressed:
+        result = toggle_worker(cfg, "stop")
+        log.info(f"F4 hotkey: {result}")
+        cfg["_hotkey_f4_pressed"] = True
+        _t.sleep(0.3)
 
 
 def run_guarded(cfg, cfg_path=None):
@@ -3403,6 +3800,7 @@ def build_parser():
     tr.add_argument("--sender", default="TestUser")
     tr.add_argument("--file")
     tr.add_argument("--im", action="store_true", help="test with the autoreply_im rules and limits")
+    p.add_argument("--daemon", action="store_true", help="run as headless background daemon (Linux/WSL2/Windows Server)")
     return p
 
 
@@ -3473,6 +3871,17 @@ def main(argv=None, force_strict_background=False):
         return cmd_history_import(cfg, a.file)
     if a.cmd == "start":
         return cmd_start(cfg, a)
+    if getattr(a, "daemon", False) and os.name != "nt":
+        # Fork to run in headless background daemon mode on POSIX / Linux / WSL2
+        try:
+            pid = os.fork()
+            if pid > 0:
+                print(f"[Daemon] Forked background worker process (PID {pid})")
+                return 0
+            os.setsid()
+        except OSError as e:
+            print(f"[Daemon] Fork failed: {e}")
+            return 1
     setup_logging(cfg)
     try:
         if a.cmd == "windows":
