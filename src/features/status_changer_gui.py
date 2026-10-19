@@ -5877,6 +5877,8 @@ def build_app():
                 on_error=self._clipboard_error,
             )
             self.clipboard_controller.install(self.root)
+            self.root.bind("<F3>", lambda _e: self.set_worker_running(self.mode, True))
+            self.root.bind("<F4>", lambda _e: self.set_worker_running(self.mode, False))
             if not self.embedded:
                 self.root.protocol("WM_DELETE_WINDOW", self.close_app)
             self.task_poll_job = self.root.after(100, self.poll_task_results)

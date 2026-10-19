@@ -878,6 +878,7 @@ WEB_STATUS_GUI_TEXT_TH = {
     "Font": "แบบอักษร",
     "Size": "ขนาด",
     "Color": "สี",
+    "Auto Loop Color": "สลับสีอัตโนมัติ",
     "Choose": "เลือก",
     "Bold": "ตัวหนา",
     "Italic": "ตัวเอียง",
@@ -3104,6 +3105,8 @@ class WebStatusManager:
         self.nb.bind("<<NotebookTabChanged>>", self._on_main_tab_changed)
         self.root.bind("<Configure>", self._on_root_resize, add="+")
         self.root.bind("<Escape>", self._exit_fullscreen, add="+")
+        self.root.bind("<F3>", lambda _e: self.start())
+        self.root.bind("<F4>", lambda _e: self.stop())
         self.root.protocol("WM_DELETE_WINDOW", self._close_window)
         self._show_page_loading(900)
         self.splash_frame.lift()
@@ -5531,8 +5534,39 @@ class WebStatusManager:
         self.ttk.Button(row, text=self._ui_text("Choose"),
                         command=choose_color).grid(
             row=0, column=5, padx=4, pady=2)
-        self.ttk.Label(row, textvariable=color_var, width=10).grid(
-            row=0, column=6, sticky="w")
+        color_preview_label = self.ttk.Label(row, textvariable=color_var, width=10)
+        color_preview_label.grid(row=0, column=6, sticky="w")
+
+        color_loop_var = self.tk.BooleanVar(value=False)
+        colors_palette = ["#FF0000", "#FF7F00", "#FFFF00", "#00FF00", "#0000FF", "#4B0082", "#9400D3", "#000000"]
+        context["_color_loop_idx"] = 0
+        context["_color_loop_job"] = None
+
+        def step_color_loop():
+            if not color_loop_var.get():
+                return
+            idx = context.get("_color_loop_idx", 0)
+            next_color = colors_palette[idx % len(colors_palette)]
+            context["_color_loop_idx"] = idx + 1
+            color_var.set(next_color)
+            context["_color_loop_job"] = self.root.after(3000, step_color_loop)
+
+        def toggle_color_loop():
+            if color_loop_var.get():
+                step_color_loop()
+            else:
+                job = context.get("_color_loop_job")
+                if job:
+                    try:
+                        self.root.after_cancel(job)
+                    except Exception:
+                        pass
+                    context["_color_loop_job"] = None
+
+        self.ttk.Checkbutton(
+            row, text=self._ui_text("Auto Loop Color"),
+            variable=color_loop_var, command=toggle_color_loop).grid(
+            row=0, column=7, padx=(6, 2), pady=2, sticky="w")
         toggles = {}
         for column, key_name, label in (
                 (0, "bold", "Bold"), (1, "italic", "Italic"),

@@ -4149,6 +4149,8 @@ def build_app():
             self._closing = False
             self.root.protocol("WM_DELETE_WINDOW", self.close_app)
             self.root.bind("<Control-s>", lambda _e: self.save())
+            self.root.bind("<F3>", lambda _e: self.start())
+            self.root.bind("<F4>", lambda _e: self.stop())
             self.root.after(150, self.pump)
             self.root.after(500, self.tick)
             self.root.after(1000, self._discover_controls_on_start)

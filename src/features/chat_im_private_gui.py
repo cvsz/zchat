@@ -3410,6 +3410,9 @@ class PrivateChatManager:
             import threading
             threading.Thread(target=auto_update, daemon=True).start()
 
+        self.root.bind("<F3>", lambda _e: self.refresh())
+        self.root.bind("<F4>", lambda _e: self.listbox.selection_clear(0, "end"))
+
     def save_filters(self, refresh_after=True, silent=False):
         try:
             limit = int(self.max_windows.get())

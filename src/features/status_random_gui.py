@@ -4144,6 +4144,8 @@ def build_app():
             self.clipboard_controller = ClipboardController(
                 self.root, translate=self._translate_clipboard, on_error=self._clipboard_error)
             self.clipboard_controller.install(self.root)
+            self.root.bind("<F3>", lambda _e: self.set_enabled("random", True))
+            self.root.bind("<F4>", lambda _e: self.set_enabled("random", False))
             self.root.protocol("WM_DELETE_WINDOW", self.close_app)
             self.task_poll_job = self.root.after(100, self.poll_task_results)
             self.state_job = self.root.after(500, self.refresh_state)
