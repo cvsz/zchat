@@ -1494,6 +1494,9 @@ def test_camfrog_status_edit_replaces_text_through_accessible_value(name):
 def test_foreground_status_commit_writes_frame_before_enter(name, monkeypatch):
     """Focus the Camfrog window, replace the frame, then submit without Ctrl+A."""
     mod = load(name)
+    # Windows CI has no interactive desktop. Isolate the tested foreground
+    # sequence from the activity guard, which has dedicated regression tests.
+    monkeypatch.setattr(mod.USER_GUARD, "wait_until_idle", lambda: True)
     events = []
     win = SimpleNamespace(handle=77)
     ctrl = SimpleNamespace(

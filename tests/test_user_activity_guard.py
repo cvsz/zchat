@@ -114,7 +114,10 @@ def test_tick_wraparound():
 
 
 def test_unmeasurable_activity_is_noop_outside_windows():
+    from types import SimpleNamespace
+
     ns = _load_guard_class()
+    ns["os"] = SimpleNamespace(name="posix")
     g, c = make(ns, lambda c: None)
     assert g.wait_until_idle() is True
 
