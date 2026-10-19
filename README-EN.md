@@ -1,6 +1,6 @@
 # Camfrog standalone feature apps
 
-Windows only. Uses UI Automation. Selector defaults were derived from static analysis of Camfrog 8.5.0.51219; run **Auto-detect** against your installed build before enabling live actions. Limited Windows 11 smoke testing verified the IM local-echo path, but not recipient delivery or every control.
+Windows only. Uses UI Automation. Selector defaults were derived from static analysis of Camfrog 8.5.0.51219; standalone Camfrog apps now attempt discovery and save valid selectors on startup. Open Camfrog first; use **Auto-detect** or **Discover controls** to retry, and verify selectors before enabling live actions. Limited Windows 11 smoke testing verified the IM local-echo path, but not recipient delivery or every control.
 
 Full user manual: `docs/USER-MANUAL-EN.md` (Thai: `docs/USER-MANUAL-TH.md`).
 
@@ -22,7 +22,7 @@ Each executable is built into its own folder and creates its own config and runt
 
 The Web Status **Bot Manager** also controls the separate `music-dj.exe` queue through local files and can read/control vMix on the same PC. Music DJ can queue YouTube videos by URL or ID in a visible standard player and advances from player events. See [`docs/zBOT-Youtube-MUSIC-DJ.md`](docs/zBOT-Youtube-MUSIC-DJ.md) for boundaries and Windows acceptance checks.
 
-Room Control and IM Auto-reply use separate `config.json` files; Chat IM Private uses `private-chat-config.json`; Random and Marquee each use `camfrog-status-config.json` in their own data folder. Random and Marquee also keep their pools, logs, history, and worker files separate. Status **Start** saves settings and starts that app's bundled worker.
+Room Control and IM Auto-reply use separate `config.json` files; Chat IM Private uses `private-chat-config.json`; Random and Marquee each use `camfrog-status-config.json` in their own data folder. Random and Marquee also keep their pools, logs, history, and worker files separate. Every standalone Camfrog app attempts control discovery after its window opens and saves selector proposals only when configuration validation succeeds. Web Status uses website controls and is excluded. Status **Start** creates the data folder, launches the bundled worker, and waits for PID registration and authorization before status work begins.
 
 ## Build
 
@@ -43,11 +43,11 @@ If the error says `requirements.txt (line 1)` and mentions only pywinauto, you a
 
 ## Quick start
 
-1. Open Camfrog and join a room. For Camfrog 8.x, launch `room-control.exe` and use **Setup → Auto-detect**. Findings: `docs/CAMFROG-8.5-FINDINGS.md`.
+1. Open Camfrog and join a room before launching a standalone Camfrog app; it attempts control discovery automatically. Use **Setup → Auto-detect** or **Discover controls** to retry. Findings: `docs/CAMFROG-8.5-FINDINGS.md`.
 2. Edit that app's `config.json`, set your nickname, and configure room replies. Keep `dry_run` on while checking behavior.
 3. Use `im-autoreply.exe` for private IM auto-reply; its config and logs are separate from Room Control.
-4. Use `status-random.exe` or `status-marquee.exe` for separate status apps, or `status-changer.exe` for their combined interface and Activity Log. Each has its own data folder. Keep dry-run enabled: live background sends currently stop with `BACKGROUND_UNSUPPORTED` because Camfrog's submit path has not passed desktop-isolation verification. `web-status.exe` is a separate website-based feature.
-5. Open a private chat in Camfrog, then use `chat-im-private.exe` to refresh and focus its window. Its **Discover controls** button dumps the control tree to `controls.txt` for selector setup, like the other apps.
+4. Use `status-random.exe` or `status-marquee.exe` for separate status apps, or `status-changer.exe` for their combined interface and Activity Log. Each has its own data folder. Strict background submission still stops with `BACKGROUND_UNSUPPORTED`. The legacy `best_effort_background` mode was disabled after Windows testing confirmed that Camfrog can take desktop focus and interrupt keyboard input; live workers fail closed until an isolated submit route is verified. Interactive sends use desktop input and wait for user inactivity before proceeding. See [`docs/STATUS-SUBMIT-MODES.md`](docs/STATUS-SUBMIT-MODES.md). `web-status.exe` is separate.
+5. Open a private chat in Camfrog, then use `chat-im-private.exe` to refresh and focus its window. It attempts selector discovery on startup; **Discover controls** remains available to dump the control tree to `controls.txt` for diagnostics.
 
 `python camfrog_auto.py ...` remains available as a source-only developer CLI. It uses the local `config.json`, which is ignored by Git; create it with `python camfrog_auto.py init --config config.json` or copy `config.example.json`. CI and builds validate the safe example. The CLI is not one of the eight packaged apps. The `extras\*.bat` helpers are source-checkout shortcuts, except `extras\gui.bat` which launches the built `dist\room-control\room-control.exe`.
 
@@ -69,16 +69,16 @@ Room Control and IM Auto-reply use the GUI **Save & Start** and **Stop** control
 
 Each app writes logs beside its own config. The source CLI uses `camfrog_auto.log` in the repository folder.
 
-**Strict background status updates:** Status Changer, Random, and Marquee can discover Camfrog controls, but the current Camfrog 8.5 submit path is not verified to preserve desktop state. Strict mode therefore returns `BACKGROUND_UNSUPPORTED` before writing or submitting a status. Do not treat a discovered or minimized window as proof that a background update is supported. Interactive mode can affect foreground focus. Room-chat replies use a different embedded input and require the room window to be foreground.
+**Status submission:** Strict background mode returns `BACKGROUND_UNSUPPORTED` before writing or submitting because Camfrog 8.5 has no verified non-activating route. `best_effort_background` is disabled because Camfrog can take desktop focus during combo submission; status workers refuse the mode before writing. Interactive paths using focus, mouse, or real keystrokes wait for 2 seconds of user inactivity (`ZCHAT_USER_IDLE_MS` overrides this; 0 disables the wait) and defer after 120 seconds of continued activity. This reduces collisions but does not make submission non-activating. Worker startup creates its data directory and waits for PID authorization before entering the status loop. Room-chat replies use a different embedded input and require the room window to be foreground.
 
 ## Scrolling status + history switch
 
-- **Marquee** (`status.marquee`): long statuses scroll across a window of `width` characters, one frame every `step_seconds` (minimum 0.3 s). Each populated slot finishes its frames before advancing to the next slot. **Loop slots** starts again at slot 1 after the last populated slot; with it off, the sequence stops after the last slot. The default advances 2 Thai-safe clusters every 0.5 seconds; the runner wakes at each frame deadline without an extra random delay after sending.
+- **Marquee** (`status.marquee`): long statuses scroll across a window of `width` characters, one frame every `step_seconds` (minimum 0.3 s; the GUI adjusts in 0.1 s steps). Each populated slot finishes its frames before advancing to the next slot. **Loop slots** starts again at slot 1 after the last populated slot; with it off, the sequence stops after the last slot. The default advances 2 Thai-safe clusters every 0.5 seconds; the runner wakes at each frame deadline without an extra random delay after sending.
 - **History switch** (`status.history`): every status you set is saved to `status_history.json`. With `use_as_source: true` the next status is picked from that history (`rotate` = round-robin, `random`, `most_used`). Your `status.messages` are seeded into it automatically.
 - **TH/EN auto switch** (`status.language_cycle: ["th","en"]`): alternates Thai, English, Thai, English… each time the status changes. Works with history and with plain messages.
 - **Safety:** every frame is a real status change on Camfrog, so frames are rate-limited (`step_seconds >= 0.3`). Keep `interval_seconds` generous for Random mode and start with `dry_run: true`.
-- **Live status send:** status apps start in dry-run mode. In `status-changer.exe`, **Save Data** only saves settings. A live **Start** request returns `BACKGROUND_UNSUPPORTED` before changing Camfrog because the submit path has not passed the no-interference requirement. Do not use interactive submission when desktop isolation is required; it may affect foreground focus. `web-status.exe` uses a separate website flow and has separate authentication and verification limits.
-- **Background status option:** the disabled **Strict background (currently unsupported)** control is retained as a capability notice; it does not enable a successful send. See `status.execution_mode` in `CONFIG-EN.md`.
+- **Live status send:** status apps start in dry-run mode. **Save Data** only saves settings. Strict live submission returns `BACKGROUND_UNSUPPORTED`; `best_effort_background` is disabled because it can interrupt keyboard input by activating Camfrog. Interactive submission waits for desktop inactivity before using focus or real input. `web-status.exe` uses a separate website flow with separate authentication and verification limits.
+- **Background status option:** choose `strict_background` to fail closed and do not select the disabled legacy `best_effort_background` mode; it may take desktop focus. See `status.execution_mode` in `CONFIG-EN.md` and `docs/STATUS-SUBMIT-MODES.md`.
 
 Preview offline without opening Camfrog:
 ```

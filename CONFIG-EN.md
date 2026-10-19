@@ -22,12 +22,12 @@ Missing keys use built-in defaults. This reference covers the source CLI configu
 | `safety.restore_previous_window` | `true` | After sending, return focus to the window you were using. Set `false` to leave Camfrog's chat window in front; IM auto-reply scrolls its local reply echo into the chat viewport either way |
 | `safety.max_consecutive_failures` | `5` | Stop after N failed ticks in a row (backoff + re-attach) |
 | `status.enabled` | `true` | Rotate status |
-| `status.execution_mode` | `interactive` | `interactive` keeps legacy behavior and may affect foreground focus; `strict_background` fails closed with `BACKGROUND_UNSUPPORTED` before writing/submitting because the current Camfrog 8.5 submit path is not verified to preserve desktop state |
+| `status.execution_mode` | `interactive` | `interactive` uses real desktop input and may affect focus; it waits for user inactivity (2 s by default, `ZCHAT_USER_IDLE_MS` override, 120 s maximum wait). `strict_background` fails closed with `BACKGROUND_UNSUPPORTED`. `best_effort_background` is a legacy value rejected by live status workers because Camfrog may activate and interrupt keyboard input |
 | `status.edit` / `apply_button` | selectors / `null` | UIA selectors from `discover`; `apply_button` is invoked instead of Enter |
 | `status.background_enter_target` | `edit` | Legacy submit-target setting retained for compatibility. It does not override the strict-mode capability gate. Do not use it as evidence that a no-interference background status send is supported. |
 | `status.interval_seconds` | `600` | Minimum 0.3 |
 | `status.retry_seconds` | `30` | Wait after a failed send before retrying (1–3600) |
-| `status.set_on_start` | `true` | Set first status immediately |
+| `status.set_on_start` | `true` | Apply the first status 10 seconds after the worker starts |
 | `status.random` | `false` | Random instead of sequential |
 | `status.language_mode` | `both` | For `{th,en}` items: `th`, `en`, `both` (`TH \| EN`), `alternate` |
 | `status.schedules[]` | `[]` | `{start, end, messages}`: pool used during that time window (overnight OK); otherwise `status.messages` |

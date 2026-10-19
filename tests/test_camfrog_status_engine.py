@@ -256,6 +256,37 @@ def test_status_control_adapter_rejects_stale_or_recycled_control_handles(monkey
     assert adapter.controls_are_current() is False
 
 
+def test_status_control_adapter_rejects_control_class_or_id_mismatch(monkeypatch):
+    import sys
+
+    control_ids = {10: 1436, 11: 1001}
+    classes = {10: "CComboBoxTS", 11: "Edit"}
+    win32gui = SimpleNamespace(
+        IsWindow=lambda hwnd: hwnd in control_ids,
+        IsChild=lambda parent, hwnd: parent == 99 and hwnd in control_ids,
+        GetDlgCtrlID=lambda hwnd: control_ids[hwnd],
+        GetClassName=lambda hwnd: classes[hwnd],
+    )
+    win32process = SimpleNamespace(
+        GetWindowThreadProcessId=lambda hwnd: (1, 55)
+    )
+    monkeypatch.setattr(cse.sys, "platform", "win32")
+    monkeypatch.setitem(sys.modules, "win32gui", win32gui)
+    monkeypatch.setitem(sys.modules, "win32process", win32process)
+    adapter = StatusControlAdapter(
+        combo_hwnd=10,
+        edit_hwnd=11,
+        expected_pid=55,
+        parent_hwnd=99,
+    )
+
+    classes[10] = "UnrelatedControl"
+    assert adapter.controls_are_current() is False
+    classes[10] = "CComboBoxTS"
+    control_ids[11] = 9999
+    assert adapter.controls_are_current() is False
+
+
 def test_send_message_timeout_bounds_and_returns_message_result(monkeypatch):
     import ctypes
 

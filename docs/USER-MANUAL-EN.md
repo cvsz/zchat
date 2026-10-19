@@ -18,10 +18,10 @@ Apps: `room-control`, `chat-im-private`, `status-random`, `status-marquee`, `sta
 ## 2. First run
 
 1. Open Camfrog and join a room (not tray-minimized).
-2. Open the app and use **Setup → Auto-detect** (room/im apps) or **Discover controls** (status/private-chat/web apps). This fills the control selectors automatically.
+2. Open the app after Camfrog is running. Every standalone Camfrog app attempts control discovery and saves valid selector proposals automatically; Web Status uses website controls and is excluded. Use **Setup → Auto-detect** or **Discover controls** to retry. Verify the selected controls before enabling live actions.
    Keep only the intended Camfrog client process within the configured window-title filter. If matching windows belong to multiple or unverifiable processes, the desktop apps stop instead of guessing which account to control.
 3. Keep `dry_run` ON while checking behavior. Dry-run only logs what *would* be sent.
-4. Keep dry-run enabled while checking behavior. Status Changer, Random, and Marquee live background workers currently return `BACKGROUND_UNSUPPORTED` before submitting because strict desktop-isolated submission is not verified. `web-status.exe` is a separate website-based feature.
+4. Keep dry-run enabled while checking behavior. Strict status submission returns `BACKGROUND_UNSUPPORTED`. The legacy `best_effort_background` route is disabled: Windows testing confirmed Camfrog can take desktop focus and interrupt keyboard input. Interactive submission waits for user inactivity before using desktop input. `web-status.exe` is a separate website-based feature; see `docs/STATUS-SUBMIT-MODES.md`.
 
 ## 3. Room Control
 
@@ -45,20 +45,20 @@ Apps: `room-control`, `chat-im-private`, `status-random`, `status-marquee`, `sta
 
 - Lists private-chat windows already open in Camfrog. **Refresh** reloads, double-click or **Activate selected** focuses one. It never reads or sends messages.
 - **Window title filter** (regex) + **Max windows** limit the list; **Save filters** stores them in this app's own config.
-- **Discover controls** dumps the control tree to `controls.txt` for selector setup.
+- **Discover controls** retries discovery and dumps the control tree to `controls.txt` for diagnostics.
 
 ## 6. Status Changer: Random, Marquee, and Activity Log
 
 - `status-changer.exe` puts Random and Marquee in separate tabs with separate ten-slot pools. It reuses existing mode pool databases when it finds their data folders. The legacy `status-random.exe` and `status-marquee.exe` remain available for compatibility.
 - **Random:** each switch picks a status from its ten slots. **Switch every** is in seconds and has a minimum of 10 seconds.
-- **Marquee:** **Step** sets seconds per frame and the delay between whole-line slots when Scroll is off (minimum 10 seconds); **Stride** sets character clusters per frame, and **Scroll** turns frame scrolling on or off. Every frame is an external status submission and is rate-limited by this minimum. Marquee follows the populated slots in order; History source cannot reorder them. With scrolling on, each populated slot completes its frames before the next slot starts. **Loop slots** restarts at slot 1 after the last populated slot; with it off, the sequence stops after the last slot. Thai vowel/tone clusters stay together. **Switch every** applies to Random only.
-- **Start** applies the selected mode immediately; only one status worker can run at a time. The window shows which mode is active. **Stop** ends that worker.
+- **Marquee:** **Step** sets seconds per frame and the delay between whole-line slots when Scroll is off (minimum 0.3 seconds; the GUI adjusts in 0.1-second increments, with a 0.5-second default); **Stride** sets character clusters per frame, and **Scroll** turns frame scrolling on or off. Every frame is an external status submission. Marquee follows the populated slots in order; History source cannot reorder them. With scrolling on, each populated slot completes its frames before the next slot starts. **Loop slots** restarts at slot 1 after the last populated slot; with it off, the sequence stops after the last slot. Thai vowel/tone clusters stay together. **Switch every** applies to Random only.
+- **Start** starts the selected mode; its first status change is sent after 10 seconds. Only one status worker can run at a time. The window shows which mode is active. **Stop** ends that worker.
 - **Activity Log** combines GUI actions with both worker logs. GUI events omit status text; worker logs label a local dispatch separately from provider verification. Use **Open log folder** to inspect the files.
 
 ## 7. Status history, schedules, language
 
-- Long statuses scroll across a window of `width` characters: **Step** (seconds per frame, minimum 10), **Stride** (clusters per frame), **Loop** (repeat without settling). With **Scroll** off (default), each pool line is applied whole, one per tick, rotating 1..N and wrapping.
-- Random switches, Marquee frames, and automatic retries are spaced at least 10 seconds apart. Start with dry-run.
+- Long statuses scroll across a window of `width` characters: **Step** (seconds per frame, minimum 0.3, adjusted in 0.1-second increments), **Stride** (clusters per frame), **Loop** (repeat without settling). With **Scroll** off (default), each pool line is applied whole, one per tick, rotating 1..N and wrapping.
+- Random switches and automatic retries remain spaced at least 10 seconds apart. Marquee frames follow the configured Step (minimum 0.3 seconds); the first status change waits 10 seconds after startup. Start with dry-run.
 - Thai-safe: never splits vowel/tone clusters, never emits a blank frame.
 - Use `status-changer.exe` for the combined Random and Marquee interface with an Activity Log. It stores its settings, pools, and logs separately under `status-data\`; only one status mode runs at a time.
 
@@ -89,7 +89,7 @@ Status: login flow mapped; the status-update endpoint was captured from a logged
 - In Setup, enter up to ten statuses in the numbered single-line fields. **Save to webtext.db** saves each slot beside the app; **Start** also saves the current values and rotates through non-empty slots every 60 seconds by default until you press **Stop**.
 - In **Account & Session**, press **Open login page**, sign in in your browser, then copy `PHPSESSID=...` from the `profiles.camfrog.com/home.php` request in DevTools and paste it into the session field. Press **Login** to verify the current cookie; a signed-in result arms automation. For local development, `WEBAUTH_USER=PHPSESSID=REPLACE_ME` in the ignored `.env` file pre-fills the masked field; it does not verify or arm the session automatically. The cookie is never sent to the ZChat server.
 - With **Send live** enabled, **Start** verifies the current cookie if Login has not already armed the session, asks for confirmation, and begins rotation. **Stop** cancels the loop and disarms the session, so the next Start verifies again. Dry-run remains the default.
-- The GUI live rotation loop spaces successive submissions, including individual Marquee frames, at least 10 seconds apart; HTTP 429 retries also wait at least 10 seconds. Separate Web Status instances and changes made directly on Camfrog are not coordinated. Dry-run preview timing is unchanged.
+- The GUI live rotation loop spaces Random submissions at least 10 seconds apart. Marquee frames use the configured Step (minimum 0.3 seconds), and the first status change waits 10 seconds after startup; HTTP 429 retries also wait at least 10 seconds. Separate Web Status instances and changes made directly on Camfrog are not coordinated. Dry-run preview timing is unchanged.
 - Before each live POST, Web Status checks that the signed-in profile nickname matches the selected nickname and that the page provides a provider user ID. A mismatch or missing identity blocks the POST. The ID is not yet bound to a ZChat account registry.
 - A non-empty successful HTTP response means Camfrog acknowledged the request; Web Status does not independently read the profile back to prove the value changed. After a timeout, server error, or unrecognized response, the outcome is unknown. Check the profile before retrying.
 - The separate **Bot Manager** tab accepts a `cloudbot=...` parameter, verifies it against `www.camfrog.com`, and loads **Room**, **Profile**, and **Plugins**. For local development, `WEBAUTH_BOT_USER=cloudbot=REPLACE_ME` in the ignored `.env` file pre-fills the masked field; click **Connect** to verify it. The cookie is sent only to Camfrog. **Disconnect** clears this app's session; **Log out** ends the remote session.
@@ -123,7 +123,7 @@ This feature configures Camfrog's server-installed plugins; it does not create o
 - Room/IM: GUI **Save & Start** / **Stop**, or CLI `start` / `state` / `stop` (hidden, no window). Status apps: own **Start**/**Stop** + bundled worker.
 - Each app writes logs beside its own config (`camfrog_auto.log` for source CLI). Hot reload: editing `config.json` while running applies valid changes in ~3 s; invalid edits are rejected and logged.
 - The combined Status Changer Activity Log includes GUI actions and worker output. Completed status text appears when `log_message_text` is enabled. Its activity and worker logs are cleared daily at 12:00 local time while the app is running; if closed then, cleanup runs on the next launch.
-- Status Changer, Random, and Marquee show a disabled **Strict background (currently unsupported)** control. Their current Camfrog 8.5 submit path is not verified to preserve desktop state, so strict mode returns `BACKGROUND_UNSUPPORTED` before writing or submitting a status. Interactive sends may affect foreground focus.
+- Strict background submission remains unsupported and returns `BACKGROUND_UNSUPPORTED`. `best_effort_background` is disabled because combo submission can activate Camfrog and interrupt keyboard input. Workers refuse it before writing status text. Interactive paths wait for 2 seconds of user inactivity (`ZCHAT_USER_IDLE_MS` overrides this; 0 disables the wait) and defer after 120 seconds of continued activity. Status worker startup creates the data folder and waits for verified PID authorization before entering its loop.
 - Other status sends may require Camfrog in the foreground. Camfrog must be open (minimized is OK only if controls are still reachable — verify with Discover).
 
 ## 12. Troubleshooting
@@ -133,7 +133,7 @@ This feature configures Camfrog's server-installed plugins; it does not create o
 | `pywin32 ... no matching distribution` | Install CPython 3.12 64-bit, delete `.venv`, rerun `build.bat`. |
 | Auto-detect finds nothing | Open a chat room (not tray-minimized) and retry; then Discover controls. |
 | Old `requirements.txt (line 1)` pywinauto-only error | You run an older copy — extract the newest zip into a new empty folder. |
-| Status background worker refuses a live request | Expected while strict submission is unverified: it returns `BACKGROUND_UNSUPPORTED` before writing or submitting. Keep dry-run enabled; do not switch to interactive submission when desktop isolation is required. |
+| Status worker refuses a live request | Strict mode is expected to return `BACKGROUND_UNSUPPORTED`. Do not use `best_effort_background`; workers fail closed because it can interrupt keyboard input. Strict mode also remains unsupported until an isolated submit route is verified. Interactive mode waits for user inactivity but can still affect focus. |
 | Error sound on every status change | Try **combo Enter (test)** in dry-run mode first. Review the activity log before enabling live status changes. |
 | Wrong/old window driven | Fix **Window title regex**, re-run Auto-detect. |
 | Explorer shows old icon after rebuild | Windows icon cache: rename/move the exe or restart Explorer. |

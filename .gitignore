@@ -62,3 +62,6 @@ presence-evidence.sqlite3*
 
 # Local UI mockups (not part of the build).
 docs/mock/
+
+# Pinned GUI test-app checkout; fetched only by the Windows integration tests.
+windows_tests/fixtures/_cache/

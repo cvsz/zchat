@@ -29,6 +29,11 @@ read-only resources (`zchat://capabilities`, `zchat://health`). The client and
 server must provide matching protocol metadata and method/name headers. No
 account-scoped data or mutating tool is exposed.
 
+MCP 2026 cacheable results for `server/discover`, `tools/list`,
+`resources/list`, and `resources/read` advertise `ttlMs: 0` and
+`cacheScope: "private"`. Clients should treat these authenticated results as
+immediately stale and must not share them across authorization contexts.
+
 The protocol identifier is `zchat-zworkforce`, version `1.0`. The token is
 optional and the endpoint returns `503` until configured. Tokens shorter than
 32 characters are rejected. Capabilities return metadata only; health reports

@@ -69,8 +69,13 @@ _RESOURCES = [
 ]
 
 
-def _result(request_id: int | str, value: dict[str, Any]) -> JSONResponse:
+def _result(
+    request_id: int | str, value: dict[str, Any], *, cacheable: bool = False
+) -> JSONResponse:
     value.setdefault("resultType", "complete")
+    if cacheable:
+        value.setdefault("ttlMs", 0)
+        value.setdefault("cacheScope", "private")
     metadata = value.setdefault("_meta", {})
     metadata.setdefault(
         MCP_SERVER_INFO_META_KEY,
@@ -200,13 +205,13 @@ async def zworkforce_mcp(
                 }
             },
         }
-        return _result(request_id, result)
+        return _result(request_id, result, cacheable=True)
     if method == "ping":
         return _result(request_id, {})
     if method == "tools/list":
-        return _result(request_id, {"tools": _TOOLS})
+        return _result(request_id, {"tools": _TOOLS}, cacheable=True)
     if method == "resources/list":
-        return _result(request_id, {"resources": _RESOURCES})
+        return _result(request_id, {"resources": _RESOURCES}, cacheable=True)
     if method == "resources/read":
         if set(params) - {"uri", "_meta"}:
             return _error(request_id, -32602, "Invalid resources/read parameters.")
@@ -214,13 +219,13 @@ async def zworkforce_mcp(
         if uri == "zchat://capabilities":
             value = _capabilities(request)
             content = {"uri": uri, "mimeType": "application/json", "text": json.dumps(value)}
-            return _result(request_id, {"contents": [content]})
+            return _result(request_id, {"contents": [content]}, cacheable=True)
         if uri == "zchat://health":
             value = _health(db)
             if value is None:
                 return _error(request_id, -32003, "ZChat database is unavailable.")
             content = {"uri": uri, "mimeType": "application/json", "text": json.dumps(value)}
-            return _result(request_id, {"contents": [content]})
+            return _result(request_id, {"contents": [content]}, cacheable=True)
         return _error(request_id, -32004, "Resource not found.")
     if method == "tools/call":
         name = params.get("name")

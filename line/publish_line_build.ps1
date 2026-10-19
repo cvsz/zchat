@@ -10,6 +10,19 @@ $mutex = [System.Threading.Mutex]::new($false, 'Local\LINEStatusChanger')
 $ownsMutex = $false
 $movedOldDist = $false
 
+function Get-Sha256Hex([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $digest = $sha256.ComputeHash($stream)
+        return ([System.BitConverter]::ToString($digest)).Replace('-', '')
+    }
+    finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
 function Test-LineBuildManifest([string]$Directory) {
     $exePath = Join-Path $Directory 'line-status-changer.exe'
     $manifestPath = Join-Path $Directory 'SHA256SUMS.txt'
@@ -22,7 +35,7 @@ function Test-LineBuildManifest([string]$Directory) {
         return $false
     }
     $expected = $Matches[1]
-    $actual = (Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash
+    $actual = Get-Sha256Hex $exePath
     return $actual.Equals($expected, [System.StringComparison]::OrdinalIgnoreCase)
 }
 

@@ -66,6 +66,20 @@ Random Status, Marquee Status, and the combined Status Changer now acquire one s
 
 All three status applications now check strict-background submit capability before starting a live worker through either the GUI launcher, CLI `start`, or the worker `run` entry point. An unsupported provider path exits with `BACKGROUND_UNSUPPORTED` before spawning a process or entering the retry loop. Marquee's strict-mode recovery also preserves that result instead of falling through to legacy UI Automation discovery, which previously added a misleading process-selection error after the write had already been refused. Dry-run workers remain non-mutating.
 
+## Follow-up: fresh-install worker startup (2026-10-19)
+
+The exact-head CI run for the worker-startup changes exposed a fresh-install
+failure: the launcher attempted to unlink/create PID and start-gate files before
+the status data directory existed. Authorization-file creation then failed,
+and the GUI could report startup failure while the child was still alive. All
+three status applications now create their data directory before reading or
+changing those lifecycle files. A regression test starts the combined app with
+an absent data directory and verifies it is created before PID authorization.
+Local validation: 235 targeted status GUI/split tests passed plus repository
+validation. Windows packaged runtime and Camfrog provider behavior remain
+unverified until the exact PR head passes Windows CI and a controlled Windows
+runtime check.
+
 A later Windows 11 x64 build on Python 3.12.10 / PyInstaller 6.22.3 produced separate candidate executables at `dist/status-marquee-candidate/status-marquee.exe`, `dist/status-random-candidate/status-random.exe`, and `dist/status-changer-candidate/status-changer.exe`. Their SHA-256 values are `e66fa547f2a11f2660344e4e8d9e5c3ce326756276899d53453c395fd38bcf96`, `427f6388b43c7e007501b954f29f6762284840e32eb1e0e8bbb25897264ba746`, and `03503f9076e7c0305ea4fb2e44dc7314156286e175e4e99279e9765c7e57a0f5`, respectively. All three packaged `--worker --help` smoke checks succeeded. Isolated live-start checks returned exit code 2 before leaving a worker process. These candidate builds were produced from a dirty worktree in an elevated terminal and are unsigned; they are local test artifacts, not release artifacts. No external Camfrog status was changed or verified.
 
 The local emergency-stop registry stores active stops and their audit history in a per-user SQLite database so separate ZChat processes on the same machine observe the same stop. The status executor checks that stop before staging text and again immediately before submitting it. A stop racing after the final check cannot cancel a submitted Win32 message. This is local process coordination only; it does not provide multi-machine authority, tamper-proof audit storage, or an inventory of all in-flight operations.

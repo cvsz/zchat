@@ -3273,6 +3273,8 @@ class PrivateChatManager:
         self.clipboard_controller = PrivateChatClipboardController(self.root)
         self.clipboard_controller.install(self.root)
         self.root.after(200, self.refresh)
+        if not self.embedded:
+            self.root.after(1000, self._discover_controls_on_start)
 
         def auto_update():
             if check_for_update("chat-im-private.exe"):
@@ -3340,6 +3342,44 @@ class PrivateChatManager:
         except Exception as exc:
             self.status.set(f"Could not discover controls: {exc}")
 
+    def _discover_controls_on_start(self):
+        """Discover and persist valid selectors without blocking the GUI thread."""
+        if self.embedded:
+            return
+
+        import contextlib
+        import io
+        import threading
+
+        config = self.config
+        path = self.config_path
+
+        def work():
+            output = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(output):
+                    code = cmd_detect(config, path, apply=True)
+                updated = load_private_config(path) if code == 0 else None
+                lines = output.getvalue().strip().splitlines()
+                message = lines[-1] if lines else (
+                    "Camfrog controls discovered and saved." if code == 0
+                    else "No Camfrog controls found; open Camfrog and retry discovery.")
+            except Exception as exc:
+                code, updated = 1, None
+                message = f"Automatic control discovery failed: {type(exc).__name__}: {exc}"
+
+            def finish():
+                if updated is not None:
+                    self.config = updated
+                self.status.set(message)
+
+            try:
+                self.root.after(0, finish)
+            except Exception:
+                pass
+
+        threading.Thread(target=work, name="camfrog-control-discovery", daemon=True).start()
+
     def refresh(self):
         try:
             self.save_filters(refresh_after=False, silent=True)
@@ -3384,7 +3424,7 @@ class PrivateChatManager:
 # Read-only GitHub API (no token needed for public repos, stdlib only). Each
 # packaged app checks the same repo's latest release and downloads only its
 # own executable asset, verified against the release's SHA256SUMS.txt.
-APP_VERSION = "2.19.2"
+APP_VERSION = "2.19.3"
 GITHUB_REPO = os.environ.get("CAMFROG_UPDATE_REPO", "cvsz/zchat")
 UPDATE_ASSET_SUMS = "SHA256SUMS.txt"
 
