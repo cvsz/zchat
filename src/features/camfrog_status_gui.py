@@ -5,6 +5,7 @@ from contextlib import closing
 import ctypes
 import datetime as dt
 import json
+import math
 import logging
 import logging.handlers
 import os
@@ -107,8 +108,8 @@ class SingleInstanceGuard:
                     if length > 0:
                         title = ctypes.create_unicode_buffer(256)
                         self.user32.GetWindowTextW(hwnd, title, 256)
-                        expected = ("Camfrog Status Changer" if self.mode == "both" else
-                                    f"Camfrog {self.mode.title()} Status")
+                        expected = ("ZChat Status Changer" if self.mode == "both" else
+                                    f"ZChat {self.mode.title()} Status")
                         if expected in title.value:
                             found.append(hwnd)
                             # Found it - send restore message
@@ -211,7 +212,7 @@ S = {
     "e_regex": ("window_title_regex invalid: {e}", "window_title_regex ไม่ถูกต้อง: {e}"),
     "e_hours": ("active_hours start/end must be HH:MM", "active_hours start/end ต้องเป็นรูปแบบ HH:MM"),
     "e_msgs": ("status.messages is empty", "status.messages ว่างเปล่า"),
-    "e_interval": ("status.interval_seconds must be >= 0.3", "status.interval_seconds ต้องไม่น้อยกว่า 0.3"),
+    "e_interval": ("status.interval_seconds must be >= 10 seconds", "status.interval_seconds ต้องไม่น้อยกว่า 10 วินาที"),
     "e_sel": ("{k} must be a selector object", "{k} ต้องเป็น object ของ selector"),
     "e_delay": ("autoreply.delay_range_seconds must be [min, max] with 0 <= min <= max",
                 "autoreply.delay_range_seconds ต้องเป็น [min, max] โดย 0 <= min <= max"),
@@ -235,9 +236,10 @@ S = {
     "no_window": ("Camfrog window not found (check window_title_regex)",
                   "ไม่พบหน้าต่าง Camfrog (ตรวจ window_title_regex)"),
     "no_ctrl": ("control not found: {spec} (matches={n})", "ไม่พบ control: {spec} (พบ {n} รายการ)"),
-    "status_set": ("status set: {text}", "ตั้ง status แล้ว: {text}"),
-    "bg_status_applied": ("background status applied: {text}",
-                          "ตั้งสถานะเบื้องหลังแล้ว: {text}"),
+    "status_set": ("status submission dispatched (provider outcome unverified): {text}", "ส่งคำสั่ง status แล้ว (ยังไม่ยืนยันผลจาก Camfrog): {text}"),
+    "bg_status_client_confirmed": (
+        "Camfrog client shows the status (external state unverified): {text}",
+        "หน้าต่าง Camfrog แสดงสถานะนี้แล้ว (ยังไม่ยืนยันสถานะภายนอก): {text}"),
     "bg_status_failed": ("background status failed (state={state}, code={code})",
                          "ตั้งสถานะเบื้องหลังไม่สำเร็จ (state={state}, code={code})"),
     "status_fail": ("status commit failed", "ตั้ง status ไม่สำเร็จ"),
@@ -311,8 +313,8 @@ S = {
     "why_sender": ("sender filtered", "กรองผู้ส่ง"),
     "why_link": ("contains a link", "มีลิงก์"),
     "why_pattern": ("matches skip_patterns", "ตรงกับ skip_patterns"),
-    "e_marquee": ("status.marquee invalid: width 8-80 (and <= status.max_length), stride 1..width, step_seconds >= 0.3, cycles 1-5, max_frames 5-300",
-                  "status.marquee ไม่ถูกต้อง: width 8-80 (และไม่เกิน status.max_length), stride 1..width, step_seconds >= 0.3, cycles 1-5, max_frames 5-300"),
+    "e_marquee": ("status.marquee invalid: width 8-80 (and <= status.max_length), stride 1..width, step_seconds >= 10 seconds, cycles 1-5, max_frames 5-300",
+                  "status.marquee ไม่ถูกต้อง: width 8-80 (และไม่เกิน status.max_length), stride 1..width, step_seconds >= 10 seconds, cycles 1-5, max_frames 5-300"),
     "e_cycle": ("status.language_cycle items must be th or en", "status.language_cycle ต้องเป็น th หรือ en เท่านั้น"),
     "e_hmode": ("status.history.mode must be rotate, random or most_used", "status.history.mode ต้องเป็น rotate, random หรือ most_used"),
     "e_hmax": ("status.history.max_items must be 5-500 and file must be set", "status.history.max_items ต้อง 5-500 และต้องตั้ง file"),
@@ -403,7 +405,7 @@ DEFAULTS = {
                "max_consecutive_failures": 5},
     "status": {
         "enabled": True,
-        "execution_mode": "interactive",  # or "strict_background" (no focus/input/clipboard/sound changes)
+        "execution_mode": "strict_background",
         "edit": {"class_name": "Edit", "auto_id": "1001", "index": 0},
         "apply_button": None,
         "background_enter_target": "edit",  # experimental "combo" targets the parent CComboBoxTS
@@ -411,7 +413,7 @@ DEFAULTS = {
         "language_mode": "both", "retry_seconds": 30, "max_length": 120, "messages": [],
         "schedules": [],
         "language_cycle": [],
-        "marquee": {"enabled": False, "scroll": False, "width": 28, "stride": 2, "step_seconds": 0.5,
+        "marquee": {"enabled": False, "scroll": False, "width": 28, "stride": 2, "step_seconds": 10,
                     "separator": "   \u2022   ", "cycles": 1, "max_frames": 80, "infinite_loop": False},
         "history": {"enabled": True, "file": "camfrog_status_changer_history.json", "max_items": 50,
                     "record": True, "use_as_source": False, "seed_from_messages": True,
@@ -455,7 +457,22 @@ def deep_merge(base: dict, over: dict) -> dict:
 
 def load_cfg(path: Union[str, Path]) -> dict:
     with Path(path).open(encoding="utf-8-sig") as f:  # Notepad may add a BOM
-        return deep_merge(DEFAULTS, json.load(f))
+        config = deep_merge(DEFAULTS, json.load(f))
+    status = config.get("status", {})
+    try:
+        interval = float(status.get("interval_seconds", RANDOM_INTERVAL_MIN))
+        if math.isfinite(interval):
+            status["interval_seconds"] = max(RANDOM_INTERVAL_MIN, interval)
+    except (TypeError, ValueError, OverflowError):
+        pass
+    marquee = status.get("marquee", {})
+    try:
+        step = float(marquee.get("step_seconds", MARQUEE_STEP_MIN))
+        if math.isfinite(step):
+            marquee["step_seconds"] = max(MARQUEE_STEP_MIN, step)
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return config
 
 def parse_hm(s: str) -> dt.time:
     h, m = str(s).split(":")
@@ -536,7 +553,7 @@ def _validate(cfg, errs, warns):
     if st["enabled"]:
         if not st["messages"]:
             errs.append(t("e_msgs"))
-        if st["interval_seconds"] < 0.3:
+        if st["interval_seconds"] < RANDOM_INTERVAL_MIN:
             errs.append(t("e_interval"))
         if st["language_mode"] not in ("th", "en", "both", "alternate"):
             errs.append(t("e_mode"))
@@ -552,7 +569,7 @@ def _validate(cfg, errs, warns):
             scroll = mq.get("scroll", False)
             if mq["enabled"] and scroll and not (8 <= mq["width"] <= 80 and mq["width"] <= st["max_length"]
                                       and 1 <= mq["stride"] <= mq["width"]
-                                      and mq["step_seconds"] >= 0.3
+                                      and mq["step_seconds"] >= MARQUEE_STEP_MIN
                                       and (inf or (1 <= mq["cycles"] <= 5))
                                       and 5 <= mq["max_frames"] <= 300):
                 errs.append(t("e_marquee"))
@@ -686,7 +703,7 @@ def is_own_gui_window(win) -> bool:
     try:
         title = win.window_text()
         if title and title.startswith((
-                "Camfrog Status Changer", "Camfrog Random Status", "Camfrog Marquee Status")):
+                "ZChat Status Changer", "ZChat Random Status", "ZChat Marquee Status")):
             return True
     except Exception:
         pass
@@ -1011,9 +1028,9 @@ def commit_background(text: str, dry: bool = False, pid: Optional[int] = None) -
     - Submits Enter via PostMessage without global keyboard/mouse injection.
     - Does not modify the clipboard.
     - Does not modify Windows sound-registry values.
-    - Verifies the applied status before reporting success.
+    - Confirms the local Camfrog client state; external provider status remains unverified.
 
-    Returns True if the status was verified as applied, False otherwise.
+    Returns True if the requested text is confirmed in the client UI, False otherwise.
     """
     if dry:
         log.info(t("dry_send", text=shown(text)))
@@ -1022,6 +1039,7 @@ def commit_background(text: str, dry: bool = False, pid: Optional[int] = None) -
     try:
         from camfrog_status_engine import (
             BackgroundStatusExecutor,
+            EmergencyStopScope,
             ExecutionMode,
             StatusResultState,
         )
@@ -1031,6 +1049,8 @@ def commit_background(text: str, dry: bool = False, pid: Optional[int] = None) -
 
     executor = BackgroundStatusExecutor(
         default_mode=ExecutionMode.STRICT_BACKGROUND,
+        emergency_scope=EmergencyStopScope.FEATURE,
+        emergency_resource_key="camfrog.status",
     )
     try:
         evidence = executor.execute_status_change(
@@ -1045,8 +1065,8 @@ def commit_background(text: str, dry: bool = False, pid: Optional[int] = None) -
         log.error(t("bg_status_failed", state="EXECUTION_ERROR", code=str(exc)[:120]))
         return False
 
-    if evidence.result_state == StatusResultState.VERIFIED_APPLIED.value:
-        log.info(t("bg_status_applied", text=shown(text)))
+    if evidence.result_state == StatusResultState.CLIENT_STATE_CONFIRMED.value:
+        log.info(t("bg_status_client_confirmed", text=shown(text)))
         return True
     log.error(t("bg_status_failed", state=evidence.result_state, code=evidence.error_code))
     return False
@@ -1276,6 +1296,17 @@ def worker_cmd(args):
 
 def cmd_start_worker(cfg, args):
     """Start this app's hidden status worker in the background."""
+    if (not cfg.get("dry_run", True)
+            and cfg.get("status", {}).get("enabled", True)):
+        try:
+            from camfrog_status_engine import strict_background_submit_supported
+            supported = strict_background_submit_supported()
+        except (ImportError, AttributeError):
+            supported = False
+        if not supported:
+            print(t("bg_status_failed", state="BACKGROUND_UNSUPPORTED",
+                    code="STRICT_SUBMIT_UNVERIFIED"))
+            return 2
     pid = running_pid(cfg)
     if pid:
         print(t("already_running", pid=pid))
@@ -1923,9 +1954,9 @@ class ClipboardController:
 
 
 RUNTIME_CONFIG = "camfrog-status-runtime.json"
-MARQUEE_STEP_MIN = 0.3
+MARQUEE_STEP_MIN = 10
 MARQUEE_STRIDE_DEFAULT = 2
-RANDOM_INTERVAL_MIN = 0.3
+RANDOM_INTERVAL_MIN = 10
 RANDOM_INTERVAL_DEFAULT = 600
 RANDOM_INTERVAL_MAX = 86400
 STATUS_SLOTS = 10
@@ -2015,6 +2046,7 @@ def runtime_config(config):
     """Build isolated worker settings with PID and stop files owned by this app."""
     runtime = copy.deepcopy(config)
     status = runtime.setdefault("status", {})
+    status["execution_mode"] = "strict_background"
     if STATUS_MODE == "random":
         status["random"] = True
         status.setdefault("marquee", {})["enabled"] = False
@@ -2045,7 +2077,7 @@ def write_config(path, config):
 
 def apply_status_text(config_path, text):
     """Apply one status with the saved safety settings, discovering controls if needed."""
-    config = load_cfg(config_path)
+    config = runtime_config(load_cfg(config_path))
     try:
         return cmd_status(config, text)
     except (LookupError, RuntimeError):
@@ -2056,7 +2088,7 @@ def apply_status_text(config_path, text):
                 "Cannot find Camfrog window. Is Camfrog running?",
                 "ไม่พบหน้าต่าง Camfrog เปิดแล้วหรือยัง")) from exc
         if detected == 0:
-            return cmd_status(load_cfg(config_path), text)
+            return cmd_status(runtime_config(load_cfg(config_path)), text)
         raise RuntimeError(t(
             "Could not find status controls. Open a chat room in Camfrog and retry.",
             "ไม่พบ control ของ status เปิดห้องแชทใน Camfrog แล้วลองใหม่"))
@@ -2074,7 +2106,7 @@ def build_app():
             self.root.configure(background="#f4f1e8")
             self.app_name = {"random": "Random Status", "marquee": "Marquee Status"}.get(
                 STATUS_MODE, "Status Changer")
-            self.root.title(f"Camfrog {self.app_name}")
+            self.root.title(f"ZChat {self.app_name}")
             self.root.geometry("430x650")
             self.root.minsize(430, 650)
             self.root.resizable(True, True)
@@ -2093,7 +2125,7 @@ def build_app():
             try:
                 self.config = load_cfg(self.config_path)
             except Exception as exc:
-                messagebox.showerror(f"Camfrog {self.app_name}", str(exc), parent=self.root)
+                messagebox.showerror(f"ZChat {self.app_name}", str(exc), parent=self.root)
                 self.root.destroy()
                 raise SystemExit(2)
             global LANG
@@ -2126,7 +2158,7 @@ def build_app():
             try:
                 self._load_fields()
             except (OSError, sqlite3.Error) as exc:
-                messagebox.showerror(f"Camfrog {self.app_name}", str(exc), parent=self.root)
+                messagebox.showerror(f"ZChat {self.app_name}", str(exc), parent=self.root)
                 self.root.destroy()
                 raise SystemExit(2)
             for variable in (self.random_fields + self.marquee_fields
@@ -2284,12 +2316,13 @@ def build_app():
             ).pack(side="left")
             ttk.Checkbutton(
                 options,
-                text=self._tr("Try combo Enter (test)", "ลอง Enter ที่ combo"),
+                text=self._tr("Strict background (currently unsupported)",
+                              "ทำงานเบื้องหลังแบบเข้มงวด (ยังไม่รองรับ)"),
                 variable=self.combo_enter,
-                command=self.schedule_save,
+                state="disabled",
             ).pack(side="left", padx=(8, 0))
             self._build_actions(outer)
-            ttk.Label(outer, text=f"CAMFROG {self.app_name.upper()}", style="Brand.TLabel",
+            ttk.Label(outer, text=f"ZCHAT {self.app_name.upper()}", style="Brand.TLabel",
                       anchor="center").pack(fill="x")
             if STATUS_MODE == "both":
                 self.tabs.select(1 if self.mode == "marquee" else 0)
@@ -2642,7 +2675,7 @@ def build_app():
             except Exception as exc:
                 logging.exception("Could not prepare a clean Status Changer exit")
                 messagebox.showerror(
-                    f"Camfrog {self.app_name}",
+                    f"ZChat {self.app_name}",
                     self._tr(
                         f"Could not verify worker shutdown: {exc}",
                         f"ตรวจสอบการหยุด worker ไม่สำเร็จ: {exc}"),
@@ -2743,7 +2776,7 @@ def main(argv=None):
         except ImportError as exc:
             print(f"Standalone status worker is unavailable: {exc}")
             return 1
-        return run_status_worker(argv)
+        return run_status_worker(argv, force_strict_background=True)
 
     # Handle --cleanup-mutex before single-instance guard
     if "--cleanup-mutex" in argv:
@@ -2752,7 +2785,7 @@ def main(argv=None):
             return 2
         return 0 if SingleInstanceGuard.force_cleanup() else 1
 
-    parser = argparse.ArgumentParser(description="Camfrog Status Changer")
+    parser = argparse.ArgumentParser(description="ZChat Status Changer")
     parser.add_argument("--config", help="use an alternate app-local config")
     parser.add_argument("--allow-multiple", action="store_true",
                         help="allow a second GUI instance")

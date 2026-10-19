@@ -7,7 +7,7 @@ Safety guarantees
 -----------------
 - MUST NOT call os.kill() or subprocess on any Camfrog client PID.
 - MUST NOT modify the Windows registry.
-- Audit records are preserved permanently even after deactivation.
+- Stop and deactivation records persist locally across process restarts.
 - All public operations are thread-safe.
 - Works on Linux and Windows (no Windows-only module-level imports).
 - Deactivation is always explicit; stops do not auto-expire.
@@ -19,13 +19,17 @@ Safety guarantees
 
 from __future__ import annotations
 
+import argparse
+import json
+import os
+import sqlite3
 import threading
 import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
-
 
 # ---------------------------------------------------------------------------
 # Scope enumeration
@@ -83,8 +87,8 @@ class EmergencyStopReason:
     affected_resources:
         Optional list of specific resource keys affected (empty = all within scope).
     active:
-        ``True`` while the stop is in force; ``False`` after explicit deactivation.
-        Set by :class:`EmergencyStopRegistry` — callers must not mutate this directly.
+        Snapshot of whether the stop was active when this record was returned or read.
+        Query the registry again for current state; callers should not mutate this field.
     deactivated_at:
         UNIX epoch timestamp when the stop was explicitly deactivated, or ``None``.
     """
@@ -112,15 +116,17 @@ class EmergencyStopReason:
 
 
 # ---------------------------------------------------------------------------
-# Registry — singleton
+# Registry — process singleton backed by local SQLite
 # ---------------------------------------------------------------------------
 
 class EmergencyStopRegistry:
-    """Singleton registry that tracks all active and historical emergency stops.
+    """Singleton view of a persistent, process-shared local stop registry.
 
     Thread Safety
     -------------
-    All public methods acquire the internal ``_lock`` before mutating state.
+    SQLite serializes mutations across independent ZChat processes, while the
+    Python lock serializes threads. The store is local to one OS user profile;
+    it is not a multi-machine lease authority.
 
     Scope Hierarchy
     ---------------
@@ -131,9 +137,8 @@ class EmergencyStopRegistry:
 
     Audit Preservation
     ------------------
-    ``_audit_log`` accumulates all stop events permanently.  Even after
-    ``deactivate`` is called, the original :class:`EmergencyStopReason` record
-    (with ``active=False`` and ``deactivated_at`` filled in) remains in the log.
+    Stop events remain in the local SQLite audit table after deactivation.
+    They are not tamper-proof against local administrators or disk loss.
     """
 
     _instance: Optional["EmergencyStopRegistry"] = None
@@ -144,12 +149,78 @@ class EmergencyStopRegistry:
             if cls._instance is None:
                 obj = super().__new__(cls)
                 obj._lock = threading.RLock()
-                # Maps stop_id -> EmergencyStopReason (active entries only)
-                obj._active_stops: Dict[str, EmergencyStopReason] = {}
-                # Permanent audit trail — never cleared
-                obj._audit_log: List[EmergencyStopReason] = []
                 cls._instance = obj
             return cls._instance
+
+    @staticmethod
+    def _storage_path() -> Path:
+        """Return the per-user store path, with an explicit test override."""
+        override = os.environ.get("ZCHAT_EMERGENCY_STOP_DB")
+        if override:
+            return Path(override).expanduser()
+        if os.name == "nt":
+            root = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData/Local")
+        else:
+            root = Path(
+                os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state"
+            )
+        return root / "ZChat" / "emergency-stops.sqlite3"
+
+    def _connect(self) -> sqlite3.Connection:
+        path = self._storage_path()
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if os.name != "nt":
+            try:
+                path.parent.chmod(0o700)
+            except OSError:
+                pass
+        connection = sqlite3.connect(path, timeout=10.0)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA busy_timeout = 10000")
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS emergency_stops (
+                stop_id TEXT PRIMARY KEY,
+                scope TEXT NOT NULL CHECK (scope IN ('GLOBAL', 'MACHINE', 'AGENT', 'ACCOUNT', 'FEATURE')),
+                reason_code TEXT NOT NULL,
+                operator_id TEXT NOT NULL,
+                timestamp REAL NOT NULL,
+                affected_resources TEXT NOT NULL,
+                active INTEGER NOT NULL CHECK (active IN (0, 1)),
+                deactivated_at REAL
+            )
+            """
+        )
+        if os.name != "nt":
+            try:
+                path.chmod(0o600)
+            except OSError:
+                pass
+        return connection
+
+    @staticmethod
+    def _reason_from_row(row: sqlite3.Row) -> EmergencyStopReason:
+        reason = EmergencyStopReason(
+            scope=EmergencyStopScope(row["scope"]),
+            reason_code=row["reason_code"],
+            operator_id=row["operator_id"],
+            timestamp=float(row["timestamp"]),
+            affected_resources=json.loads(row["affected_resources"]),
+            stop_id=row["stop_id"],
+        )
+        reason.active = bool(row["active"])
+        reason.deactivated_at = row["deactivated_at"]
+        return reason
+
+    def _load_active_stops(self) -> Dict[str, EmergencyStopReason]:
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                "SELECT * FROM emergency_stops WHERE active = 1 ORDER BY rowid"
+            ).fetchall()
+            return {row["stop_id"]: self._reason_from_row(row) for row in rows}
+        finally:
+            connection.close()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -163,7 +234,7 @@ class EmergencyStopRegistry:
         """Return active stops that cover *scope* + *resource_key*."""
         target_rank = _scope_rank(scope)
         results: List[EmergencyStopReason] = []
-        for stop in self._active_stops.values():
+        for stop in self._load_active_stops().values():
             stop_rank = _scope_rank(stop.scope)
             if stop_rank > target_rank:
                 # This stop is narrower than the requested scope; skip.
@@ -209,7 +280,7 @@ class EmergencyStopRegistry:
         Returns
         -------
         EmergencyStopReason
-            The newly created stop record.
+            A snapshot receipt for the newly persisted stop record.
         """
         with self._lock:
             reason = EmergencyStopReason(
@@ -218,8 +289,31 @@ class EmergencyStopRegistry:
                 operator_id=operator_id,
                 affected_resources=list(affected_resources or []),
             )
-            self._active_stops[reason.stop_id] = reason
-            self._audit_log.append(reason)
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(
+                    """
+                    INSERT INTO emergency_stops
+                    (stop_id, scope, reason_code, operator_id, timestamp,
+                     affected_resources, active, deactivated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, 1, NULL)
+                    """,
+                    (
+                        reason.stop_id,
+                        reason.scope.value,
+                        reason.reason_code,
+                        reason.operator_id,
+                        reason.timestamp,
+                        json.dumps(reason.affected_resources, ensure_ascii=False),
+                    ),
+                )
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
             return reason
 
     def deactivate(
@@ -249,21 +343,33 @@ class EmergencyStopRegistry:
         """
         now = time.time()
         with self._lock:
-            to_deactivate: List[str] = []
-            for stop_id, stop in self._active_stops.items():
-                if stop.scope != scope:
-                    continue
-                if resource_key is None:
-                    to_deactivate.append(stop_id)
-                elif resource_key in stop.affected_resources:
-                    to_deactivate.append(stop_id)
-
-            for stop_id in to_deactivate:
-                stop = self._active_stops.pop(stop_id)
-                stop.active = False
-                stop.deactivated_at = now
-
-            return len(to_deactivate) > 0
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                rows = connection.execute(
+                    "SELECT stop_id, affected_resources FROM emergency_stops "
+                    "WHERE scope = ? AND active = 1",
+                    (scope.value,),
+                ).fetchall()
+                selected = [
+                    row["stop_id"]
+                    for row in rows
+                    if resource_key is None
+                    or resource_key in json.loads(row["affected_resources"])
+                ]
+                if selected:
+                    connection.executemany(
+                        "UPDATE emergency_stops SET active = 0, deactivated_at = ? "
+                        "WHERE stop_id = ? AND active = 1",
+                        [(now, stop_id) for stop_id in selected],
+                    )
+                connection.commit()
+                return bool(selected)
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
 
     def is_stopped(
         self,
@@ -289,7 +395,7 @@ class EmergencyStopRegistry:
     def get_active_stops(self) -> List[EmergencyStopReason]:
         """Return a snapshot list of all currently active stop records."""
         with self._lock:
-            return list(self._active_stops.values())
+            return list(self._load_active_stops().values())
 
     def get_audit_log(self) -> List[Dict[str, Any]]:
         """Return the full, permanent audit log as a list of dicts.
@@ -297,7 +403,14 @@ class EmergencyStopRegistry:
         Records are never removed, even after deactivation.
         """
         with self._lock:
-            return [entry.as_dict() for entry in self._audit_log]
+            connection = self._connect()
+            try:
+                rows = connection.execute(
+                    "SELECT * FROM emergency_stops ORDER BY rowid"
+                ).fetchall()
+                return [self._reason_from_row(row).as_dict() for row in rows]
+            finally:
+                connection.close()
 
     # ------------------------------------------------------------------
     # Test / maintenance helpers
@@ -306,8 +419,16 @@ class EmergencyStopRegistry:
     def _reset_for_testing(self) -> None:
         """Clear all state.  ONLY call this from test code."""
         with self._lock:
-            self._active_stops.clear()
-            self._audit_log.clear()
+            connection = self._connect()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute("DELETE FROM emergency_stops")
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
 
 
 # ---------------------------------------------------------------------------
@@ -511,3 +632,48 @@ class EmergencyStopHook:
             registry=self.stop_registry,
             description=description,
         )
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """Manage the machine-local emergency-stop registry from a terminal."""
+    parser = argparse.ArgumentParser(description="Manage local ZChat emergency stops.")
+    commands = parser.add_subparsers(dest="command", required=True)
+    choices = [scope.value for scope in EmergencyStopScope]
+
+    activate = commands.add_parser("activate", help="Persist an emergency stop.")
+    activate.add_argument("--scope", choices=choices, required=True)
+    activate.add_argument("--reason", required=True)
+    activate.add_argument("--operator", required=True)
+    activate.add_argument("--resource", action="append", default=[])
+
+    deactivate = commands.add_parser("deactivate", help="Explicitly deactivate a stop.")
+    deactivate.add_argument("--scope", choices=choices, required=True)
+    deactivate.add_argument("--resource")
+
+    commands.add_parser("status", help="List active machine-local emergency stops.")
+    args = parser.parse_args(argv)
+    registry = EmergencyStopRegistry()
+
+    if args.command == "activate":
+        reason = registry.activate(
+            EmergencyStopScope(args.scope),
+            args.reason,
+            args.operator,
+            affected_resources=args.resource,
+        )
+        print(json.dumps({"activated": True, "stop": reason.as_dict()}, ensure_ascii=False))
+        return 0
+    if args.command == "deactivate":
+        changed = registry.deactivate(
+            EmergencyStopScope(args.scope), resource_key=args.resource
+        )
+        print(json.dumps({"deactivated": changed, "scope": args.scope}, ensure_ascii=False))
+        return 0 if changed else 1
+
+    active = [reason.as_dict() for reason in registry.get_active_stops()]
+    print(json.dumps({"active_stops": active}, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

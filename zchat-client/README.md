@@ -1,6 +1,6 @@
 # ZChat Agent Chat Client
 
-`zchat-client` is a Windows desktop client for the internal chat endpoints in `control-server`. It uses an agent token and the account currently assigned to that agent. It does not automate Camfrog, connect to Camfrog's network, or implement a Camfrog-compatible protocol.
+`zchat-client` is a Windows desktop client for the internal chat endpoints in `control-server`. It uses an agent token and the account currently assigned to that agent. Its shell embeds the shared Camfrog Status Changer module (including Random and Marquee modes), a Private Chat window manager, and a read-only process monitor. The Private Chat page only discovers and lists windows and activates one only after an explicit user action; it does not read or send messages. The client does not launch the standalone feature executables or connect to Camfrog's proprietary network protocol. The remaining Camfrog feature applications are not embedded yet.
 
 ## Run from source
 
@@ -11,7 +11,7 @@ python -m pip install -r zchat-client/requirements.txt
 python zchat-client/main.py
 ```
 
-The launcher adds the local `control-server/src` package to the import path. The server must be reachable and expose the agent chat routes listed in [`control-server/README.md`](../control-server/README.md).
+The launcher adds the local `control-server/src`, `src/camfrog`, and `src/features` packages to the import path. The server must be reachable and expose the agent chat routes listed in [`control-server/README.md`](../control-server/README.md). Opening Status Changer or Private Chat loads the same source module used by its standalone build. Each module stores configuration under a client-specific data directory; embedded Private Chat does not run its standalone self-update check.
 
 ## Build the Windows executable
 

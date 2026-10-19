@@ -3,6 +3,24 @@ chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
 
+rem --- Capture the entire build to a local log outside the checkout ---
+if defined ZCHAT_FULL_BUILD_LOG_CHILD goto :build_main
+if exist ".venv\Scripts\python.exe" goto :use_project_python
+where py >nul 2>nul
+if errorlevel 1 goto :missing_python
+py -3 "tools\full_build_logger.py" "%~f0" %*
+exit /b %errorlevel%
+
+:use_project_python
+".venv\Scripts\python.exe" "tools\full_build_logger.py" "%~f0" %*
+exit /b %errorlevel%
+
+:missing_python
+echo ERROR: Python is required for full-build logging.
+exit /b 1
+
+:build_main
+
 echo ============================================================
 echo FULL BUILD: Camfrog feature apps + line-status-changer + zchat-client
 echo ============================================================
@@ -95,6 +113,10 @@ if not exist line\dist\line-status-changer.exe (
     echo ERROR: line\dist\line-status-changer.exe not found
     exit /b 1
 )
+if not exist line\dist\SHA256SUMS.txt (
+    echo ERROR: line\dist\SHA256SUMS.txt not found
+    exit /b 1
+)
 if not exist line\dist\line_config.json (
     echo ERROR: line\dist\line_config.json not found
     exit /b 1
@@ -165,6 +187,7 @@ echo   camfrog-features-windows.zip
 echo   dist\SHA256SUMS.txt
 echo   dist\BUILD_SOURCE.txt
 echo   line\dist\line-status-changer.exe
+echo   line\dist\SHA256SUMS.txt
 echo   line\dist\line_config.json
 echo.
 echo Build only: no Git staging, commit, or push is performed.

@@ -1,5 +1,6 @@
 services:
   db:
+    container_name: zchat_postgres
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: ${POSTGRES_DB:?Run python -m camfrog_control_server.local_setup before a new local stack}
@@ -15,6 +16,7 @@ services:
     restart: unless-stopped
 
   control-server:
+    container_name: zchat-api
     build: .
     depends_on:
       db:
@@ -23,6 +25,7 @@ services:
       DATABASE_URL: ${DATABASE_URL:?Run python -m camfrog_control_server.local_setup before a new local stack}
       CONTROL_ADMIN_TOKEN: ${CONTROL_ADMIN_TOKEN:?Run python -m camfrog_control_server.local_setup before a new local stack}
       CONTROL_JWT_SECRET: ${CONTROL_JWT_SECRET:?Run python -m camfrog_control_server.local_setup before a new local stack}
+      CONTROL_ZWORKFORCE_INTEGRATION_TOKEN: ${CONTROL_ZWORKFORCE_INTEGRATION_TOKEN:-}
       CONTROL_DOCS_ENABLED: ${CONTROL_DOCS_ENABLED:?Run python -m camfrog_control_server.local_setup before a new local stack}
       CONTROL_COMMAND_LEASE_SECONDS: ${CONTROL_COMMAND_LEASE_SECONDS:?Run python -m camfrog_control_server.local_setup before a new local stack}
       CONTROL_COMMAND_MAX_ATTEMPTS: ${CONTROL_COMMAND_MAX_ATTEMPTS:?Run python -m camfrog_control_server.local_setup before a new local stack}
@@ -42,3 +45,4 @@ services:
 
 volumes:
   postgres_data:
+    name: zchat_postgres_data

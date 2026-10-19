@@ -35,6 +35,7 @@ if exist app.ico (
     --collect-all pywinauto --collect-submodules comtypes line_status_gui.py || goto :fail
 )
 if not exist "%STAGE%\line-status-changer.exe" goto :fail
+"%PY%" tools\write_build_manifest.py "%STAGE%" || goto :fail
 
 rem Keep the user's live settings when rebuilding; fall back to the source config,
 rem then create a clean default config for a fresh checkout.
@@ -50,9 +51,10 @@ if exist "dist\line_config.json" (
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0publish_line_build.ps1" || goto :fail
 
 if not exist dist\line-status-changer.exe goto :fail
+if not exist dist\SHA256SUMS.txt goto :fail
 if not exist dist\line_config.json goto :fail
 echo.
-echo BUILD OK: dist\line-status-changer.exe with separate line_config.json
+echo BUILD OK: dist\line-status-changer.exe with SHA256SUMS.txt and separate line_config.json
 echo Next: double-click dist\line-status-changer.exe. Press X to hide it in the system tray.
 exit /b 0
 

@@ -265,7 +265,7 @@ def test_account_reassignment_and_agent_revocation_preserve_message_ownership(
     revoked = client.post(f"/api/v1/agents/{next_agent['id']}/revoke", headers=admin_headers)
     assert revoked.status_code == 200
     history = client.get(f"/api/v1/accounts/{account['id']}/messages", headers=admin_headers).json()
-    assert history[-1]["state"] == "canceled"
+    assert history[-1]["state"] == "delivery_unknown"
     assert (
         client.post(
             f"/api/v1/agent/messages/{claimed['id']}/ack",
@@ -276,7 +276,7 @@ def test_account_reassignment_and_agent_revocation_preserve_message_ownership(
     )
 
 
-def test_reassignment_cancels_expired_chat_claim_and_invalidates_token(
+def test_reassignment_marks_expired_chat_claim_unknown_and_invalidates_token(
     api_client: tuple[TestClient, object, str],
 ) -> None:
     client, engine, admin_token = api_client
@@ -316,7 +316,7 @@ def test_reassignment_cancels_expired_chat_claim_and_invalidates_token(
     assert reassigned.json()["agent_token"] != replacement_agent["agent_token"]
 
     history = client.get(f"/api/v1/accounts/{account['id']}/messages", headers=admin_headers).json()
-    assert history[0]["state"] == "canceled"
+    assert history[0]["state"] == "delivery_unknown"
     assert history[0]["agent_id"] == original_agent["id"]
     with Session(engine) as session:
         message = session.get(ChatMessage, UUID(claimed["id"]))
@@ -381,5 +381,5 @@ def test_expired_chat_leases_redeliver_and_fail_after_the_retry_limit(
     history = client.get(
         f"/api/v1/accounts/{account['id']}/messages", headers=_headers(admin_token)
     ).json()
-    assert history[0]["state"] == "failed"
+    assert history[0]["state"] == "delivery_unknown"
     assert history[0]["claim_attempts"] == 3

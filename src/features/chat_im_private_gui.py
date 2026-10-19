@@ -126,7 +126,7 @@ S = {
     "verified_ambiguous": ("verified Camfrog discovery is ambiguous: {detail}",
                            "การค้นหา Camfrog แบบยืนยันตัวตนกำกวม: {detail}"),
     "no_ctrl": ("control not found: {spec} (matches={n})", "ไม่พบ control: {spec} (พบ {n} รายการ)"),
-    "status_set": ("status set: {text}", "ตั้ง status แล้ว: {text}"),
+    "status_set": ("status submission dispatched (provider outcome unverified): {text}", "ส่งคำสั่ง status แล้ว (ยังไม่ยืนยันผลจาก Camfrog): {text}"),
     "status_fail": ("status commit failed", "ตั้ง status ไม่สำเร็จ"),
     "reply_fail": ("reply commit failed", "ส่งข้อความตอบไม่สำเร็จ"),
     "replied": ("replied to {nick}: {text}", "ตอบ {nick} แล้ว: {text}"),
@@ -3201,16 +3201,17 @@ def main(argv=None):
 
 
 class PrivateChatManager:
-    def __init__(self, config_path):
+    def __init__(self, config_path, *, parent=None):
         import tkinter as tk
         from tkinter import ttk
 
         self.tk = tk
         self.ttk = ttk
+        self.embedded = parent is not None
         self.config_path = Path(config_path)
         self.config = load_private_config(self.config_path)
         self.windows = []
-        self.root = self.tk.Tk()
+        self.root = parent if self.embedded else self.tk.Tk()
         self.root.configure(background="#f4f1e8")
         style = self.ttk.Style(self.root)
         try:
@@ -3227,9 +3228,10 @@ class PrivateChatManager:
         style.configure("TEntry", padding=(4, 4), fieldbackground="#ffffff", foreground="#283648")
         style.configure("TNotebook", background="#f4f1e8")
         style.configure("TNotebook.Tab", padding=(11, 6), font=("Segoe UI", 9))
-        self.root.title("Camfrog Private Chat")
-        self.root.geometry("460x360")
-        self.root.minsize(360, 280)
+        if not self.embedded:
+            self.root.title("Camfrog Private Chat")
+            self.root.geometry("460x360")
+            self.root.minsize(360, 280)
 
         self.ttk.Label(self.root, text=(
             "Open a private chat in Camfrog, then refresh this list. "
@@ -3260,8 +3262,9 @@ class PrivateChatManager:
         actions.pack(fill="x")
         self.ttk.Button(actions, text="Save filters", command=self.save_filters).pack(side="left", padx=5)
         self.ttk.Button(actions, text="Discover controls", command=self.discover).pack(side="left")
-        self.ttk.Button(actions, text="Check for updates",
-                        command=self.check_update).pack(side="left", padx=5)
+        if not self.embedded:
+            self.ttk.Button(actions, text="Check for updates",
+                            command=self.check_update).pack(side="left", padx=5)
         self.ttk.Button(actions, text="Refresh", command=self.refresh).pack(side="right")
         self.ttk.Button(actions, text="Activate selected", command=self.activate_selected).pack(
             side="right", padx=5)
@@ -3270,13 +3273,16 @@ class PrivateChatManager:
         self.clipboard_controller = PrivateChatClipboardController(self.root)
         self.clipboard_controller.install(self.root)
         self.root.after(200, self.refresh)
+        if not self.embedded:
+            self.root.after(1000, self._discover_controls_on_start)
 
         def auto_update():
             if check_for_update("chat-im-private.exe"):
                 self.root.after(0, self.check_update)
 
-        import threading
-        threading.Thread(target=auto_update, daemon=True).start()
+        if not self.embedded:
+            import threading
+            threading.Thread(target=auto_update, daemon=True).start()
 
     def save_filters(self, refresh_after=True, silent=False):
         try:
@@ -3304,6 +3310,9 @@ class PrivateChatManager:
             messagebox.showerror("Private chat filters", str(exc), parent=self.root)
 
     def check_update(self):
+        if self.embedded:
+            self.status.set("Updates are managed by ZChat Client.")
+            return
         self.status.set("Checking for updates...")
 
         def work():
@@ -3332,6 +3341,44 @@ class PrivateChatManager:
             self.status.set(lines[-1] if lines else "Controls written to controls.txt.")
         except Exception as exc:
             self.status.set(f"Could not discover controls: {exc}")
+
+    def _discover_controls_on_start(self):
+        """Discover and persist valid selectors without blocking the GUI thread."""
+        if self.embedded:
+            return
+
+        import contextlib
+        import io
+        import threading
+
+        config = self.config
+        path = self.config_path
+
+        def work():
+            output = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(output):
+                    code = cmd_detect(config, path, apply=True)
+                updated = load_private_config(path) if code == 0 else None
+                lines = output.getvalue().strip().splitlines()
+                message = lines[-1] if lines else (
+                    "Camfrog controls discovered and saved." if code == 0
+                    else "No Camfrog controls found; open Camfrog and retry discovery.")
+            except Exception as exc:
+                code, updated = 1, None
+                message = f"Automatic control discovery failed: {type(exc).__name__}: {exc}"
+
+            def finish():
+                if updated is not None:
+                    self.config = updated
+                self.status.set(message)
+
+            try:
+                self.root.after(0, finish)
+            except Exception:
+                pass
+
+        threading.Thread(target=work, name="camfrog-control-discovery", daemon=True).start()
 
     def refresh(self):
         try:
@@ -3377,7 +3424,7 @@ class PrivateChatManager:
 # Read-only GitHub API (no token needed for public repos, stdlib only). Each
 # packaged app checks the same repo's latest release and downloads only its
 # own executable asset, verified against the release's SHA256SUMS.txt.
-APP_VERSION = "2.19.2"
+APP_VERSION = "2.19.3"
 GITHUB_REPO = os.environ.get("CAMFROG_UPDATE_REPO", "cvsz/zchat")
 UPDATE_ASSET_SUMS = "SHA256SUMS.txt"
 

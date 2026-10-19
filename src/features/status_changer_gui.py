@@ -1,4 +1,5 @@
-"""Camfrog Status Changer - Random and Marquee modes with an activity log."""
+"""ZChat Status Changer - Random and Marquee modes with an activity log."""
+
 import argparse
 import copy
 import ctypes
@@ -57,6 +58,7 @@ for _n in ("stdout", "stderr"):
     elif hasattr(_s, "reconfigure"):
         _s.reconfigure(encoding="utf-8", errors="replace")
 
+
 # Frozen (PyInstaller) -> files live next to the exe, not the temp unpack dir.
 def _source_base() -> Path:
     """Repository root when running from a source checkout.
@@ -72,11 +74,20 @@ def _source_base() -> Path:
     return here
 
 
-BASE = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) \
+BASE = (
+    Path(sys.executable).resolve().parent
+    if getattr(sys, "frozen", False)
     else _source_base()
+)
 
 APP_PROFILE = "status"
 APP_PROFILES = {"full", "room", "im_reply", "status", "music"}
+UNVERIFIED_STATUS_TEST_ENV = "ZCHAT_STATUS_TEST_UNVERIFIED_SUBMIT"
+
+
+def _unverified_status_test_submit_enabled():
+    """Enable the opt-in local test route without changing strict capability claims."""
+    return os.environ.get(UNVERIFIED_STATUS_TEST_ENV, "").strip() == "1"
 
 # Standalone executables can pin runtime state to their own directory. Status
 # workers use ZCFATO_DATA_DIR, which takes precedence over the GUI app directory.
@@ -84,6 +95,19 @@ if os.environ.get("ZCFATO_DATA_DIR"):
     BASE = Path(os.environ["ZCFATO_DATA_DIR"])
 elif os.environ.get("CAMFROG_APP_DATA_DIR"):
     BASE = Path(os.environ["CAMFROG_APP_DATA_DIR"])
+
+
+def _application_icon_path() -> Path:
+    """Resolve the packaged UI icon independently from the user data directory."""
+    candidates = []
+    if getattr(sys, "frozen", False):
+        bundle_dir = getattr(sys, "_MEIPASS", None)
+        if bundle_dir:
+            candidates.append(Path(bundle_dir) / "app.ico")
+        candidates.append(Path(sys.executable).resolve().parent / "app.ico")
+    else:
+        candidates.append(_source_base() / "app.ico")
+    return next((path for path in candidates if path.is_file()), candidates[0])
 
 # Nickname regex: Unicode word chars + space . - (Camfrog allows Thai in nicknames).
 # LINE_RE nick capture is permissive; validation happens via NICK_RE.
@@ -94,183 +118,352 @@ THAI_RE = re.compile(r"[\u0e00-\u0e7f]")
 log = logging.getLogger("camfrog_status")
 LOG_TEXT = True
 LANG = "en"
+STATUS_STARTUP_DELAY_SECONDS = 10
+WORKER_START_TIMEOUT_SECONDS = 30
+WORKER_LAUNCHER_EXIT_GRACE_SECONDS = 2
+WORKER_START_GATE_TIMEOUT_SECONDS = 60
 
 # ---------- i18n (TH / EN) ----------
 S = {
     "cfg_ok": ("config OK", "คอนฟิกถูกต้อง"),
     "cfg_errs": ("{n} error(s)", "พบข้อผิดพลาด {n} รายการ"),
     "cfg_hint": ("config errors (run `check`):", "คอนฟิกมีข้อผิดพลาด (รัน `check`):"),
-    "cannot_load": ("cannot load config: {e}  (try `init` to create one)", "อ่านคอนฟิกไม่ได้: {e}  (ลองรัน `init` เพื่อสร้างใหม่)"),
+    "cannot_load": (
+        "cannot load config: {e}  (try `init` to create one)",
+        "อ่านคอนฟิกไม่ได้: {e}  (ลองรัน `init` เพื่อสร้างใหม่)",
+    ),
     "warn": ("WARN : {m}", "คำเตือน: {m}"),
     "err": ("ERROR: {m}", "ผิดพลาด: {m}"),
     "e_regex": ("window_title_regex invalid: {e}", "window_title_regex ไม่ถูกต้อง: {e}"),
-    "e_hours": ("active_hours start/end must be HH:MM", "active_hours start/end ต้องเป็นรูปแบบ HH:MM"),
+    "e_hours": (
+        "active_hours start/end must be HH:MM",
+        "active_hours start/end ต้องเป็นรูปแบบ HH:MM",
+    ),
     "e_msgs": ("status.messages is empty", "status.messages ว่างเปล่า"),
-    "e_interval": ("status.interval_seconds must be >= 0.3", "status.interval_seconds ต้องไม่น้อยกว่า 0.3"),
+    "e_interval": (
+        "status.interval_seconds must be >= 10 seconds",
+        "status.interval_seconds ต้องไม่น้อยกว่า 10 วินาที",
+    ),
     "e_sel": ("{k} must be a selector object", "{k} ต้องเป็น object ของ selector"),
-    "e_delay": ("autoreply.delay_range_seconds must be [min, max] with 0 <= min <= max",
-                "autoreply.delay_range_seconds ต้องเป็น [min, max] โดย 0 <= min <= max"),
-    "e_hour": ("autoreply.max_per_hour must be >= 1", "autoreply.max_per_hour ต้องไม่น้อยกว่า 1"),
-    "e_cool": ("autoreply cooldowns must be >= 0", "ค่า cooldown ของ autoreply ต้องไม่ติดลบ"),
-    "e_rule": ("autoreply.rules[{i}] invalid: {e}", "autoreply.rules[{i}] ไม่ถูกต้อง: {e}"),
+    "e_delay": (
+        "autoreply.delay_range_seconds must be [min, max] with 0 <= min <= max",
+        "autoreply.delay_range_seconds ต้องเป็น [min, max] โดย 0 <= min <= max",
+    ),
+    "e_hour": (
+        "autoreply.max_per_hour must be >= 1",
+        "autoreply.max_per_hour ต้องไม่น้อยกว่า 1",
+    ),
+    "e_cool": (
+        "autoreply cooldowns must be >= 0",
+        "ค่า cooldown ของ autoreply ต้องไม่ติดลบ",
+    ),
+    "e_rule": (
+        "autoreply.rules[{i}] invalid: {e}",
+        "autoreply.rules[{i}] ไม่ถูกต้อง: {e}",
+    ),
     "e_reply": ("autoreply.rules[{i}] has no reply", "autoreply.rules[{i}] ไม่มี reply"),
-    "e_struct": ("config has a wrong value type or missing section: {e}",
-                 "คอนฟิกมีชนิดข้อมูลผิดหรือขาดส่วนที่จำเป็น: {e}"),
+    "e_struct": (
+        "config has a wrong value type or missing section: {e}",
+        "คอนฟิกมีชนิดข้อมูลผิดหรือขาดส่วนที่จำเป็น: {e}",
+    ),
     "e_lang": ("language must be auto, th or en", "language ต้องเป็น auto, th หรือ en"),
-    "e_mode": ("status.language_mode must be th, en, both or alternate",
-               "status.language_mode ต้องเป็น th, en, both หรือ alternate"),
-    "w_norules": ("autoreply.rules is empty (nothing will be replied)",
-                  "autoreply.rules ว่างเปล่า (จะไม่มีการตอบ)"),
-    "w_nick": ("autoreply.own_nickname is empty (required for live mode)",
-               "autoreply.own_nickname ว่าง (จำเป็นเมื่อรันจริง)"),
-    "w_live": ("dry_run is false: messages WILL be sent", "dry_run เป็น false: จะส่งข้อความจริง"),
+    "e_mode": (
+        "status.language_mode must be th, en, both or alternate",
+        "status.language_mode ต้องเป็น th, en, both หรือ alternate",
+    ),
+    "w_norules": (
+        "autoreply.rules is empty (nothing will be replied)",
+        "autoreply.rules ว่างเปล่า (จะไม่มีการตอบ)",
+    ),
+    "w_nick": (
+        "autoreply.own_nickname is empty (required for live mode)",
+        "autoreply.own_nickname ว่าง (จำเป็นเมื่อรันจริง)",
+    ),
+    "w_live": (
+        "dry_run is false: messages WILL be sent",
+        "dry_run เป็น false: จะส่งข้อความจริง",
+    ),
     "dry_send": ("[dry-run] would send: {text}", "[ทดลอง] จะส่ง: {text}"),
     "mismatch": ("read-back mismatch; not sending", "ข้อความที่อ่านกลับไม่ตรง จึงไม่ส่ง"),
     "not_fg": ("Camfrog not foreground; not sending", "Camfrog ไม่ได้อยู่หน้าสุด จึงไม่ส่ง"),
-    "no_window": ("Camfrog window not found (check window_title_regex)",
-                  "ไม่พบหน้าต่าง Camfrog (ตรวจ window_title_regex)"),
-    "no_ctrl": ("control not found: {spec} (matches={n})", "ไม่พบ control: {spec} (พบ {n} รายการ)"),
-    "status_set": ("status set: {text}", "ตั้ง status แล้ว: {text}"),
-    "bg_status_applied": ("background status applied: {text}",
-                          "ตั้งสถานะเบื้องหลังแล้ว: {text}"),
-    "bg_status_failed": ("background status failed (state={state}, code={code})",
-                         "ตั้งสถานะเบื้องหลังไม่สำเร็จ (state={state}, code={code})"),
-    "status_slot_set": ("status slot {slot}/{total} set: {text}",
-                        "ตั้งสถานะช่อง {slot}/{total} แล้ว: {text}"),
+    "no_window": (
+        "Camfrog window not found (check window_title_regex)",
+        "ไม่พบหน้าต่าง Camfrog (ตรวจ window_title_regex)",
+    ),
+    "no_ctrl": (
+        "control not found: {spec} (matches={n})",
+        "ไม่พบ control: {spec} (พบ {n} รายการ)",
+    ),
+    "status_set": ("status submission dispatched (provider outcome unverified): {text}", "ส่งคำสั่ง status แล้ว (ยังไม่ยืนยันผลจาก Camfrog): {text}"),
+    "bg_status_client_confirmed": (
+        "Camfrog client shows the status (external state unverified): {text}",
+        "หน้าต่าง Camfrog แสดงสถานะนี้แล้ว (ยังไม่ยืนยันสถานะภายนอก): {text}",
+    ),
+    "bg_status_failed": (
+        "background status failed (state={state}, code={code})",
+        "ตั้งสถานะเบื้องหลังไม่สำเร็จ (state={state}, code={code})",
+    ),
+    "status_slot_set": (
+        "status slot {slot}/{total} dispatched (provider outcome unverified): {text}",
+        "ส่งคำสั่ง status ช่อง {slot}/{total} แล้ว (ยังไม่ยืนยันผลจาก Camfrog): {text}",
+    ),
     "status_fail": ("status commit failed", "ตั้ง status ไม่สำเร็จ"),
     "reply_fail": ("reply commit failed", "ส่งข้อความตอบไม่สำเร็จ"),
     "replied": ("replied to {nick}: {text}", "ตอบ {nick} แล้ว: {text}"),
-    "refuse_live": ("refusing to run live: set autoreply.own_nickname first",
-                    "ไม่ยอมรันจริง: ตั้ง autoreply.own_nickname ก่อน"),
-    "running": ("running (dry_run={dry}). Stop: Ctrl+C or `stop` / {stop}",
-                "กำลังทำงาน (dry_run={dry}) หยุดด้วย Ctrl+C หรือคำสั่ง `stop` / ไฟล์ {stop}"),
+    "refuse_live": (
+        "refusing to run live: set autoreply.own_nickname first",
+        "ไม่ยอมรันจริง: ตั้ง autoreply.own_nickname ก่อน",
+    ),
+    "running": (
+        "running (dry_run={dry}). Stop: Ctrl+C or `stop` / {stop}",
+        "กำลังทำงาน (dry_run={dry}) หยุดด้วย Ctrl+C หรือคำสั่ง `stop` / ไฟล์ {stop}",
+    ),
     "stopped": ("stopped", "หยุดทำงานแล้ว"),
     "interrupted": ("interrupted", "ถูกขัดจังหวะ"),
     "fatal": ("fatal error", "เกิดข้อผิดพลาดร้ายแรง"),
     "tick_failed": ("tick failed ({n}/{m})", "รอบทำงานล้มเหลว ({n}/{m})"),
-    "too_many": ("too many consecutive failures; stopping", "ล้มเหลวติดต่อกันมากเกินไป จึงหยุด"),
+    "too_many": (
+        "too many consecutive failures; stopping",
+        "ล้มเหลวติดต่อกันมากเกินไป จึงหยุด",
+    ),
     "re_resolve": ("re-attach failed: {e}", "จับหน้าต่างใหม่ไม่สำเร็จ: {e}"),
-    "discover_done": ("wrote {p}. Copy auto_id/class_name/index into config.json selectors.",
-                      "เขียนไฟล์ {p} แล้ว คัดลอก auto_id/class_name/index ไปใส่ selector ใน config.json"),
-    "win_hdr": ("visible windows (title | class | PID); * = matches window_title_regex:",
-                "หน้าต่างที่เห็น (ชื่อ | class | PID) เครื่องหมาย * = ตรงกับ window_title_regex:"),
+    "discover_done": (
+        "wrote {p}. Copy auto_id/class_name/index into config.json selectors.",
+        "เขียนไฟล์ {p} แล้ว คัดลอก auto_id/class_name/index ไปใส่ selector ใน config.json",
+    ),
+    "win_hdr": (
+        "visible windows (title | class | PID); * = matches window_title_regex:",
+        "หน้าต่างที่เห็น (ชื่อ | class | PID) เครื่องหมาย * = ตรงกับ window_title_regex:",
+    ),
     "win_none": ("no visible windows found", "ไม่พบหน้าต่างที่มองเห็น"),
-    "win_hint": ("Camfrog not listed? Open it (not minimized to tray) and run as the same user / same admin level. "
-                 "If its title has no 'Camfrog', set window_title_regex in config.json to part of the title above.",
-                 "ไม่เห็น Camfrog? เปิดโปรแกรมให้เห็นหน้าต่าง (ไม่ซ่อนในถาดระบบ) และรันด้วยผู้ใช้/สิทธิ์ระดับเดียวกัน "
-                 "ถ้าชื่อหน้าต่างไม่มีคำว่า Camfrog ให้แก้ window_title_regex ใน config.json เป็นส่วนหนึ่งของชื่อด้านบน"),
-    "det_none": ("detect: found no candidate controls. Open a chat room (not tray-minimized) and retry.",
-                 "detect: ไม่พบ control ที่ใช่ เปิดห้องแชทให้เห็นหน้าต่างแล้วลองใหม่"),
+    "win_hint": (
+        "Camfrog not listed? Open it (not minimized to tray) and run as the same user / same admin level. "
+        "If its title has no 'Camfrog', set window_title_regex in config.json to part of the title above.",
+        "ไม่เห็น Camfrog? เปิดโปรแกรมให้เห็นหน้าต่าง (ไม่ซ่อนในถาดระบบ) และรันด้วยผู้ใช้/สิทธิ์ระดับเดียวกัน "
+        "ถ้าชื่อหน้าต่างไม่มีคำว่า Camfrog ให้แก้ window_title_regex ใน config.json เป็นส่วนหนึ่งของชื่อด้านบน",
+    ),
+    "det_none": (
+        "detect: found no candidate controls. Open a chat room (not tray-minimized) and retry.",
+        "detect: ไม่พบ control ที่ใช่ เปิดห้องแชทให้เห็นหน้าต่างแล้วลองใหม่",
+    ),
     "det_found": ("detect: {k} -> {sel}  [{why}]", "detect: {k} -> {sel}  [{why}]"),
     "det_miss": ("detect: {k} not found", "detect: ไม่พบ {k}"),
-    "det_applied": ("detect: wrote selectors to {p}. Run `check`, then test with dry_run on.",
-                    "detect: เขียน selector ลง {p} แล้ว รัน `check` แล้วทดสอบด้วย dry_run"),
-    "det_report": ("detect: structure report (no chat text) -> {p}", "detect: รายงานโครงสร้าง (ไม่มีข้อความแชท) -> {p}"),
+    "det_applied": (
+        "detect: wrote selectors to {p}. Run `check`, then test with dry_run on.",
+        "detect: เขียน selector ลง {p} แล้ว รัน `check` แล้วทดสอบด้วย dry_run",
+    ),
+    "det_report": (
+        "detect: structure report (no chat text) -> {p}",
+        "detect: รายงานโครงสร้าง (ไม่มีข้อความแชท) -> {p}",
+    ),
     "discover_timeout": (
         "Control discovery timed out after {seconds} seconds. Make sure Camfrog is open and try again.",
-        "ค้นหา control เกิน {seconds} วินาที ตรวจว่าเปิด Camfrog อยู่แล้วลองใหม่"),
-    "discover_failed": ("Control discovery failed (exit code {code}).",
-                        "ค้นหา control ไม่สำเร็จ (exit code {code})"),
-    "no_room": ("no chat-room window yet (status still works). Open a room; it is picked up automatically.",
-                "ยังไม่พบหน้าต่างห้องแชท (ตั้ง status ได้ตามปกติ) เปิดห้องแชทแล้วจะจับให้เอง"),
-    "room_attached": ("attached to chat room window {title}", "จับหน้าต่างห้องแชทแล้ว {title}"),
+        "ค้นหา control เกิน {seconds} วินาที ตรวจว่าเปิด Camfrog อยู่แล้วลองใหม่",
+    ),
+    "discover_failed": (
+        "Control discovery failed (exit code {code}).",
+        "ค้นหา control ไม่สำเร็จ (exit code {code})",
+    ),
+    "no_room": (
+        "no chat-room window yet (status still works). Open a room; it is picked up automatically.",
+        "ยังไม่พบหน้าต่างห้องแชท (ตั้ง status ได้ตามปกติ) เปิดห้องแชทแล้วจะจับให้เอง",
+    ),
+    "room_attached": (
+        "attached to chat room window {title}",
+        "จับหน้าต่างห้องแชทแล้ว {title}",
+    ),
     "ok": ("ok", "สำเร็จ"),
     "failed": ("failed", "ล้มเหลว"),
     "already_running": ("already running (PID {pid})", "ทำงานอยู่แล้ว (PID {pid})"),
-    "bg_started": ("started in background (PID {pid}). Log: {log}",
-                   "เริ่มทำงานเบื้องหลังแล้ว (PID {pid}) ล็อก: {log}"),
-    "bg_failed": ("background process exited (code {code}). See log: {log}",
-                  "โปรเซสเบื้องหลังจบการทำงาน (code {code}) ดูล็อก: {log}"),
-    "bg_needs_log": ("background mode needs log.file set in config",
-                     "โหมดเบื้องหลังต้องตั้ง log.file ใน config"),
+    "bg_started": (
+        "started in background (PID {pid}). Log: {log}",
+        "เริ่มทำงานเบื้องหลังแล้ว (PID {pid}) ล็อก: {log}",
+    ),
+    "bg_failed": (
+        "background process exited (code {code}). See log: {log}",
+        "โปรเซสเบื้องหลังจบการทำงาน (code {code}) ดูล็อก: {log}",
+    ),
+    "bg_needs_log": (
+        "background mode needs log.file set in config",
+        "โหมดเบื้องหลังต้องตั้ง log.file ใน config",
+    ),
     "win_only": ("this command is Windows-only", "คำสั่งนี้ใช้ได้เฉพาะ Windows"),
     "not_running": ("not running", "ไม่ได้ทำงานอยู่"),
     "stopping": ("stopping PID {pid} ...", "กำลังหยุด PID {pid} ..."),
     "stopped_ok": ("stopped", "หยุดแล้ว"),
     "killed": ("did not stop in time; terminated", "หยุดไม่ทันเวลา จึงบังคับปิด"),
-    "stop_failed": ("could not confirm process exit (PID {pid}); STOP and PID files were kept so you can retry",
-                    "ยืนยันไม่ได้ว่าโปรเซสหยุดแล้ว (PID {pid}) จึงเก็บไฟล์ STOP/PID ไว้ให้ลองใหม่"),
+    "stop_failed": (
+        "could not confirm process exit (PID {pid}); STOP and PID files were kept so you can retry",
+        "ยืนยันไม่ได้ว่าโปรเซสหยุดแล้ว (PID {pid}) จึงเก็บไฟล์ STOP/PID ไว้ให้ลองใหม่",
+    ),
     "state_running": ("RUNNING (PID {pid})", "กำลังทำงาน (PID {pid})"),
     "state_stopped": ("STOPPED", "หยุดอยู่"),
     "autostart_on": ("autostart enabled: {cmd}", "เปิดการรันอัตโนมัติแล้ว: {cmd}"),
     "autostart_off": ("autostart removed", "ยกเลิกการรันอัตโนมัติแล้ว"),
     "autostart_none": ("autostart was not set", "ไม่ได้ตั้งการรันอัตโนมัติไว้"),
-    "e_sched": ("status.schedules[{i}] invalid (needs start/end HH:MM and non-empty messages)",
-                "status.schedules[{i}] ไม่ถูกต้อง (ต้องมี start/end แบบ HH:MM และ messages ไม่ว่าง)"),
-    "e_skip": ("autoreply.skip_patterns[{i}] invalid: {e}", "autoreply.skip_patterns[{i}] ไม่ถูกต้อง: {e}"),
-    "w_mention": ("rule #{i} uses `mention` but own_nickname is empty (it will never match)",
-                  "กฎ #{i} ใช้ `mention` แต่ own_nickname ว่าง (จะไม่ตรงเลย)"),
+    "e_sched": (
+        "status.schedules[{i}] invalid (needs start/end HH:MM and non-empty messages)",
+        "status.schedules[{i}] ไม่ถูกต้อง (ต้องมี start/end แบบ HH:MM และ messages ไม่ว่าง)",
+    ),
+    "e_skip": (
+        "autoreply.skip_patterns[{i}] invalid: {e}",
+        "autoreply.skip_patterns[{i}] ไม่ถูกต้อง: {e}",
+    ),
+    "w_mention": (
+        "rule #{i} uses `mention` but own_nickname is empty (it will never match)",
+        "กฎ #{i} ใช้ `mention` แต่ own_nickname ว่าง (จะไม่ตรงเลย)",
+    ),
     "reloaded": ("config reloaded", "โหลดคอนฟิกใหม่แล้ว"),
     "reload_rejected": ("config reload rejected: {m}", "ไม่รับคอนฟิกที่แก้ใหม่: {m}"),
     "init_done": ("wrote {p}", "สร้างไฟล์ {p} แล้ว"),
-    "init_exists": ("{p} already exists (use --force to overwrite)", "{p} มีอยู่แล้ว (ใช้ --force เพื่อเขียนทับ)"),
+    "init_exists": (
+        "{p} already exists (use --force to overwrite)",
+        "{p} มีอยู่แล้ว (ใช้ --force เพื่อเขียนทับ)",
+    ),
     "tr_lang": ("detected language: {l}", "ภาษาที่ตรวจพบ: {l}"),
     "tr_skip": ("SKIPPED ({why})", "ข้าม ({why})"),
     "tr_match": ("rule #{i} -> {reply}", "กฎ #{i} -> {reply}"),
     "tr_none": ("no rule matches", "ไม่มีกฎที่ตรง"),
     "tr_blocked": ("(blocked: empty or starts with /)", "(ถูกบล็อก: ว่างหรือขึ้นต้นด้วย /)"),
-    "tr_badline": ("ignored line (not `name: message`): {line}", "ข้ามบรรทัด (ไม่ใช่รูปแบบ `ชื่อ: ข้อความ`): {line}"),
+    "tr_badline": (
+        "ignored line (not `name: message`): {line}",
+        "ข้ามบรรทัด (ไม่ใช่รูปแบบ `ชื่อ: ข้อความ`): {line}",
+    ),
     "why_sender": ("sender filtered", "กรองผู้ส่ง"),
     "why_link": ("contains a link", "มีลิงก์"),
     "why_pattern": ("matches skip_patterns", "ตรงกับ skip_patterns"),
-    "e_marquee": ("status.marquee invalid: width 8-80 (and <= status.max_length), stride 1..width, step_seconds >= 0.3, cycles 1-5, max_frames 5-300",
-                  "status.marquee ไม่ถูกต้อง: width 8-80 (และไม่เกิน status.max_length), stride 1..width, step_seconds >= 0.3, cycles 1-5, max_frames 5-300"),
-    "e_cycle": ("status.language_cycle items must be th or en", "status.language_cycle ต้องเป็น th หรือ en เท่านั้น"),
-    "e_hmode": ("status.history.mode must be rotate, random or most_used", "status.history.mode ต้องเป็น rotate, random หรือ most_used"),
-    "e_hmax": ("status.history.max_items must be 5-500 and file must be set", "status.history.max_items ต้อง 5-500 และต้องตั้ง file"),
-    "w_sched_hist": ("status.schedules are ignored while status.history.use_as_source is true",
-                     "status.schedules จะไม่ถูกใช้ขณะที่ status.history.use_as_source เป็น true"),
+    "e_marquee": (
+        "status.marquee invalid: width 8-80 (and <= status.max_length), stride 1..width, step_seconds >= 0.3 seconds, cycles 1-5, max_frames 5-300",
+        "status.marquee ไม่ถูกต้อง: width 8-80 (และไม่เกิน status.max_length), stride 1..width, step_seconds >= 0.3 วินาที, cycles 1-5, max_frames 5-300",
+    ),
+    "e_cycle": (
+        "status.language_cycle items must be th or en",
+        "status.language_cycle ต้องเป็น th หรือ en เท่านั้น",
+    ),
+    "e_hmode": (
+        "status.history.mode must be rotate, random or most_used",
+        "status.history.mode ต้องเป็น rotate, random หรือ most_used",
+    ),
+    "e_hmax": (
+        "status.history.max_items must be 5-500 and file must be set",
+        "status.history.max_items ต้อง 5-500 และต้องตั้ง file",
+    ),
+    "w_sched_hist": (
+        "status.schedules are ignored while status.history.use_as_source is true",
+        "status.schedules จะไม่ถูกใช้ขณะที่ status.history.use_as_source เป็น true",
+    ),
     "status_blank": ("chosen status is blank; skipped", "status ที่เลือกว่างเปล่า จึงข้าม"),
     "hist_empty": ("history is empty", "ประวัติว่างเปล่า"),
-    "hist_item": ("{i:>3}. [{lang}] x{n}  {text}", "{i:>3}. [{lang}] ใช้ {n} ครั้ง  {text}"),
+    "hist_item": (
+        "{i:>3}. [{lang}] x{n}  {text}",
+        "{i:>3}. [{lang}] ใช้ {n} ครั้ง  {text}",
+    ),
     "hist_added": ("added to history", "เพิ่มเข้าประวัติแล้ว"),
     "hist_exists": ("already in history (or blank)", "มีในประวัติแล้ว (หรือข้อความว่าง)"),
     "hist_imported": ("imported {n} new status(es)", "นำเข้า status ใหม่ {n} รายการ"),
-    "mq_frames": ("{n} frame(s), {s}s apart -> about {t}s total", "{n} เฟรม ห่างกัน {s} วินาที -> รวมประมาณ {t} วินาที"),
-    "mq_static": ("text fits in the window: no scrolling, shown as-is", "ข้อความสั้นพอดีหน้าต่าง: ไม่เลื่อน แสดงตามเดิม"),
+    "mq_frames": (
+        "{n} frame(s), {s}s apart -> about {t}s total",
+        "{n} เฟรม ห่างกัน {s} วินาที -> รวมประมาณ {t} วินาที",
+    ),
+    "mq_static": (
+        "text fits in the window: no scrolling, shown as-is",
+        "ข้อความสั้นพอดีหน้าต่าง: ไม่เลื่อน แสดงตามเดิม",
+    ),
     "e_range": ("{k} is out of range ({lo}..{hi})", "{k} อยู่นอกช่วงที่ยอมรับ ({lo}..{hi})"),
-    "w_selclash": ("selectors {a} and {b} are identical: they point at the same control (run `discover`)",
-                   "selector {a} กับ {b} เหมือนกัน คือ control ตัวเดียวกัน (รัน `discover`)"),
-    "e_selclash": ("live mode refused: selectors {a} and {b} are identical (run `discover` and fix config.json)",
-                   "ไม่ยอมรันจริง: selector {a} กับ {b} เหมือนกัน (รัน `discover` แล้วแก้ config.json)"),
-    "burst_skip": ("{n} new chat lines at once (room switch / history reload?): not answered",
-                   "มีข้อความใหม่ {n} บรรทัดพร้อมกัน (เปลี่ยนห้อง/โหลดประวัติ?) จึงไม่ตอบ"),
-    "e_selempty": ("{k} has no criteria (set control_type, auto_id, class_name or title)",
-                   "{k} ไม่มีเงื่อนไขเลย (ใส่ control_type, auto_id, class_name หรือ title)"),
-    "e_im_only": ("autoreply_im.only_nicknames must list at least one friend (IM auto-reply never answers 'everyone')",
-                  "autoreply_im.only_nicknames ต้องระบุเพื่อนอย่างน้อย 1 คน (ตอบ IM แบบ 'ทุกคน' ไม่ได้)"),
-    "e_im_nick": ("autoreply_im needs autoreply.own_nickname (otherwise the bot would answer its own replies)",
-                  "autoreply_im ต้องตั้ง autoreply.own_nickname (ไม่งั้นบอทจะตอบตัวเอง)"),
-    "e_im_kind": ("autoreply.log_kind must be room while autoreply_im is enabled (room rules must never answer private chats)",
-                  "autoreply.log_kind ต้องเป็น room ขณะเปิด autoreply_im (กฎห้องห้ามตอบแชทส่วนตัว)"),
-    "e_im_prefix": ("autoreply_im.prefix must be text and must not start with /",
-                    "autoreply_im.prefix ต้องเป็นข้อความและห้ามขึ้นต้นด้วย /"),
-    "e_im_rule": ("autoreply_im.rules[{i}] invalid: {e}", "autoreply_im.rules[{i}] ไม่ถูกต้อง: {e}"),
-    "e_im_skip": ("autoreply_im.skip_patterns[{i}] invalid: {e}", "autoreply_im.skip_patterns[{i}] ไม่ถูกต้อง: {e}"),
-    "e_im_delay": ("autoreply_im.delay_range_seconds must be [min, max] with 0 <= min <= max",
-                   "autoreply_im.delay_range_seconds ต้องเป็น [min, max] โดย 0 <= min <= max"),
-    "w_im_norules": ("autoreply_im has no rules: nothing will be answered", "autoreply_im ไม่มีกฎ: จะไม่ตอบอะไรเลย"),
-    "w_im_noprefix": ("autoreply_im.prefix is empty: friends cannot tell the reply is automatic",
-                      "autoreply_im.prefix ว่าง: เพื่อนจะไม่รู้ว่าเป็นข้อความตอบอัตโนมัติ"),
-    "im_attached": ("attached to private-chat window {title}", "จับหน้าต่างแชทส่วนตัวแล้ว {title}"),
+    "w_selclash": (
+        "selectors {a} and {b} are identical: they point at the same control (run `discover`)",
+        "selector {a} กับ {b} เหมือนกัน คือ control ตัวเดียวกัน (รัน `discover`)",
+    ),
+    "e_selclash": (
+        "live mode refused: selectors {a} and {b} are identical (run `discover` and fix config.json)",
+        "ไม่ยอมรันจริง: selector {a} กับ {b} เหมือนกัน (รัน `discover` แล้วแก้ config.json)",
+    ),
+    "burst_skip": (
+        "{n} new chat lines at once (room switch / history reload?): not answered",
+        "มีข้อความใหม่ {n} บรรทัดพร้อมกัน (เปลี่ยนห้อง/โหลดประวัติ?) จึงไม่ตอบ",
+    ),
+    "e_selempty": (
+        "{k} has no criteria (set control_type, auto_id, class_name or title)",
+        "{k} ไม่มีเงื่อนไขเลย (ใส่ control_type, auto_id, class_name หรือ title)",
+    ),
+    "e_im_only": (
+        "autoreply_im.only_nicknames must list at least one friend (IM auto-reply never answers 'everyone')",
+        "autoreply_im.only_nicknames ต้องระบุเพื่อนอย่างน้อย 1 คน (ตอบ IM แบบ 'ทุกคน' ไม่ได้)",
+    ),
+    "e_im_nick": (
+        "autoreply_im needs autoreply.own_nickname (otherwise the bot would answer its own replies)",
+        "autoreply_im ต้องตั้ง autoreply.own_nickname (ไม่งั้นบอทจะตอบตัวเอง)",
+    ),
+    "e_im_kind": (
+        "autoreply.log_kind must be room while autoreply_im is enabled (room rules must never answer private chats)",
+        "autoreply.log_kind ต้องเป็น room ขณะเปิด autoreply_im (กฎห้องห้ามตอบแชทส่วนตัว)",
+    ),
+    "e_im_prefix": (
+        "autoreply_im.prefix must be text and must not start with /",
+        "autoreply_im.prefix ต้องเป็นข้อความและห้ามขึ้นต้นด้วย /",
+    ),
+    "e_im_rule": (
+        "autoreply_im.rules[{i}] invalid: {e}",
+        "autoreply_im.rules[{i}] ไม่ถูกต้อง: {e}",
+    ),
+    "e_im_skip": (
+        "autoreply_im.skip_patterns[{i}] invalid: {e}",
+        "autoreply_im.skip_patterns[{i}] ไม่ถูกต้อง: {e}",
+    ),
+    "e_im_delay": (
+        "autoreply_im.delay_range_seconds must be [min, max] with 0 <= min <= max",
+        "autoreply_im.delay_range_seconds ต้องเป็น [min, max] โดย 0 <= min <= max",
+    ),
+    "w_im_norules": (
+        "autoreply_im has no rules: nothing will be answered",
+        "autoreply_im ไม่มีกฎ: จะไม่ตอบอะไรเลย",
+    ),
+    "w_im_noprefix": (
+        "autoreply_im.prefix is empty: friends cannot tell the reply is automatic",
+        "autoreply_im.prefix ว่าง: เพื่อนจะไม่รู้ว่าเป็นข้อความตอบอัตโนมัติ",
+    ),
+    "im_attached": (
+        "attached to private-chat window {title}",
+        "จับหน้าต่างแชทส่วนตัวแล้ว {title}",
+    ),
     "im_replied": ("IM reply to {nick}: {text}", "ตอบ IM {nick} แล้ว: {text}"),
-    "refuse_im": ("refusing to run: autoreply_im needs autoreply.own_nickname",
-                  "ไม่ยอมรัน: autoreply_im ต้องตั้ง autoreply.own_nickname"),
-    "why_bot": ("looks like an automatic reply (prefix)", "ดูเหมือนข้อความตอบอัตโนมัติ (prefix)"),
-    "e_im_kinds": ("autoreply_im.log_kinds must be a non-empty list of im / mtim",
-                   "autoreply_im.log_kinds ต้องเป็นรายการของ im / mtim อย่างน้อย 1 ค่า"),
-    "w_im_mtim": ("autoreply_im.log_kinds includes mtim: that window kind is unverified on a live Camfrog (run `im-probe`)",
-                  "autoreply_im.log_kinds มี mtim: หน้าต่างชนิดนี้ยังไม่ได้ทดสอบกับ Camfrog จริง (รัน `im-probe`)"),
-    "im_on": ("IM auto-reply ON: {mode}, friends={n}, rules={r}, kinds={k}",
-              "ตอบ IM อัตโนมัติ: เปิด {mode} เพื่อน={n} กฎ={r} ชนิด={k}"),
-    "im_off": ("IM auto-reply is OFF (autoreply_im.enabled=false)", "ตอบ IM อัตโนมัติ: ปิดอยู่ (autoreply_im.enabled=false)"),
-    "im_none": ("no private-chat window found yet. Open one, or run `im-probe` to see how Camfrog's windows are classified",
-                "ยังไม่พบหน้าต่างแชทส่วนตัว เปิดหน้าต่างแชท หรือรัน `im-probe` เพื่อดูว่า Camfrog แต่ละหน้าต่างเป็นชนิดไหน"),
-    "im_skip_nick": ("IM line from {nick} ignored: not in autoreply_im.only_nicknames",
-                     "ข้ามข้อความ IM จาก {nick}: ไม่อยู่ใน autoreply_im.only_nicknames"),
+    "refuse_im": (
+        "refusing to run: autoreply_im needs autoreply.own_nickname",
+        "ไม่ยอมรัน: autoreply_im ต้องตั้ง autoreply.own_nickname",
+    ),
+    "why_bot": (
+        "looks like an automatic reply (prefix)",
+        "ดูเหมือนข้อความตอบอัตโนมัติ (prefix)",
+    ),
+    "e_im_kinds": (
+        "autoreply_im.log_kinds must be a non-empty list of im / mtim",
+        "autoreply_im.log_kinds ต้องเป็นรายการของ im / mtim อย่างน้อย 1 ค่า",
+    ),
+    "w_im_mtim": (
+        "autoreply_im.log_kinds includes mtim: that window kind is unverified on a live Camfrog (run `im-probe`)",
+        "autoreply_im.log_kinds มี mtim: หน้าต่างชนิดนี้ยังไม่ได้ทดสอบกับ Camfrog จริง (รัน `im-probe`)",
+    ),
+    "im_on": (
+        "IM auto-reply ON: {mode}, friends={n}, rules={r}, kinds={k}",
+        "ตอบ IM อัตโนมัติ: เปิด {mode} เพื่อน={n} กฎ={r} ชนิด={k}",
+    ),
+    "im_off": (
+        "IM auto-reply is OFF (autoreply_im.enabled=false)",
+        "ตอบ IM อัตโนมัติ: ปิดอยู่ (autoreply_im.enabled=false)",
+    ),
+    "im_none": (
+        "no private-chat window found yet. Open one, or run `im-probe` to see how Camfrog's windows are classified",
+        "ยังไม่พบหน้าต่างแชทส่วนตัว เปิดหน้าต่างแชท หรือรัน `im-probe` เพื่อดูว่า Camfrog แต่ละหน้าต่างเป็นชนิดไหน",
+    ),
+    "im_skip_nick": (
+        "IM line from {nick} ignored: not in autoreply_im.only_nicknames",
+        "ข้ามข้อความ IM จาก {nick}: ไม่อยู่ใน autoreply_im.only_nicknames",
+    ),
     "stats_hdr": ("stats:", "สถิติ:"),
-    "stats_line": ("  started {started} | statuses {st} | replies {rp} | failures {fl}",
-                   "  เริ่ม {started} | ตั้ง status {st} | ตอบ {rp} | ล้มเหลว {fl}"),
+    "stats_line": (
+        "  started {started} | statuses {st} | replies {rp} | failures {fl}",
+        "  เริ่ม {started} | ตั้ง status {st} | ตอบ {rp} | ล้มเหลว {fl}",
+    ),
 }
 
 
@@ -284,7 +477,10 @@ def resolve_lang(pref: Optional[str]) -> str:
     if pref in ("th", "en"):
         return pref
     try:
-        if os.name == "nt" and (ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3FF) == 0x1E:
+        if (
+            os.name == "nt"
+            and (ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3FF) == 0x1E
+        ):
             return "th"
     except Exception:
         pass
@@ -327,50 +523,99 @@ DEFAULTS = {
     "window_title_regex": ".*Camfrog.*",
     "dry_run": True,
     "poll_seconds": 1.5,
-    "log": {"level": "INFO", "file": "camfrog_auto.log", "max_bytes": 1000000,
-            "backups": 3, "log_message_text": True},
+    "log": {
+        "level": "INFO",
+        "file": "camfrog_auto.log",
+        "max_bytes": 1000000,
+        "backups": 3,
+        "log_message_text": True,
+    },
     "active_hours": {"enabled": False, "start": "09:00", "end": "23:30"},
-    "safety": {"stop_file": "STOP", "pid_file": "camfrog_auto.pid",
-               "require_foreground": True, "restore_previous_window": True,
-               "max_consecutive_failures": 5},
+    "safety": {
+        "stop_file": "STOP",
+        "pid_file": "camfrog_auto.pid",
+        "require_foreground": True,
+        "restore_previous_window": True,
+        "max_consecutive_failures": 5,
+    },
     "status": {
         "enabled": True,
-        "execution_mode": "interactive",  # or "strict_background" (no focus/input/clipboard/sound changes)
+        "execution_mode": "strict_background",
         "edit": {"class_name": "Edit", "auto_id": "1001", "index": 0},
         "apply_button": None,
         "background_enter_target": "edit",  # experimental "combo" targets the parent CComboBoxTS
-        "interval_seconds": 600, "set_on_start": True, "random": False,
-        "language_mode": "both", "retry_seconds": 30, "max_length": 120, "messages": [],
+        "interval_seconds": 600,
+        "set_on_start": True,
+        "random": False,
+        "language_mode": "both",
+        "retry_seconds": 30,
+        "max_length": 120,
+        "messages": [],
         "schedules": [],
         "language_cycle": [],
-        "marquee": {"enabled": False, "scroll": False, "width": 28, "stride": 2, "step_seconds": 0.5,
-                    "separator": "   \u2022   ", "cycles": 1, "max_frames": 80,
-                    "infinite_loop": False, "loop_slots": False},
-        "history": {"enabled": True, "file": "status_history.json", "max_items": 50,
-                    "record": True, "use_as_source": False, "seed_from_messages": True,
-                    "mode": "rotate"},
+        "marquee": {
+            "enabled": False,
+            "scroll": False,
+            "width": 28,
+            "stride": 2,
+            "step_seconds": 0.5,
+            "separator": "   \u2022   ",
+            "cycles": 1,
+            "max_frames": 80,
+            "infinite_loop": False,
+            "loop_slots": False,
+        },
+        "history": {
+            "enabled": True,
+            "file": "status_history.json",
+            "max_items": 50,
+            "record": True,
+            "use_as_source": False,
+            "seed_from_messages": True,
+            "mode": "rotate",
+        },
     },
     "autoreply": {
-        "enabled": True, "own_nickname": "", "window_title_regex": "", "log_kind": "room",
+        "enabled": True,
+        "own_nickname": "",
+        "window_title_regex": "",
+        "log_kind": "room",
         "history_tail": 150,
         "history": {"class_name": "AtlAxWinLic140", "auto_id": "1002", "index": 0},
         "input": {"class_name": "AtlAxWinLic140", "auto_id": "1002", "index": 1},
-        "ignore_nicknames": [], "only_nicknames": [],
-        "per_sender_cooldown_seconds": 300, "global_min_gap_seconds": 20,
-        "max_per_hour": 30, "delay_range_seconds": [2.0, 5.0],
-        "max_reply_length": 200, "max_incoming_length": 500, "rules": [],
-        "skip_patterns": [], "ignore_links": True,
+        "ignore_nicknames": [],
+        "only_nicknames": [],
+        "per_sender_cooldown_seconds": 300,
+        "global_min_gap_seconds": 20,
+        "max_per_hour": 30,
+        "delay_range_seconds": [2.0, 5.0],
+        "max_reply_length": 200,
+        "max_incoming_length": 500,
+        "rules": [],
+        "skip_patterns": [],
+        "ignore_links": True,
     },
     # Private-message (IM) auto-reply: separate opt-in, own rules, own limits. Reuses the
     # autoreply.history / autoreply.input selectors (IM windows have the same two web panes).
     "autoreply_im": {
-        "enabled": False, "dry_run": True, "window_title_regex": "", "max_windows": 5,
+        "enabled": False,
+        "dry_run": True,
+        "window_title_regex": "",
+        "max_windows": 5,
         "log_kinds": ["im"],
-        "only_nicknames": [], "rules": [], "skip_patterns": [], "ignore_links": True,
-        "prefix": "[auto] ", "answer_first_message": True,
-        "per_sender_cooldown_seconds": 3600, "max_per_sender_per_day": 3,
-        "global_min_gap_seconds": 20, "max_per_hour": 10, "delay_range_seconds": [2.0, 5.0],
-        "max_reply_length": 200, "max_incoming_length": 500,
+        "only_nicknames": [],
+        "rules": [],
+        "skip_patterns": [],
+        "ignore_links": True,
+        "prefix": "[auto] ",
+        "answer_first_message": True,
+        "per_sender_cooldown_seconds": 3600,
+        "max_per_sender_per_day": 3,
+        "global_min_gap_seconds": 20,
+        "max_per_hour": 10,
+        "delay_range_seconds": [2.0, 5.0],
+        "max_reply_length": 200,
+        "max_incoming_length": 500,
     },
     # Room music DJ: chat commands (!request/!queue/!current/!skip/!help) with a
     # persistent queue. Needs autoreply.enabled for chat plumbing. Audio backends:
@@ -378,8 +623,12 @@ DEFAULTS = {
     # (route them into Camfrog with a virtual cable / stereo mix for the room
     # to hear; MP3 needs converting to WAV first).
     "dj": {
-        "enabled": False, "prefix": "!", "queue_file": "dj_queue.json",
-        "max_per_user": 3, "music_dir": "music", "audio_backend": "chat",
+        "enabled": False,
+        "prefix": "!",
+        "queue_file": "dj_queue.json",
+        "max_per_user": 3,
+        "music_dir": "music",
+        "audio_backend": "chat",
         "announce_now": "[dj] Now playing: {title} (requested by {user})",
         "announce_queued": "[dj] Queued #{pos}: {title}",
     },
@@ -406,6 +655,14 @@ def apply_app_profile(cfg):
     elif APP_PROFILE == "status":
         result["autoreply"]["enabled"] = False
         result["autoreply_im"]["enabled"] = False
+        status = result.setdefault("status", {})
+        if _unverified_status_test_submit_enabled():
+            # Keep the explicit local test route consistent across parent and worker.
+            status["execution_mode"] = "interactive"
+            status["background_enter_target"] = "combo"
+        elif status.get("execution_mode") != "best_effort_background":
+            # Normal standalone workers remain fail-closed.
+            status["execution_mode"] = "strict_background"
     elif APP_PROFILE == "music":
         result["status"]["enabled"] = False
         result["autoreply_im"]["enabled"] = False
@@ -424,7 +681,22 @@ def deep_merge(base: dict, over: dict) -> dict:
 
 def load_cfg(path: Union[str, Path]) -> dict:
     with Path(path).open(encoding="utf-8-sig") as f:  # Notepad may add a BOM
-        return deep_merge(DEFAULTS, json.load(f))
+        config = deep_merge(DEFAULTS, json.load(f))
+    status = config.get("status", {})
+    try:
+        interval = float(status.get("interval_seconds", RANDOM_INTERVAL_MIN))
+        if math.isfinite(interval):
+            status["interval_seconds"] = max(RANDOM_INTERVAL_MIN, interval)
+    except (TypeError, ValueError, OverflowError):
+        pass
+    marquee = status.get("marquee", {})
+    try:
+        step = float(marquee.get("step_seconds", MARQUEE_STEP_MIN))
+        if math.isfinite(step):
+            marquee["step_seconds"] = max(MARQUEE_STEP_MIN, step)
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return config
 
 
 def parse_hm(s: str) -> dt.time:
@@ -465,11 +737,13 @@ def selector_clashes(cfg):
     if cfg["status"]["enabled"]:
         sels.append(("status.edit", cfg["status"]["edit"]))
     if cfg["autoreply"]["enabled"] or _im(cfg)["enabled"]:
-        sels += [("autoreply.history", cfg["autoreply"]["history"]),
-                 ("autoreply.input", cfg["autoreply"]["input"])]
+        sels += [
+            ("autoreply.history", cfg["autoreply"]["history"]),
+            ("autoreply.input", cfg["autoreply"]["input"]),
+        ]
     out = []
     for i, (na, a) in enumerate(sels):
-        for nb, b in sels[i + 1:]:
+        for nb, b in sels[i + 1 :]:
             if isinstance(a, dict) and a == b:
                 out.append((na, nb))
     return out
@@ -487,13 +761,19 @@ def _validate(cfg, errs, warns):
         if st["apply_button"]:
             to_check.append(("status.apply_button", st["apply_button"]))
     if ar["enabled"] or _im(cfg)["enabled"]:
-        to_check += [("autoreply.history", ar["history"]), ("autoreply.input", ar["input"])]
+        to_check += [
+            ("autoreply.history", ar["history"]),
+            ("autoreply.input", ar["input"]),
+        ]
     for name, sel in to_check:
-        if isinstance(sel, dict) and not any(sel.get(k) not in (None, "") for k in SEL_KEYS):
+        if isinstance(sel, dict) and not any(
+            sel.get(k) not in (None, "") for k in SEL_KEYS
+        ):
             errs.append(t("e_selempty", k=name))
     for na, nb in selector_clashes(cfg):
         (errs if not cfg["dry_run"] else warns).append(
-            t("e_selclash" if not cfg["dry_run"] else "w_selclash", a=na, b=nb))
+            t("e_selclash" if not cfg["dry_run"] else "w_selclash", a=na, b=nb)
+        )
     if ar.get("log_kind", "room") not in ("room", "im", "any"):
         errs.append("autoreply.log_kind must be room, im or any")
     if str(cfg["language"]).lower() not in ("auto", "th", "en"):
@@ -504,13 +784,14 @@ def _validate(cfg, errs, warns):
         errs.append(t("e_regex", e=e))
     if cfg["active_hours"]["enabled"]:
         try:
-            parse_hm(cfg["active_hours"]["start"]); parse_hm(cfg["active_hours"]["end"])
+            parse_hm(cfg["active_hours"]["start"])
+            parse_hm(cfg["active_hours"]["end"])
         except Exception:
             errs.append(t("e_hours"))
     if st["enabled"]:
         if not st["messages"]:
             errs.append(t("e_msgs"))
-        if st["interval_seconds"] < 0.3:
+        if st["interval_seconds"] < RANDOM_INTERVAL_MIN:
             errs.append(t("e_interval"))
         if st["language_mode"] not in ("th", "en", "both", "alternate"):
             errs.append(t("e_mode"))
@@ -518,17 +799,31 @@ def _validate(cfg, errs, warns):
             errs.append(t("e_sel", k="status.edit"))
         if st.get("background_enter_target", "edit") not in ("edit", "combo"):
             errs.append("status.background_enter_target must be edit or combo")
-        if st.get("execution_mode", "interactive") not in ("interactive", "strict_background"):
-            errs.append("status.execution_mode must be interactive or strict_background")
+        if st.get("execution_mode", "interactive") not in (
+            "interactive",
+            "strict_background",
+            "best_effort_background",
+        ):
+            errs.append(
+                "status.execution_mode must be interactive, strict_background, "
+                "or best_effort_background"
+            )
         mq, hs = st["marquee"], st["history"]
         try:
             inf = mq.get("infinite_loop", False)
             scroll = mq.get("scroll", False)
-            if mq["enabled"] and scroll and not (8 <= mq["width"] <= 80 and mq["width"] <= st["max_length"]
-                                      and 1 <= mq["stride"] <= mq["width"]
-                                      and mq["step_seconds"] >= 0.3
-                                      and (inf or (1 <= mq["cycles"] <= 5))
-                                      and 5 <= mq["max_frames"] <= 300):
+            if (
+                mq["enabled"]
+                and scroll
+                and not (
+                    8 <= mq["width"] <= 80
+                    and mq["width"] <= st["max_length"]
+                    and 1 <= mq["stride"] <= mq["width"]
+                    and mq["step_seconds"] >= MARQUEE_STEP_MIN
+                    and (inf or (1 <= mq["cycles"] <= 5))
+                    and 5 <= mq["max_frames"] <= 300
+                )
+            ):
                 errs.append(t("e_marquee"))
         except TypeError:
             errs.append(t("e_marquee"))
@@ -543,7 +838,8 @@ def _validate(cfg, errs, warns):
                 warns.append(t("w_sched_hist"))
         for i, sc in enumerate(st["schedules"]):
             try:
-                parse_hm(sc["start"]); parse_hm(sc["end"])
+                parse_hm(sc["start"])
+                parse_hm(sc["end"])
                 if not sc["messages"]:
                     raise ValueError
             except Exception:
@@ -698,8 +994,13 @@ def is_own_gui_window(win) -> bool:
         pass
     try:
         title = win.window_text()
-        if title and title.startswith((
-                "Camfrog Status Changer", "Camfrog Random Status", "Camfrog Marquee Status")):
+        if title and title.startswith(
+            (
+                "ZChat Status Changer",
+                "ZChat Random Status",
+                "ZChat Marquee Status",
+            )
+        ):
             return True
     except Exception:
         pass
@@ -712,27 +1013,41 @@ def get_status_window(cfg, desktop_factory):
     # Camfrog window. The exact configured Edit selector is still required
     # before accepting a candidate, so unrelated hidden windows are rejected.
     windows = desktop_factory(backend="win32").windows(
-        title_re=cfg["window_title_regex"], visible_only=False)
+        title_re=cfg["window_title_regex"], visible_only=False
+    )
     windows = [win for win in windows if not is_own_gui_window(win)]
     windows = [win for win in windows if _window_process_id(win) != os.getpid()]
     if not windows:
         raise RuntimeError(t("no_window"))
-    _require_single_window_process(windows)
-
     desktop = desktop_factory(backend="uia")
     selector = cfg.get("status", {}).get("edit", {})
+    matches = []
     for native_window in windows:
         try:
             window = desktop.window(handle=native_window.handle).wrapper_object()
             if selector:
                 find(window, selector)
-            return window
+            matches.append((native_window, window))
         except Exception:
             continue
 
+    if matches:
+        # Broad title filters may include other Camfrog clients or auxiliary
+        # windows. First identify windows that actually own the configured
+        # status control, then fail closed only if that target remains
+        # ambiguous across processes.
+        _require_single_window_process([native for native, _window in matches])
+        return matches[0][1]
+
+    # Keep setup/detection useful when the saved selector no longer matches,
+    # but only when the title filter still identifies one verified process.
+    _require_single_window_process(windows)
+
     # Preserve the old setup behavior: let detection inspect the first Camfrog
     # candidate and report that the saved selector may need replacing.
-    log.warning("Status edit control not found in any matching window; using first window")
+    log.warning(
+        "Status edit control not found in any matching window; using first window"
+    )
     return desktop.window(handle=windows[0].handle).wrapper_object()
 
 
@@ -762,11 +1077,13 @@ def _require_single_window_process(windows):
 
 def get_window(cfg: dict):
     from pywinauto import Desktop  # lazy: `check` works without pywinauto
+
     if APP_PROFILE == "status":
         return get_status_window(cfg, Desktop)
 
     wins = Desktop(backend="uia").windows(
-        title_re=cfg["window_title_regex"], visible_only=True)
+        title_re=cfg["window_title_regex"], visible_only=True
+    )
     wins = [w for w in wins if not is_own_gui_window(w)]
     wins = [w for w in wins if _window_process_id(w) != os.getpid()]
     if not wins:
@@ -786,7 +1103,9 @@ def get_window(cfg: dict):
                 continue
 
     # Fallback: return first window if status edit not found in any (for detect/initial setup)
-    log.warning("Status edit control not found in any matching window; using first window")
+    log.warning(
+        "Status edit control not found in any matching window; using first window"
+    )
     return wins[0]
 
 
@@ -794,6 +1113,7 @@ def process_windows(main) -> list:
     """All visible top-level windows of the same process as `main` (Camfrog opens each chat room,
     IM and the buddy list as separate windows)."""
     from pywinauto import Desktop
+
     return Desktop(backend="uia").windows(process=main.process_id(), visible_only=True)
 
 
@@ -891,12 +1211,15 @@ def parse_web_log(items):
     def flush():
         if nick and parts:
             lines.append(f"{nick}: {' '.join(parts)}")
+
     for it in items:
         ty, name = it.get("type", ""), (it.get("name") or "").strip()
         if ty == "Image":
-            flush(); nick, parts, want_child = None, [], False
+            flush()
+            nick, parts, want_child = None, [], False
         elif ty == "Hyperlink":
-            flush(); parts = []
+            flush()
+            parts = []
             nick, want_child = (name.rstrip(":").strip() or None), not name
         elif ty == "Text" and name:
             if want_child:
@@ -912,7 +1235,12 @@ def web_items(ctrl, tail=150):
     for c in ctrl.descendants():
         ty = _ctrl_attr(c, "control_type")
         if ty in ("Image", "Hyperlink", "Text"):
-            out.append({"type": ty, "name": "" if ty == "Image" else str(_ctrl_attr(c, "name"))})
+            out.append(
+                {
+                    "type": ty,
+                    "name": "" if ty == "Image" else str(_ctrl_attr(c, "name")),
+                }
+            )
     return out[-tail:] if tail else out
 
 
@@ -949,13 +1277,21 @@ def _wm_settext(ctrl, text):
     """Last resort for real HWND edit/richedit controls (Camfrog's input is RICHEDIT50W)."""
     WM_SETTEXT = 0x000C
     u = ctypes.windll.user32
-    u.SendMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_wchar_p]
+    u.SendMessageW.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_uint,
+        ctypes.c_void_p,
+        ctypes.c_wchar_p,
+    ]
     u.SendMessageW(ctrl.handle, WM_SETTEXT, None, text)
 
 
 def write_text(ctrl, text: str) -> bool:
-    for fn in (lambda t_: ctrl.set_edit_text(t_), lambda t_: ctrl.iface_value.SetValue(t_),
-               lambda t_: _wm_settext(ctrl, t_)):
+    for fn in (
+        lambda t_: ctrl.set_edit_text(t_),
+        lambda t_: ctrl.iface_value.SetValue(t_),
+        lambda t_: _wm_settext(ctrl, t_),
+    ):
         try:
             fn(text)
         except Exception:
@@ -997,7 +1333,10 @@ def _clip_get():
 
 def _clip_set(text):
     u, k = ctypes.windll.user32, ctypes.windll.kernel32
-    k.GlobalAlloc.restype, k.GlobalAlloc.argtypes = ctypes.c_void_p, [ctypes.c_uint, ctypes.c_size_t]
+    k.GlobalAlloc.restype, k.GlobalAlloc.argtypes = (
+        ctypes.c_void_p,
+        [ctypes.c_uint, ctypes.c_size_t],
+    )
     k.GlobalLock.restype, k.GlobalLock.argtypes = ctypes.c_void_p, [ctypes.c_void_p]
     k.GlobalUnlock.argtypes = [ctypes.c_void_p]
     k.GlobalFree.argtypes = [ctypes.c_void_p]
@@ -1025,11 +1364,14 @@ def _escape_keys(text):
     return "".join("{%s}" % c if c in "{}()+^%~" else c for c in text)
 
 
-def commit_web(win, ctrl, text: str, require_fg: bool = True, restore: bool = False) -> bool:
+def commit_web(
+    win, ctrl, text: str, require_fg: bool = True, restore: bool = False
+) -> bool:
     """Send into Camfrog's web chat box. There is no text control to write to, so: bring the room to
     front, click the box, paste (clipboard is restored) or type, press Enter. Never types unless the
     room window is verified foreground, re-checked right before Enter."""
     from pywinauto import keyboard
+
     user32 = ctypes.windll.user32
     prev = user32.GetForegroundWindow() if restore else 0
     if not foreground_ok(win):
@@ -1044,7 +1386,9 @@ def commit_web(win, ctrl, text: str, require_fg: bool = True, restore: bool = Fa
     pasted = _clip_set(text)
     try:
         keyboard.send_keys("^a", pause=0.02)
-        keyboard.send_keys("^v" if pasted else _escape_keys(text), pause=0.01, with_spaces=True)
+        keyboard.send_keys(
+            "^v" if pasted else _escape_keys(text), pause=0.01, with_spaces=True
+        )
         time.sleep(0.2)
     finally:
         if pasted and old is not None:
@@ -1073,6 +1417,7 @@ def press_button(btn):
         handle = getattr(btn.element_info, "handle", 0)
     if handle:
         import ctypes
+
         u = ctypes.windll.user32
         u.PostMessageW(handle, 0x0201, 1, 0)
         u.PostMessageW(handle, 0x0202, 0, 0)
@@ -1090,100 +1435,106 @@ def _background_enter(ctrl, target="edit"):
     if target == "combo":
         parent = getattr(getattr(ctrl, "element_info", None), "parent", None)
         if getattr(parent, "class_name", None) != "CComboBoxTS":
-            raise LookupError("Status Edit has no CComboBoxTS parent; cannot try combo Enter")
+            raise LookupError(
+                "Status Edit has no CComboBoxTS parent; cannot try combo Enter"
+            )
         handle = getattr(parent, "handle", 0)
     else:
         handle = getattr(ctrl, "handle", 0)
         if not handle and hasattr(ctrl, "element_info"):
             handle = getattr(ctrl.element_info, "handle", 0)
         if not handle:
-            ctrl.send_keystrokes("{ENTER}")
-            return
+            raise LookupError(
+                "Status Edit has no HWND; refusing keyboard-input fallback"
+            )
     if not handle:
         raise LookupError("Status combo has no HWND; cannot try combo Enter")
 
-    saved_sounds = {}
-    if os.name == "nt":
-        try:
-            import winreg
-            base_reg = r"AppEvents\Schemes\Apps\.Default"
-            for sub in (".Default", "SystemAsterisk", "SystemExclamation", "SystemNotification"):
-                try:
-                    k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, f"{base_reg}\\{sub}\\.Current", 0,
-                                       winreg.KEY_READ | winreg.KEY_WRITE)
-                    val, vtype = winreg.QueryValueEx(k, "")
-                    saved_sounds[sub] = (val, vtype)
-                    winreg.SetValueEx(k, "", 0, vtype, "")
-                    winreg.CloseKey(k)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-
     u = ctypes.windll.user32
     try:
-        u.PostMessageW.argtypes = (ctypes.c_void_p, ctypes.c_uint,
-                                   ctypes.c_size_t, ctypes.c_ssize_t)
+        u.PostMessageW.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_uint,
+            ctypes.c_size_t,
+            ctypes.c_ssize_t,
+        )
         u.PostMessageW.restype = ctypes.c_int
     except (AttributeError, TypeError):
         pass
 
-    try:
-        if not u.PostMessageW(handle, 0x0100, 0x0D, 0):
-            raise RuntimeError("Could not post Enter key-down to status control")
-        if not u.PostMessageW(handle, 0x0101, 0x0D, 0):
-            raise RuntimeError("Could not post Enter key-up to status control")
-        if os.name == "nt":
-            time.sleep(0.02)
-    finally:
-        if saved_sounds:
-            try:
-                import winreg
-                base_reg = r"AppEvents\Schemes\Apps\.Default"
-                for sub, (val, vtype) in saved_sounds.items():
-                    try:
-                        k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, f"{base_reg}\\{sub}\\.Current", 0,
-                                           winreg.KEY_SET_VALUE)
-                        winreg.SetValueEx(k, "", 0, vtype, val)
-                        winreg.CloseKey(k)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+    # Match the tested probe route: scan code 0x1c and key-transition bits.
+    if not u.PostMessageW(handle, 0x0100, 0x0D, 0x001C0001):
+        raise RuntimeError("Could not post Enter key-down to status control")
+    if not u.PostMessageW(handle, 0x0101, 0x0D, 0xC01C0001):
+        raise RuntimeError("Could not post Enter key-up to status control")
+    if os.name == "nt":
+        time.sleep(0.02)
 
 
-def commit(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply_btn=None,
-           restore: bool = False, background_enter_target: str = "edit",
-           background_if_not_foreground: bool = False,
-           execution_mode: str = "interactive") -> bool:
+def commit(
+    win,
+    ctrl,
+    text: str,
+    dry: bool,
+    require_fg: bool = True,
+    apply_btn=None,
+    restore: bool = False,
+    background_enter_target: str = "edit",
+    background_if_not_foreground: bool = False,
+    execution_mode: str = "interactive",
+) -> bool:
     """Write and submit status text, requiring an actual Edit read-back before Enter.
 
     When execution_mode is "strict_background", delegates to commit_background() which
-    uses camfrog_status_engine.BackgroundStatusExecutor and performs the change without
-    focus stealing, global input injection, clipboard mutation, or sound-registry changes.
+    uses camfrog_status_engine.BackgroundStatusExecutor and dispatches targeted window
+    messages without global input injection, clipboard mutation, or sound-registry
+    changes. Camfrog may still activate a window while handling submission; the strict
+    executor rejects results when its foreground checks cannot confirm isolation.
     """
     if execution_mode == "strict_background":
         return commit_background(text, dry=dry)
     if dry:
         log.info(t("dry_send", text=shown(text)))
         return True
+    if execution_mode == "best_effort_background":
+        log.error(
+            "BEST_EFFORT_BACKGROUND_DISABLED: Camfrog combo-post can take "
+            "desktop focus and interrupt keyboard input; refusing status send."
+        )
+        return False
     if is_web(ctrl):
         return commit_web(win, ctrl, text, require_fg, restore)
     user32 = ctypes.windll.user32
     foreground = user32.GetForegroundWindow()
     window_is_foreground = foreground == getattr(win, "handle", None)
+    if apply_btn is None and not window_is_foreground and (
+        background_if_not_foreground
+        or not require_fg
+        or background_enter_target == "combo"
+    ):
+        log.error(
+            "Refusing targeted background status submit: Camfrog can activate "
+            "and take desktop focus."
+        )
+        return False
     # A status update should not raise Camfrog over the user's current window.
     # If Camfrog is not foreground, write to its verified Edit and submit via
     # its verified CComboBoxTS parent. Explicit combo mode uses the same path
     # even while Camfrog is foreground (useful on builds that beep on Edit Enter).
+    unverified_test_submit = _unverified_status_test_submit_enabled()
+    best_effort = execution_mode == "best_effort_background"
     background_submit = apply_btn is None and (
-        background_enter_target == "combo" or not require_fg or
-        (background_if_not_foreground and not window_is_foreground))
-    submit_target = background_enter_target
-    # Always upgrade to "combo" when doing a background submit with "edit" target:
-    # posting Enter directly to the child Edit control triggers a Windows ding
-    # sound on Camfrog builds that don't handle Enter in the Edit — regardless
-    # of whether Camfrog is currently the foreground window.
+        best_effort
+        or (unverified_test_submit and background_if_not_foreground)
+        or background_enter_target == "combo"
+        or not require_fg
+        or (background_if_not_foreground and not window_is_foreground)
+    )
+    submit_target = "combo" if best_effort else background_enter_target
+    # Always submit through the verified combo parent. Posting Enter directly
+    # to Camfrog's child Edit can produce a Windows ding on supported builds.
+    # Combo submission has independently observed foreground activation, so it
+    # remains experimental and does not qualify for strict-background mode.
     if background_submit and submit_target == "edit":
         submit_target = "combo"
     needs_foreground = require_fg and apply_btn is None and not background_submit
@@ -1197,6 +1548,8 @@ def commit(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply_btn=N
             log.error(t("not_fg"))
             return False
     if not write_text(ctrl, text):
+        if unverified_test_submit:
+            log.error("STATUS_SUBMIT=FAILED stage=edit_write")
         log.error(t("mismatch"))
         return False
 
@@ -1204,7 +1557,9 @@ def commit(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply_btn=N
         press_button(apply_btn)
     else:
         if not background_submit:
-            if user32.GetForegroundWindow() != win.handle:  # focus stolen: do not submit
+            if (
+                user32.GetForegroundWindow() != win.handle
+            ):  # focus stolen: do not submit
                 log.error(t("not_fg"))
                 return False
             # Use a foreground key event so Camfrog's parent combo handles
@@ -1212,27 +1567,46 @@ def commit(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply_btn=N
             # trigger a Windows ding on every marquee frame on some builds.
             ctrl.type_keys("{ENTER}")
         else:
-            _background_enter(ctrl, submit_target)
-    if (prev and prev != win.handle and user32.IsWindow(prev)
-            and user32.GetForegroundWindow() != prev):
+            try:
+                _background_enter(ctrl, submit_target)
+            except Exception as exc:
+                if unverified_test_submit:
+                    log.error(
+                        "STATUS_SUBMIT=DISPATCH_FAILED route=%s error=%s",
+                        f"{submit_target}-post",
+                        type(exc).__name__,
+                    )
+                raise
+            if unverified_test_submit or best_effort:
+                log.warning(
+                    "STATUS_SUBMIT=DISPATCHED_UNVERIFIED route=%s; "
+                    "best-effort combo-post may activate or flash Camfrog; "
+                    "verify in another Camfrog account's friend list",
+                    f"{submit_target}-post",
+                )
+    if (
+        prev
+        and prev != win.handle
+        and user32.IsWindow(prev)
+        and user32.GetForegroundWindow() != prev
+    ):
         time.sleep(0.15)
-        user32.SetForegroundWindow(prev)  # best effort: give focus back to what you were doing
+        user32.SetForegroundWindow(
+            prev
+        )  # best effort: give focus back to what you were doing
     return True
 
 
 def commit_background(text: str, dry: bool = False, pid: Optional[int] = None) -> bool:
-    """Change Camfrog status using strict background mode.
+    """Attempt a strict background status change; the current adapter fails closed.
 
     Uses camfrog_status_engine.BackgroundStatusExecutor which:
     - Discovers and verifies the Camfrog process independently (PID + creation time +
       Authenticode signature).
-    - Writes status text without stealing focus.
-    - Submits Enter via PostMessage without global keyboard/mouse injection.
-    - Does not modify the clipboard.
-    - Does not modify Windows sound-registry values.
-    - Verifies the applied status before reporting success.
+    - Refuses before writing because submit isolation has not been verified.
 
-    Returns True if the status was verified as applied, False otherwise.
+    Returns True only when the client already confirms the requested text; otherwise
+    returns False. No external provider result is inferred from local UI state.
     """
     if dry:
         log.info(t("dry_send", text=shown(text)))
@@ -1241,6 +1615,7 @@ def commit_background(text: str, dry: bool = False, pid: Optional[int] = None) -
     try:
         from camfrog_status_engine import (
             BackgroundStatusExecutor,
+            EmergencyStopScope,
             ExecutionMode,
             StatusResultState,
         )
@@ -1250,6 +1625,8 @@ def commit_background(text: str, dry: bool = False, pid: Optional[int] = None) -
 
     executor = BackgroundStatusExecutor(
         default_mode=ExecutionMode.STRICT_BACKGROUND,
+        emergency_scope=EmergencyStopScope.FEATURE,
+        emergency_resource_key="camfrog.status-changer",
     )
     try:
         evidence = executor.execute_status_change(
@@ -1264,32 +1641,48 @@ def commit_background(text: str, dry: bool = False, pid: Optional[int] = None) -
         log.error(t("bg_status_failed", state="EXECUTION_ERROR", code=str(exc)[:120]))
         return False
 
-    if evidence.result_state == StatusResultState.VERIFIED_APPLIED.value:
-        log.info(t("bg_status_applied", text=shown(text)))
+    if evidence.result_state == StatusResultState.CLIENT_STATE_CONFIRMED.value:
+        log.info(t("bg_status_client_confirmed", text=shown(text)))
         return True
-    log.error(t("bg_status_failed", state=evidence.result_state, code=evidence.error_code))
+    log.error(
+        t("bg_status_failed", state=evidence.result_state, code=evidence.error_code)
+    )
     return False
 
 
-RESET_BURST = 25  # more fresh chat lines than this in one poll = history reset, not live chat
+RESET_BURST = (
+    25  # more fresh chat lines than this in one poll = history reset, not live chat
+)
 LINK_RE = re.compile(r"(https?://|www\.)", re.I)
 
 
 def expand(text: str, nick: str = "", own: str = "") -> str:
     """Replace {sender} {me} {time} {date}. Plain replace (never str.format)."""
     now = dt.datetime.now()
-    for k, v in (("{sender}", nick), ("{me}", own), ("{time}", now.strftime("%H:%M")),
-                 ("{date}", now.strftime("%Y-%m-%d"))):
+    for k, v in (
+        ("{sender}", nick),
+        ("{me}", own),
+        ("{time}", now.strftime("%H:%M")),
+        ("{date}", now.strftime("%Y-%m-%d")),
+    ):
         text = text.replace(k, v)
     return text
 
 
 def compile_rules(ar: dict) -> list[dict]:
-    return [{
-        "idx": i + 1, "rx": re.compile(r["pattern"], re.I), "spec": r["reply"],
-        "lang": r.get("lang"), "mention": bool(r.get("mention")),
-        "cooldown": r.get("cooldown_seconds", 0), "last": -1e9,
-    } for i, r in enumerate(ar["rules"]) if r.get("enabled", True)]
+    return [
+        {
+            "idx": i + 1,
+            "rx": re.compile(r["pattern"], re.I),
+            "spec": r["reply"],
+            "lang": r.get("lang"),
+            "mention": bool(r.get("mention")),
+            "cooldown": r.get("cooldown_seconds", 0),
+            "last": -1e9,
+        }
+        for i, r in enumerate(ar["rules"])
+        if r.get("enabled", True)
+    ]
 
 
 def compile_skips(ar: dict) -> list[re.Pattern]:
@@ -1316,7 +1709,9 @@ def match_rule(rules: list[dict], msg: str, mlang: str, own: str) -> Optional[di
 
 def atomic_write(path: Union[str, Path], text: str) -> None:
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)  # the config subfolder may not exist yet
+    path.parent.mkdir(
+        parents=True, exist_ok=True
+    )  # the config subfolder may not exist yet
     tmp = Path(str(path) + ".tmp")
     tmp.write_text(text, encoding="utf-8")
     for i in range(5):  # AV/indexers can briefly lock the target
@@ -1328,7 +1723,9 @@ def atomic_write(path: Union[str, Path], text: str) -> None:
     os.replace(tmp, path)
 
 
-LEAD_VOWELS = set("\u0e40\u0e41\u0e42\u0e43\u0e44")  # เ แ โ ใ ไ  (written before the consonant)
+LEAD_VOWELS = set(
+    "\u0e40\u0e41\u0e42\u0e43\u0e44"
+)  # เ แ โ ใ ไ  (written before the consonant)
 
 
 def clusters(text: str) -> list[str]:
@@ -1339,8 +1736,11 @@ def clusters(text: str) -> list[str]:
         if ch in LEAD_VOWELS:
             prefix += ch
             continue
-        attach = (unicodedata.category(ch) in ("Mn", "Mc", "Me") or ch in "\u200d\ufe0f\ufe0e"
-                  or (out and out[-1].endswith("\u200d")))
+        attach = (
+            unicodedata.category(ch) in ("Mn", "Mc", "Me")
+            or ch in "\u200d\ufe0f\ufe0e"
+            or (out and out[-1].endswith("\u200d"))
+        )
         if out and not prefix and attach:
             out[-1] += ch
         else:
@@ -1364,8 +1764,15 @@ def clip(text: str, limit: int) -> str:
     return "".join(out)
 
 
-def marquee_frames(text: str, width: int, stride: int = 2, separator: str = "   \u2022   ",
-                   cycles: int = 1, max_frames: int = 80, infinite_loop: bool = False) -> list[str]:
+def marquee_frames(
+    text: str,
+    width: int,
+    stride: int = 2,
+    separator: str = "   \u2022   ",
+    cycles: int = 1,
+    max_frames: int = 80,
+    infinite_loop: bool = False,
+) -> list[str]:
     """Frames of a cyclic ticker. Never blank, never splits a Thai cluster, bounded length.
     Returns [text] unchanged when it already fits in `width` clusters.
     If infinite_loop=True, returns loop frames (no final settle frame) up to max_frames."""
@@ -1396,15 +1803,24 @@ class StatusHistory:
     def load(self):
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8-sig"))
-            self.items = [{"text": i["text"], "lang": detect_lang(i["text"]),
-                           "count": int(i.get("count", 0)), "last": float(i.get("last", 0))}
-                          for i in raw if isinstance(i, dict) and str(i.get("text", "")).strip()]
+            self.items = [
+                {
+                    "text": i["text"],
+                    "lang": detect_lang(i["text"]),
+                    "count": int(i.get("count", 0)),
+                    "last": float(i.get("last", 0)),
+                }
+                for i in raw
+                if isinstance(i, dict) and str(i.get("text", "")).strip()
+            ]
         except Exception:
             self.items = []
 
     def save(self):
         try:
-            atomic_write(self.path, json.dumps(self.items, ensure_ascii=False, indent=2))
+            atomic_write(
+                self.path, json.dumps(self.items, ensure_ascii=False, indent=2)
+            )
         except Exception as e:
             log.debug("history save failed: %s", e)
 
@@ -1417,9 +1833,15 @@ class StatusHistory:
             return False
         new = {"text": text, "lang": detect_lang(text), "count": count, "last": 0.0}
         self.items.append(new)
-        while len(self.items) > self.max_items:  # drop least used, then oldest; never the newcomer
-            self.items.remove(min((i for i in self.items if i is not new),
-                                  key=lambda i: (i["count"], i["last"])))
+        while (
+            len(self.items) > self.max_items
+        ):  # drop least used, then oldest; never the newcomer
+            self.items.remove(
+                min(
+                    (i for i in self.items if i is not new),
+                    key=lambda i: (i["count"], i["last"]),
+                )
+            )
         return True
 
     def record(self, text):
@@ -1434,7 +1856,11 @@ class StatusHistory:
         self.save()
 
     def pick(self, mode="rotate", lang=None, exclude=None):
-        pool = [i for i in self.items if i["text"] != exclude and (not lang or i["lang"] == lang)]
+        pool = [
+            i
+            for i in self.items
+            if i["text"] != exclude and (not lang or i["lang"] == lang)
+        ]
         if not pool:  # no item in that language: fall back to any language
             pool = [i for i in self.items if i["text"] != exclude]
         if not pool:
@@ -1443,7 +1869,9 @@ class StatusHistory:
             return random.choice(pool)["text"]
         if mode == "most_used":
             return max(pool, key=lambda i: (i["count"], -i["last"]))["text"]
-        return min(pool, key=lambda i: i["last"])["text"]  # rotate: least recently used first
+        return min(pool, key=lambda i: i["last"])[
+            "text"
+        ]  # rotate: least recently used first
 
 
 def safe_reply(template, nick, limit, own=""):
@@ -1455,7 +1883,7 @@ def safe_reply(template, nick, limit, own=""):
 
 def new_lines(prev, cur):
     for k in range(min(len(prev), len(cur)), -1, -1):
-        if prev[len(prev) - k:] == cur[:k]:
+        if prev[len(prev) - k :] == cur[:k]:
             return cur[k:]
     return cur
 
@@ -1478,15 +1906,19 @@ def _process_query_api():
     from ctypes import wintypes
 
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.OpenProcess.argtypes = (
-        wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
     kernel32.OpenProcess.restype = wintypes.HANDLE
     kernel32.GetExitCodeProcess.argtypes = (
-        wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.DWORD),
+    )
     kernel32.GetExitCodeProcess.restype = wintypes.BOOL
     kernel32.QueryFullProcessImageNameW.argtypes = (
-        wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
-        ctypes.POINTER(wintypes.DWORD))
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPWSTR,
+        ctypes.POINTER(wintypes.DWORD),
+    )
     kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
     kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
     kernel32.CloseHandle.restype = wintypes.BOOL
@@ -1534,7 +1966,8 @@ def pid_image(pid):
             buffer = ctypes.create_unicode_buffer(32768)
             size = wintypes.DWORD(len(buffer))
             ok = kernel32.QueryFullProcessImageNameW(
-                handle, 0, buffer, ctypes.byref(size))
+                handle, 0, buffer, ctypes.byref(size)
+            )
             return buffer.value if ok else None
         finally:
             kernel32.CloseHandle(handle)
@@ -1561,14 +1994,106 @@ def pid_is_ours(pid, image=None):
         current_name = ntpath.basename(current).casefold()
         if current_name in {"python.exe", "pythonw.exe"}:
             sibling = "pythonw.exe" if current_name == "python.exe" else "python.exe"
-            expected.add(ntpath.normcase(
-                ntpath.join(ntpath.dirname(current), sibling)))
+            expected.add(ntpath.normcase(ntpath.join(ntpath.dirname(current), sibling)))
     return candidate in expected
 
 
 def running_pid(cfg):
     pid = read_pid(cfg)
     return pid if pid_alive(pid) and pid_is_ours(pid) else None
+
+
+def worker_start_gate_path(cfg):
+    return pid_path(cfg).with_suffix(pid_path(cfg).suffix + ".start")
+
+
+def wait_for_worker_start_gate():
+    """Keep a launched worker inert until its parent verifies registration."""
+    gate_value = os.environ.get("ZCFATO_WORKER_START_GATE")
+    if not gate_value:
+        return True
+    gate = Path(gate_value)
+    deadline = time.monotonic() + WORKER_START_GATE_TIMEOUT_SECONDS
+    while not gate.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if not gate.exists():
+        log.error("Worker start authorization was not received; exiting before status work.")
+        return False
+    try:
+        gate.unlink()
+    except OSError:
+        log.exception("Could not remove worker start authorization file")
+    return True
+
+
+def _authorize_worker_start(cfg, emit):
+    gate = worker_start_gate_path(cfg)
+    temporary = gate.with_name(f"{gate.name}.{time.time_ns()}.tmp")
+    try:
+        temporary.write_text("start\n", encoding="ascii")
+        temporary.replace(gate)
+    except OSError as exc:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        emit(f"Worker PID registered but start authorization failed: {exc}")
+        return False
+    return True
+
+
+def _wait_for_worker_registration(cfg, process, log_path, emit):
+    """Wait for the registered worker PID, including a onefile launcher handoff."""
+    deadline = time.monotonic() + WORKER_START_TIMEOUT_SECONDS
+    launcher_exit_at = None
+    while time.monotonic() < deadline:
+        if running_pid(cfg) is not None:
+            if _authorize_worker_start(cfg, emit):
+                return True
+            break
+        if process.poll() is not None:
+            if launcher_exit_at is None:
+                launcher_exit_at = time.monotonic()
+            elif time.monotonic() - launcher_exit_at >= WORKER_LAUNCHER_EXIT_GRACE_SECONDS:
+                break
+        time.sleep(0.1)
+
+    if running_pid(cfg) is not None and _authorize_worker_start(cfg, emit):
+        return True
+    cleanup_error = None
+    try:
+        worker_start_gate_path(cfg).unlink(missing_ok=True)
+        if os.name == "nt":
+            subprocess.run(
+                [system_taskkill_path(), "/PID", str(process.pid), "/T", "/F"],
+                capture_output=True,
+                check=False,
+                timeout=10,
+            )
+        if process.poll() is None:
+            process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        cleanup_error = exc
+
+    if cleanup_error is not None:
+        emit(
+            "Worker PID registration failed and its child could not be "
+            f"stopped or verified (PID {process.pid}): {cleanup_error}"
+        )
+    if launcher_exit_at is not None:
+        emit(t("bg_failed", code=process.returncode, log=log_path))
+    else:
+        emit(
+            f"Worker process did not register its PID within "
+            f"{WORKER_START_TIMEOUT_SECONDS} seconds; PID {process.pid}; "
+            f"see log: {log_path}"
+        )
+    return False
 
 
 def child_cmd(args):
@@ -1591,7 +2116,7 @@ def child_env():
     env = os.environ.copy()
     if getattr(sys, "frozen", False):
         env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"  # PyInstaller >= 6.9
-        env.pop("_MEIPASS2", None)                  # older PyInstaller
+        env.pop("_MEIPASS2", None)  # older PyInstaller
     return env
 
 
@@ -1606,8 +2131,15 @@ def cmd_state(cfg):
     try:
         d = json.loads(stats_path(cfg).read_text(encoding="utf-8"))
         print(t("stats_hdr"))
-        print(t("stats_line", started=d.get("started", "?"), st=d.get("statuses", 0),
-                rp=d.get("replies", 0), fl=d.get("failures", 0)))
+        print(
+            t(
+                "stats_line",
+                started=d.get("started", "?"),
+                st=d.get("statuses", 0),
+                rp=d.get("replies", 0),
+                fl=d.get("failures", 0),
+            )
+        )
     except Exception:
         pass
     return 0 if running else 1
@@ -1655,9 +2187,14 @@ def cmd_autostart(args, enable):
         print(t("win_only"))
         return 2
     import winreg
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
+
+    with winreg.OpenKey(
+        winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE
+    ) as k:
         if enable:
-            cmd = subprocess.list2cmdline(child_cmd(args) + ["start"])  # quotes paths with spaces
+            cmd = subprocess.list2cmdline(
+                child_cmd(args) + ["start"]
+            )  # quotes paths with spaces
             winreg.SetValueEx(k, RUN_VALUE, 0, winreg.REG_SZ, cmd)
             print(t("autostart_on", cmd=cmd))
         else:
@@ -1690,19 +2227,32 @@ class DJQueue:
             return
         cur = raw.get("current")
         if isinstance(cur, dict) and str(cur.get("title", "")).strip():
-            self.current = {"title": str(cur["title"]).strip(), "user": str(cur.get("user", ""))}
+            self.current = {
+                "title": str(cur["title"]).strip(),
+                "user": str(cur.get("user", "")),
+            }
         items = raw.get("queue")
         if isinstance(items, list):
             for it in items:
                 if isinstance(it, dict) and str(it.get("title", "")).strip():
-                    self.queue.append({"title": str(it["title"]).strip(),
-                                       "user": str(it.get("user", ""))})
+                    self.queue.append(
+                        {
+                            "title": str(it["title"]).strip(),
+                            "user": str(it.get("user", "")),
+                        }
+                    )
 
     def save(self):
         try:
-            atomic_write(self.path, json.dumps(
-                {"current": self.current, "queue": self.queue},
-                ensure_ascii=False, indent=2) + "\n")
+            atomic_write(
+                self.path,
+                json.dumps(
+                    {"current": self.current, "queue": self.queue},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+            )
         except Exception as e:  # queue must never break the bot
             log.debug("dj save failed: %s", e)
 
@@ -1752,6 +2302,7 @@ def dj_wav_duration(path):
     """Seconds of a WAV file, or None when unreadable."""
     try:
         import wave
+
         with wave.open(str(path), "rb") as wav:
             rate = wav.getframerate()
             return wav.getnframes() / rate if rate else None
@@ -1765,6 +2316,7 @@ def dj_play(path):
         return False
     try:
         import winsound
+
         winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_ASYNC)
         return True
     except Exception as e:
@@ -1776,6 +2328,7 @@ def dj_stop():
     try:
         if os.name == "nt":
             import winsound
+
             winsound.PlaySound(None, 0)
     except Exception:
         pass
@@ -1784,7 +2337,11 @@ def dj_stop():
 class Runner:
     def __init__(self, cfg, cfg_path=None):
         self.cfg_path = Path(cfg_path) if cfg_path else None
-        self._mtime = self.cfg_path.stat().st_mtime if self.cfg_path and self.cfg_path.exists() else 0
+        self._mtime = (
+            self.cfg_path.stat().st_mtime
+            if self.cfg_path and self.cfg_path.exists()
+            else 0
+        )
         self._next_reload = 0.0
         self._next_resolve_retry = 0.0
         self.marq, self.lang_i, self.msg_i, self.current_text = None, 0, {}, None
@@ -1796,17 +2353,39 @@ class Runner:
         self.history = self.input = self.chat_win = None
         self.apply_cfg(cfg)
         self.sender_last, self.sent = {}, []
-        self.im_sender_last, self.im_day, self.im_sent, self.im_next_ok = {}, {}, [], 0.0
+        self.im_sender_last, self.im_day, self.im_sent, self.im_next_ok = (
+            {},
+            {},
+            [],
+            0.0,
+        )
         self.next_reply_ok = 0.0
         self.status_i = 0
         self.dj_prev = []
         self.dj_started = 0.0
         self.dj_length = 0.0
-        self.last_status = -1e9 if cfg["status"]["set_on_start"] else time.monotonic()
+        now = time.monotonic()
+        if cfg["status"]["set_on_start"]:
+            status = cfg["status"]
+            marquee = status["marquee"]
+            switch_delay = (
+                max(MARQUEE_STEP_MIN, float(marquee["step_seconds"]))
+                if marquee.get("enabled") and not status.get("random", False)
+                else float(status["interval_seconds"])
+            )
+            self.last_status = now - switch_delay + STATUS_STARTUP_DELAY_SECONDS
+        else:
+            self.last_status = now
         self.prev = []
-        self.stats = {"started": dt.datetime.now().isoformat(timespec="seconds"),
-                      "statuses": 0, "marquee_frames": 0, "replies": 0, "im_replies": 0, "failures": 0,
-                      "by_rule": {}}
+        self.stats = {
+            "started": dt.datetime.now().isoformat(timespec="seconds"),
+            "statuses": 0,
+            "marquee_frames": 0,
+            "replies": 0,
+            "im_replies": 0,
+            "failures": 0,
+            "by_rule": {},
+        }
         self._next_stats = 0.0
 
     def apply_cfg(self, cfg):
@@ -1816,7 +2395,9 @@ class Runner:
         self.dry = cfg["dry_run"]
         self.stop_file = BASE / cfg["safety"]["stop_file"]
         ar = cfg["autoreply"]
-        old = {(r["idx"], r["rx"].pattern): r["last"] for r in getattr(self, "rules", [])}
+        old = {
+            (r["idx"], r["rx"].pattern): r["last"] for r in getattr(self, "rules", [])
+        }
         self.rules = compile_rules(ar)
         for r in self.rules:  # a hot reload must not reset rule cooldowns
             r["last"] = old.get((r["idx"], r["rx"].pattern), r["last"])
@@ -1827,7 +2408,10 @@ class Runner:
         im = _im(cfg)
         self.im_dry = self.dry or im["dry_run"]  # the global dry_run always wins
         view = im_view(cfg)["autoreply"]
-        old_im = {(r["idx"], r["rx"].pattern): r["last"] for r in getattr(self, "im_rules", [])}
+        old_im = {
+            (r["idx"], r["rx"].pattern): r["last"]
+            for r in getattr(self, "im_rules", [])
+        }
         self.im_rules = compile_rules(view)
         for r in self.im_rules:
             r["last"] = old_im.get((r["idx"], r["rx"].pattern), r["last"])
@@ -1839,7 +2423,11 @@ class Runner:
             if h["seed_from_messages"]:
                 changed = False
                 for it in cfg["status"]["messages"]:
-                    for txt in ([it] if isinstance(it, str) else [it.get("th", ""), it.get("en", "")]):
+                    for txt in (
+                        [it]
+                        if isinstance(it, str)
+                        else [it.get("th", ""), it.get("en", "")]
+                    ):
                         changed |= self.hist.add(txt)
                 if changed:
                     self.hist.save()
@@ -1859,8 +2447,11 @@ class Runner:
         try:
             new = apply_app_profile(load_cfg(self.cfg_path))
             errs, _ = validate(new)
-            if not new["dry_run"] and new["autoreply"]["enabled"] \
-                    and not new["autoreply"]["own_nickname"].strip():
+            if (
+                not new["dry_run"]
+                and new["autoreply"]["enabled"]
+                and not new["autoreply"]["own_nickname"].strip()
+            ):
                 errs.append(t("refuse_live"))
         except Exception as e:
             errs = [str(e)]
@@ -1873,7 +2464,16 @@ class Runner:
         LOG_TEXT = new["log"]["log_message_text"]
         if not LANG_LOCKED:
             LANG = resolve_lang(new["language"])
-        self.resolve()
+        try:
+            self.resolve()
+        except Exception as e:
+            # A config reload can coincide with Camfrog closing, restarting,
+            # or becoming ambiguous. Keep the worker alive, but never keep
+            # using an HWND/control from the previous attachment.
+            self.win = self.status_edit = self.apply_btn = None
+            self.marq = None
+            log.warning("Config reloaded but Camfrog re-attach failed: %s", e)
+            return
         log.info(t("reloaded"))
 
     def write_stats(self, now, force=False):
@@ -1882,20 +2482,33 @@ class Runner:
             return
         self._next_stats = now + sc["write_seconds"]
         try:
-            atomic_write(BASE / sc["file"], json.dumps(
-                self.stats, ensure_ascii=False, indent=2))
+            atomic_write(
+                BASE / sc["file"], json.dumps(self.stats, ensure_ascii=False, indent=2)
+            )
         except Exception as e:  # stats must never break the bot
             log.debug("stats write failed: %s", e)
 
     def send(self, ctrl, text, btn=None, win=None):
         s = self.cfg["safety"]
-        target = (self.cfg["status"].get("background_enter_target", "edit")
-                  if ctrl is getattr(self, "status_edit", None) and win is None else "edit")
-        return commit(win or self.win, ctrl, text, self.dry, s["require_foreground"], btn,
-                      s["restore_previous_window"], target,
-                      background_if_not_foreground=(
-                          ctrl is getattr(self, "status_edit", None) and win is None),
-                      execution_mode=self.cfg["status"].get("execution_mode", "interactive"))
+        target = (
+            self.cfg["status"].get("background_enter_target", "edit")
+            if ctrl is getattr(self, "status_edit", None) and win is None
+            else "edit"
+        )
+        return commit(
+            win or self.win,
+            ctrl,
+            text,
+            self.dry,
+            s["require_foreground"],
+            btn,
+            s["restore_previous_window"],
+            target,
+            background_if_not_foreground=(
+                ctrl is getattr(self, "status_edit", None) and win is None
+            ),
+            execution_mode=self.cfg["status"].get("execution_mode", "interactive"),
+        )
 
     def resolve(self):
         try:
@@ -1903,7 +2516,9 @@ class Runner:
         except LookupError as e:
             if not self.cfg_path:
                 raise
-            log.warning(f"UI element missing ({e}). Auto-detecting and updating config...")
+            log.warning(
+                f"UI element missing ({e}). Auto-detecting and updating config..."
+            )
             if cmd_detect(self.cfg, self.cfg_path, apply=True, as_json=False) == 0:
                 log.info("Auto-detect successfully updated config. Reloading...")
                 try:
@@ -1915,7 +2530,9 @@ class Runner:
                     raise
                 self._do_resolve()
             else:
-                log.error("Auto-detect failed to find missing elements. Retrying on next tick.")
+                log.error(
+                    "Auto-detect failed to find missing elements. Retrying on next tick."
+                )
                 self.status_edit = None
                 self.apply_btn = None
                 self.win = None
@@ -1923,11 +2540,17 @@ class Runner:
     def _do_resolve(self):
         cfg = self.cfg
         st, ar = cfg["status"], cfg["autoreply"]
+        # Invalidate any prior handles before discovery. If discovery fails,
+        # callers must not accidentally submit through a stale HWND.
+        self.win = self.status_edit = self.apply_btn = None
         self.win = get_window(cfg)
         self.status_edit, self.apply_btn = None, None
         self.status_edit = find(self.win, st["edit"]) if st["enabled"] else None
-        self.apply_btn = find(self.win, st["apply_button"]) \
-            if st["enabled"] and st["apply_button"] else None
+        self.apply_btn = (
+            find(self.win, st["apply_button"])
+            if st["enabled"] and st["apply_button"]
+            else None
+        )
         self.history = self.input = self.chat_win = None
         self.prev = []
         self.next_attach = 0.0
@@ -1948,7 +2571,11 @@ class Runner:
             if force:
                 log.warning(t("no_room"))
             return
-        self.history, self.input, self.chat_win = find(w, ar["history"]), find(w, ar["input"]), w
+        self.history, self.input, self.chat_win = (
+            find(w, ar["history"]),
+            find(w, ar["input"]),
+            w,
+        )
         self.prev = read_chat(self.history, ar["history_tail"]).splitlines()
         log.info(t("room_attached", title=shown(w.window_text())))
 
@@ -1958,8 +2585,15 @@ class Runner:
             log.info(t("im_off"))
             return
         mode = "dry-run" if self.im_dry else "LIVE"
-        log.info(t("im_on", mode=mode, n=len([n for n in im["only_nicknames"] if str(n).strip()]),
-                   r=len(im["rules"]), k="+".join(im["log_kinds"])))
+        log.info(
+            t(
+                "im_on",
+                mode=mode,
+                n=len([n for n in im["only_nicknames"] if str(n).strip()]),
+                r=len(im["rules"]),
+                k="+".join(im["log_kinds"]),
+            )
+        )
 
     def attach_im(self, now, force=False):
         """Track private-chat windows (retried every 5 s). Windows already open when we (re)attach
@@ -2026,14 +2660,25 @@ class Runner:
                 self.im_sent = [x for x in self.im_sent if now - x < 3600]
                 day = [x for x in self.im_day.get(lk, []) if now - x < 86400]
                 self.im_day[lk] = day
-                if (now < self.im_next_ok or len(self.im_sent) >= im["max_per_hour"]
-                        or len(day) >= im["max_per_sender_per_day"]
-                        or now - self.im_sender_last.get(lk, -1e9) < im["per_sender_cooldown_seconds"]
-                        or now - d["rule"]["last"] < d["rule"]["cooldown"]):
+                if (
+                    now < self.im_next_ok
+                    or len(self.im_sent) >= im["max_per_hour"]
+                    or len(day) >= im["max_per_sender_per_day"]
+                    or now - self.im_sender_last.get(lk, -1e9)
+                    < im["per_sender_cooldown_seconds"]
+                    or now - d["rule"]["last"] < d["rule"]["cooldown"]
+                ):
                     continue
                 time.sleep(random.uniform(*im["delay_range_seconds"]))
-                if not commit(st["win"], st["inp"], d["reply"], self.im_dry,
-                              s["require_foreground"], None, s["restore_previous_window"]):
+                if not commit(
+                    st["win"],
+                    st["inp"],
+                    d["reply"],
+                    self.im_dry,
+                    s["require_foreground"],
+                    None,
+                    s["restore_previous_window"],
+                ):
                     raise RuntimeError(t("reply_fail"))
                 ts = time.monotonic()
                 self.im_sender_last[lk] = d["rule"]["last"] = ts
@@ -2046,10 +2691,15 @@ class Runner:
                 log.info(t("im_replied", nick=nick, text=shown(d["reply"])))
         if len(self.im_day) > 200:
             now = time.monotonic()
-            self.im_day = {k: v for k, v in self.im_day.items() if any(now - x < 86400 for x in v)}
+            self.im_day = {
+                k: v for k, v in self.im_day.items() if any(now - x < 86400 for x in v)
+            }
             # Prune sender last-seen older than the per-sender cooldown (no longer blocks new messages)
-            self.im_sender_last = {k: v for k, v in self.im_sender_last.items()
-                                   if now - v < im["per_sender_cooldown_seconds"]}
+            self.im_sender_last = {
+                k: v
+                for k, v in self.im_sender_last.items()
+                if now - v < im["per_sender_cooldown_seconds"]
+            }
 
     def status_pool(self):
         st, now = self.cfg["status"], dt.datetime.now().time()
@@ -2121,8 +2771,14 @@ class Runner:
         if slot_index is None:
             log.info(t("status_set", text=shown(displayed)))
         else:
-            log.info(t("status_slot_set", slot=slot_index + 1,
-                       total=active["slot_count"], text=shown(displayed)))
+            log.info(
+                t(
+                    "status_slot_set",
+                    slot=slot_index + 1,
+                    total=active["slot_count"],
+                    text=shown(displayed),
+                )
+            )
 
     def build_frames(self, text):
         st, mq = self.cfg["status"], self.cfg["status"]["marquee"]
@@ -2132,10 +2788,21 @@ class Runner:
             return [final]  # per-line rotation: one whole line per tick
         # GUI Loop cycles through status slots. Preserve frame looping only for
         # legacy configs that have not opted into slot looping.
-        frame_loop = bool(mq.get("infinite_loop", False)
-                          and not mq.get("loop_slots", False))
-        frames = [clip(f, limit) for f in marquee_frames(
-            text, mq["width"], mq["stride"], mq["separator"], mq["cycles"], mq["max_frames"], frame_loop)]
+        frame_loop = bool(
+            mq.get("infinite_loop", False) and not mq.get("loop_slots", False)
+        )
+        frames = [
+            clip(f, limit)
+            for f in marquee_frames(
+                text,
+                mq["width"],
+                mq["stride"],
+                mq["separator"],
+                mq["cycles"],
+                mq["max_frames"],
+                frame_loop,
+            )
+        ]
         if not frame_loop and (not frames or frames[-1] != final):
             frames.append(final)  # finish this status before advancing to the next slot
         return frames
@@ -2150,7 +2817,11 @@ class Runner:
         mq = st["marquee"]
         sequence = bool(mq.get("enabled") and not st.get("random", False))
         active = self.marq
-        if active is not None and active.get("loop_frames") and now >= active["deadline"]:
+        if (
+            active is not None
+            and active.get("loop_frames")
+            and now >= active["deadline"]
+        ):
             self._finish_status(active, active["frames"][-1])
         if self.marq is None:
             pool = None
@@ -2163,13 +2834,19 @@ class Runner:
                         self.status_i = 0
                     else:
                         return
-            switch_delay = (max(MARQUEE_STEP_MIN,
-                                float(mq["step_seconds"])) if sequence
-                            else st["interval_seconds"])
+            switch_delay = (
+                max(MARQUEE_STEP_MIN, float(mq["step_seconds"]))
+                if sequence
+                else st["interval_seconds"]
+            )
             if now - self.last_status < switch_delay:
                 return
             slot_index = self.status_i if sequence else None
-            raw = self.choose_status(slot_index, pool) if sequence else self.choose_status()
+            raw = (
+                self.choose_status(slot_index, pool)
+                if sequence
+                else self.choose_status()
+            )
             if raw is None:
                 return
             text = expand(raw, own=self.cfg["autoreply"]["own_nickname"])
@@ -2178,12 +2855,21 @@ class Runner:
                 self.last_status = now
                 return
             frames = self.build_frames(text)
-            loop_frames = bool(mq.get("infinite_loop") and not mq.get("loop_slots")
-                               and mq.get("scroll") and len(frames) > 1)
-            self.marq = {"raw": raw, "frames": frames, "i": 0, "next": now,
-                         "loop_frames": loop_frames,
-                         "deadline": now + st["interval_seconds"],
-                         "history_recorded": False}
+            loop_frames = bool(
+                mq.get("infinite_loop")
+                and not mq.get("loop_slots")
+                and mq.get("scroll")
+                and len(frames) > 1
+            )
+            self.marq = {
+                "raw": raw,
+                "frames": frames,
+                "i": 0,
+                "next": now,
+                "loop_frames": loop_frames,
+                "deadline": now + st["interval_seconds"],
+                "history_recorded": False,
+            }
             if sequence:
                 self.marq["slot_index"] = slot_index
                 self.marq["slot_count"] = len(pool)
@@ -2195,10 +2881,20 @@ class Runner:
         frame = m["frames"][m["i"]]
         if not self.send(self.status_edit, frame, self.apply_btn):
             self.marq = None
-            self.last_status = now - st["interval_seconds"] + st["retry_seconds"]
+            retry_delay = max(st["retry_seconds"], st["interval_seconds"])
+            switch_delay = (
+                max(MARQUEE_STEP_MIN, float(mq["step_seconds"]))
+                if sequence
+                else st["interval_seconds"]
+            )
+            self.last_status = now + retry_delay - switch_delay
             raise RuntimeError(t("status_fail"))
-        if (m["i"] == 0 and not m["history_recorded"]
-                and st["history"]["enabled"] and st["history"]["record"]):
+        if (
+            m["i"] == 0
+            and not m["history_recorded"]
+            and st["history"]["enabled"]
+            and st["history"]["record"]
+        ):
             self.hist.record(m["raw"])
             m["history_recorded"] = True
         if len(m["frames"]) > 1:
@@ -2208,7 +2904,8 @@ class Runner:
             if m["i"] >= len(m["frames"]):
                 m["i"] = 0
             m["next"] = time.monotonic() + max(
-                0.3, float(st["marquee"]["step_seconds"]))
+                MARQUEE_STEP_MIN, float(st["marquee"]["step_seconds"])
+            )
             log.debug(t("status_set", text=shown(frame)))
             return
         if m["i"] >= len(m["frames"]):
@@ -2221,7 +2918,8 @@ class Runner:
             # writes can be slow; using `now` here could make delayed sends run
             # back-to-back and destabilize the ticker.
             m["next"] = time.monotonic() + max(
-                0.3, float(st["marquee"]["step_seconds"]))
+                MARQUEE_STEP_MIN, float(st["marquee"]["step_seconds"])
+            )
             log.debug(t("status_set", text=shown(frame)))
 
     def do_chat(self, can_reply):
@@ -2232,13 +2930,18 @@ class Runner:
         fresh, self.prev = new_lines(self.prev, cur), cur
         if not can_reply:
             return  # consume backlog so it isn't answered later
-        if len(fresh) > RESET_BURST:  # room switch / reload dumped old lines: never answer them
+        if (
+            len(fresh) > RESET_BURST
+        ):  # room switch / reload dumped old lines: never answer them
             log.warning(t("burst_skip", n=len(fresh)))
             return
         if len(self.sender_last) > 500:
             now = time.monotonic()
-            self.sender_last = {k: v for k, v in self.sender_last.items()
-                                if now - v < ar["per_sender_cooldown_seconds"]}
+            self.sender_last = {
+                k: v
+                for k, v in self.sender_last.items()
+                if now - v < ar["per_sender_cooldown_seconds"]
+            }
         for line in fresh:
             m = LINE_RE.match(line.strip())
             if not m:
@@ -2247,8 +2950,12 @@ class Runner:
             if dj_pre and msg.startswith(dj_pre):
                 continue  # DJ commands belong to do_dj, never to room rules
             lk, mlang = nick.lower(), detect_lang(m["msg"])
-            if (not NICK_RE.match(nick) or lk == self.own or lk in self.ignore
-                    or (self.only and lk not in self.only)):
+            if (
+                not NICK_RE.match(nick)
+                or lk == self.own
+                or lk in self.ignore
+                or (self.only and lk not in self.only)
+            ):
                 continue
             if is_skipped(msg, self.skips, ar["ignore_links"]):
                 continue
@@ -2262,8 +2969,11 @@ class Runner:
             if rule is None or now - rule["last"] < rule["cooldown"]:
                 continue
             template = pick_reply(rule["spec"], mlang)
-            reply = safe_reply(template, nick, ar["max_reply_length"],
-                               ar["own_nickname"]) if template else None
+            reply = (
+                safe_reply(template, nick, ar["max_reply_length"], ar["own_nickname"])
+                if template
+                else None
+            )
             if reply is None:
                 continue
             time.sleep(random.uniform(*ar["delay_range_seconds"]))
@@ -2287,27 +2997,33 @@ class Runner:
                 if song is None:
                     raise DJError(f'not found as .wav in music/: "{arg}"')
                 title = song.stem
-            if queue.current is not None \
-                    and queue.current["title"].lower() == title.lower():
+            if (
+                queue.current is not None
+                and queue.current["title"].lower() == title.lower()
+            ):
                 raise DJError(f'"{title}" is playing now')
             pos = queue.add(title, nick, dj.get("max_per_user", 3))
             if queue.current is None:
                 queue.current = queue.queue.pop(0)
                 self.dj_start_playback(queue, dj)
-                return dj["announce_now"].format(title=queue.current["title"],
-                                                user=queue.current["user"])
+                return dj["announce_now"].format(
+                    title=queue.current["title"], user=queue.current["user"]
+                )
             return dj["announce_queued"].format(pos=pos, title=title)
         if cmd == "queue":
             if not queue.queue:
                 return "[dj] queue is empty"
-            lines = [f"{i}. {q['title']} ({q['user']})"
-                     for i, q in enumerate(queue.queue[:10], 1)]
+            lines = [
+                f"{i}. {q['title']} ({q['user']})"
+                for i, q in enumerate(queue.queue[:10], 1)
+            ]
             return "[dj] queue: " + " | ".join(lines)
         if cmd in ("current", "np"):
             if queue.current is None:
                 return "[dj] nothing is playing"
-            return "[dj] current: {0} ({1})".format(queue.current["title"],
-                                                   queue.current["user"])
+            return "[dj] current: {0} ({1})".format(
+                queue.current["title"], queue.current["user"]
+            )
         if cmd == "skip":
             nxt = queue.skip(nick, owner)
             self.dj_start_playback(queue, dj)
@@ -2336,8 +3052,12 @@ class Runner:
     def dj_auto_advance(self, queue, dj):
         """Move to the next song when the WAV finished. Returns True if changed."""
         if queue.current is None or not self.dj_started or not self.dj_length:
-            if queue.current is not None and not self.dj_started \
-                    and not self.dry and dj.get("audio_backend", "chat") == "local":
+            if (
+                queue.current is not None
+                and not self.dj_started
+                and not self.dry
+                and dj.get("audio_backend", "chat") == "local"
+            ):
                 self.dj_start_playback(queue, dj)  # resume after restart
                 return True
             return False
@@ -2348,7 +3068,9 @@ class Runner:
         if nxt is None:
             self.say_now("[dj] queue finished")
         else:
-            self.say_now(dj["announce_now"].format(title=nxt["title"], user=nxt["user"]))
+            self.say_now(
+                dj["announce_now"].format(title=nxt["title"], user=nxt["user"])
+            )
         return True
 
     def say_now(self, text):
@@ -2358,8 +3080,12 @@ class Runner:
 
     def do_dj(self, active):
         dj = self.cfg.get("dj") or DEFAULTS["dj"]
-        if not (dj["enabled"] and active and self.history is not None
-                and self.input is not None):
+        if not (
+            dj["enabled"]
+            and active
+            and self.history is not None
+            and self.input is not None
+        ):
             return
         ar = self.cfg["autoreply"]
         cur = read_chat(self.history, ar["history_tail"]).splitlines()
@@ -2379,9 +3105,11 @@ class Runner:
                 continue
             if not msg.startswith(pre):
                 continue
-            cmd, _, arg = msg[len(pre):].strip().partition(" ")
+            cmd, _, arg = msg[len(pre) :].strip().partition(" ")
             try:
-                reply = self.dj_command(queue, dj, cmd.lower(), arg.strip(), nick, owner)
+                reply = self.dj_command(
+                    queue, dj, cmd.lower(), arg.strip(), nick, owner
+                )
             except DJError as e:
                 reply = f"[dj] {e}"
             if reply is None:
@@ -2407,6 +3135,11 @@ class Runner:
         except Exception as e:
             log.warning(f"Initial resolve failed ({e}); entering retry loop.")
         log.info(t("running", dry=self.dry, stop=self.stop_file.name))
+        log.info(
+            "STATUS_WORKER_MODE execution_mode=%s unverified_test_mode=%s",
+            self.cfg["status"].get("execution_mode", "interactive"),
+            _unverified_status_test_submit_enabled(),
+        )
         self.im_summary()
         fails = 0
         try:
@@ -2444,7 +3177,7 @@ class Runner:
                     if fails >= limit:
                         log.error(t("too_many"))
                         return 1
-                    if self._wait_for_stop(min(30, 2 ** fails)):
+                    if self._wait_for_stop(min(30, 2**fails)):
                         continue
                     try:
                         self.resolve()
@@ -2473,19 +3206,72 @@ class Runner:
         return True
 
 
+def _strict_status_start_blocked(cfg, emit=print):
+    """Fail closed before a status worker starts when live submit is unverified."""
+    if cfg.get("dry_run", True) or not cfg.get("status", {}).get("enabled", True):
+        return False
+    if cfg.get("status", {}).get("execution_mode") == "best_effort_background":
+        emit(
+            "BEST_EFFORT_BACKGROUND_DISABLED: Camfrog combo-post can take "
+            "desktop focus and interrupt keyboard input. Status worker refused."
+        )
+        return True
+    if _unverified_status_test_submit_enabled():
+        emit(
+            "UNVERIFIED TEST MODE: status submissions use combo-post to avoid "
+            "the Edit control ding; Camfrog may activate. Verify the result in "
+            "another Camfrog account's friend list."
+        )
+        return False
+    try:
+        from camfrog_status_engine import strict_background_submit_supported
+
+        supported = strict_background_submit_supported()
+    except (ImportError, AttributeError):
+        supported = False
+    if supported:
+        return False
+    emit(t(
+        "bg_status_failed",
+        state="BACKGROUND_UNSUPPORTED",
+        code="STRICT_SUBMIT_UNVERIFIED",
+    ))
+    return True
+
+
 def run_guarded(cfg, cfg_path=None):
-    """Single-instance guard + PID file around Runner.run()."""
+    """Hold local status-write authority for this worker's full lifecycle."""
+    cfg = apply_app_profile(cfg)
+    if _strict_status_start_blocked(cfg):
+        return 2
     existing = running_pid(cfg)
     if existing and existing != os.getpid():
         print(t("already_running", pid=existing))
         return 3
-    pf = pid_path(cfg)
-    pf.write_text(str(os.getpid()))
     try:
-        return Runner(cfg, cfg_path).run()
+        from camfrog_status_engine import StatusResourceLock
+
+        writer_lock = StatusResourceLock(
+            resource_key="camfrog_status_writer", timeout_seconds=0.5
+        )
+        if not writer_lock.acquire():
+            raise TimeoutError("status writer is already owned")
+    except (ImportError, OSError, RuntimeError, ValueError) as exc:
+        log.error("Status writer ownership unavailable: %s", exc)
+        print("Another status worker owns the local Camfrog status writer.")
+        return 3
+    try:
+        pf = pid_path(cfg)
+        pf.write_text(str(os.getpid()))
+        try:
+            if not wait_for_worker_start_gate():
+                return 4
+            return Runner(cfg, cfg_path).run()
+        finally:
+            if read_pid(cfg) == os.getpid():
+                pf.unlink(missing_ok=True)
     finally:
-        if read_pid(cfg) == os.getpid():
-            pf.unlink(missing_ok=True)
+        writer_lock.release()
 
 
 # ---------- commands ----------
@@ -2503,13 +3289,26 @@ def cmd_init(path, force):
     if path.exists() and not force:
         print(t("init_exists", p=path))
         return 1
-    sample = deep_merge(DEFAULTS, {
-        "status": {"messages": [{"th": "สวัสดีครับ ยินดีต้อนรับ", "en": "Welcome everyone"}]},
-        "autoreply": {"rules": [{
-            "pattern": "สวัสดี|หวัดดี|\\bhello\\b|\\bhi\\b",
-            "reply": {"th": ["สวัสดีครับคุณ {sender}"], "en": ["Hi {sender}, welcome!"]},
-            "cooldown_seconds": 60}]},
-    })
+    sample = deep_merge(
+        DEFAULTS,
+        {
+            "status": {
+                "messages": [{"th": "สวัสดีครับ ยินดีต้อนรับ", "en": "Welcome everyone"}]
+            },
+            "autoreply": {
+                "rules": [
+                    {
+                        "pattern": "สวัสดี|หวัดดี|\\bhello\\b|\\bhi\\b",
+                        "reply": {
+                            "th": ["สวัสดีครับคุณ {sender}"],
+                            "en": ["Hi {sender}, welcome!"],
+                        },
+                        "cooldown_seconds": 60,
+                    }
+                ]
+            },
+        },
+    )
     atomic_write(path, json.dumps(sample, ensure_ascii=False, indent=2) + "\n")
     print(t("init_done", p=path))
     return 0
@@ -2526,18 +3325,29 @@ def evaluate_message(cfg, nick, msg, rules=None, skips=None):
     only = {n.lower() for n in ar["only_nicknames"]}
     lk, mlang = nick.lower(), detect_lang(msg)
     out = {"lang": mlang, "skip": None, "rule": None, "reply": None}
-    if not NICK_RE.match(nick) or lk == own or lk in ignore or (only and lk not in only):
+    if (
+        not NICK_RE.match(nick)
+        or lk == own
+        or lk in ignore
+        or (only and lk not in only)
+    ):
         out["skip"] = "sender"
         return out
     msg = msg[: ar["max_incoming_length"]]
-    out["skip"] = {"link": "link", "pattern": "pattern"}.get(is_skipped(msg, skips, ar["ignore_links"]))
+    out["skip"] = {"link": "link", "pattern": "pattern"}.get(
+        is_skipped(msg, skips, ar["ignore_links"])
+    )
     if out["skip"]:
         return out
     rule = match_rule(rules, msg, mlang, own)
     out["rule"] = rule
     if rule is not None:
         tpl = pick_reply(rule["spec"], mlang)
-        out["reply"] = safe_reply(tpl, nick, ar["max_reply_length"], ar["own_nickname"]) if tpl else None
+        out["reply"] = (
+            safe_reply(tpl, nick, ar["max_reply_length"], ar["own_nickname"])
+            if tpl
+            else None
+        )
     return out
 
 
@@ -2545,10 +3355,17 @@ def im_view(cfg):
     """cfg whose `autoreply` section carries the IM rules/limits, so the room-tested matching code
     (evaluate_message, compile_rules, ...) is reused unchanged for private chats."""
     ar, im = cfg["autoreply"], _im(cfg)
-    return {"autoreply": {**ar, "rules": im["rules"], "skip_patterns": im["skip_patterns"],
-                          "ignore_links": im["ignore_links"], "only_nicknames": im["only_nicknames"],
-                          "max_reply_length": im["max_reply_length"],
-                          "max_incoming_length": im["max_incoming_length"]}}
+    return {
+        "autoreply": {
+            **ar,
+            "rules": im["rules"],
+            "skip_patterns": im["skip_patterns"],
+            "ignore_links": im["ignore_links"],
+            "only_nicknames": im["only_nicknames"],
+            "max_reply_length": im["max_reply_length"],
+            "max_incoming_length": im["max_incoming_length"],
+        }
+    }
 
 
 def im_text(cfg, reply):
@@ -2604,8 +3421,14 @@ def cmd_test_rules(cfg, a):
         elif r["rule"] is None:
             print("  " + t("tr_none"))
         else:
-            print("  " + t("tr_match", i=r["rule"]["idx"],
-                           reply=r["reply"] if r["reply"] else t("tr_blocked")))
+            print(
+                "  "
+                + t(
+                    "tr_match",
+                    i=r["rule"]["idx"],
+                    reply=r["reply"] if r["reply"] else t("tr_blocked"),
+                )
+            )
     return 0
 
 
@@ -2636,7 +3459,10 @@ def cmd_history_add(cfg, text):
 
 def cmd_history_import(cfg, path):
     hist = _history(cfg)
-    n = sum(hist.add(line) for line in Path(path).read_text(encoding="utf-8-sig").splitlines())
+    n = sum(
+        hist.add(line)
+        for line in Path(path).read_text(encoding="utf-8-sig").splitlines()
+    )
     hist.save()
     print(t("hist_imported", n=n))
     return 0
@@ -2647,8 +3473,15 @@ def cmd_marquee(cfg, a):
     width = a.width or mq["width"]
     stride = a.stride or mq["stride"]
     inf = a.infinite_loop or mq.get("infinite_loop", False)
-    frames = marquee_frames(a.text, width, stride, mq["separator"],
-                            a.cycles or mq["cycles"], a.max_frames or mq["max_frames"], inf)
+    frames = marquee_frames(
+        a.text,
+        width,
+        stride,
+        mq["separator"],
+        a.cycles or mq["cycles"],
+        a.max_frames or mq["max_frames"],
+        inf,
+    )
     if len(frames) <= 1:
         print(t("mq_static"))
     for i, f in enumerate(frames, 1):
@@ -2660,6 +3493,7 @@ def cmd_marquee(cfg, a):
 
 def cmd_windows(cfg):
     from pywinauto import Desktop
+
     rx = re.compile(cfg["window_title_regex"])
     rows = []
     for w in Desktop(backend="uia").windows(visible_only=True):
@@ -2682,6 +3516,7 @@ def cmd_windows(cfg):
 def dump_controls(win, f):
     """Indented control tree (class | type | name | automation_id | rect). Works with every pywinauto
     version: UIAWrapper has no print_control_identifiers (only WindowSpecification does)."""
+
     def walk(c, depth):
         try:
             r = c.rectangle()
@@ -2689,15 +3524,20 @@ def dump_controls(win, f):
         except Exception:
             rect = "?"
         ctype = _ctrl_attr(c, "control_type")
-        name = "" if ctype in STRUCT_SKIP else str(_ctrl_attr(c, "name"))[:60]  # no nicknames/chat text
-        f.write(f"{'  ' * depth}{_ctrl_attr(c, 'class_name')} | {ctype} | "
-                f"{name!r} | id={_ctrl_attr(c, 'automation_id')!r} | {rect}\n")
+        name = (
+            "" if ctype in STRUCT_SKIP else str(_ctrl_attr(c, "name"))[:60]
+        )  # no nicknames/chat text
+        f.write(
+            f"{'  ' * depth}{_ctrl_attr(c, 'class_name')} | {ctype} | "
+            f"{name!r} | id={_ctrl_attr(c, 'automation_id')!r} | {rect}\n"
+        )
         try:
             kids = c.children()
         except Exception:
             return
         for k in kids:
             walk(k, depth + 1)
+
     walk(win, 0)
 
 
@@ -2706,7 +3546,9 @@ def cmd_discover(cfg):
     out = BASE / "controls.txt"
     with out.open("w", encoding="utf-8") as f:
         for w in process_windows(win):
-            f.write(f"=== window: {w.window_text()[:60]!r} class={w.class_name()} ===\n")
+            f.write(
+                f"=== window: {w.window_text()[:60]!r} class={w.class_name()} ===\n"
+            )
             dump_controls(w, f)
     print(t("discover_done", p=out))
     return 0
@@ -2715,7 +3557,14 @@ def cmd_discover(cfg):
 # ---------- Camfrog 8.x control detection ----------
 # Static analysis of Camfrog Video Chat 8.5.0.51219 (see docs/CAMFROG-8.5-FINDINGS.md): the input is a
 # WTL RICHEDIT50W, the custom status is a combo box (inner Edit), the room log is a CEF Document.
-STRUCT_SKIP = {"Text", "Hyperlink", "Image", "ListItem", "DataItem", "TreeItem"}  # may hold chat text
+STRUCT_SKIP = {
+    "Text",
+    "Hyperlink",
+    "Image",
+    "ListItem",
+    "DataItem",
+    "TreeItem",
+}  # may hold chat text
 
 
 def describe_controls(win):
@@ -2724,13 +3573,26 @@ def describe_controls(win):
     for c in win.descendants():
         try:
             r = c.rectangle()
-            rows.append({
-                "class_name": _ctrl_attr(c, "class_name"), "control_type": _ctrl_attr(c, "control_type"),
-                "name": str(_ctrl_attr(c, "name"))[:40], "auto_id": str(_ctrl_attr(c, "automation_id")),
-                "visible": bool(c.is_visible()), "enabled": bool(c.is_enabled()),
-                "left": r.left, "top": r.top, "w": r.width(), "h": r.height(),
-                "parent_class": str(getattr(getattr(c.element_info, "parent", None), "class_name", "") or ""),
-            })
+            rows.append(
+                {
+                    "class_name": _ctrl_attr(c, "class_name"),
+                    "control_type": _ctrl_attr(c, "control_type"),
+                    "name": str(_ctrl_attr(c, "name"))[:40],
+                    "auto_id": str(_ctrl_attr(c, "automation_id")),
+                    "visible": bool(c.is_visible()),
+                    "enabled": bool(c.is_enabled()),
+                    "left": r.left,
+                    "top": r.top,
+                    "w": r.width(),
+                    "h": r.height(),
+                    "parent_class": str(
+                        getattr(
+                            getattr(c.element_info, "parent", None), "class_name", ""
+                        )
+                        or ""
+                    ),
+                }
+            )
         except Exception:
             continue
     return rows
@@ -2756,71 +3618,104 @@ def _sel(rows, row, key="class_name"):
 
 def detect_camfrog(rows):
     """rows (describe_controls) -> {key: (selector, why)}. Pure function, unit-tested offline."""
-    live = [r for r in rows if r.get("visible") and r.get("enabled") and r["w"] > 0 and r["h"] > 0]
+    live = [
+        r
+        for r in rows
+        if r.get("visible") and r.get("enabled") and r["w"] > 0 and r["h"] > 0
+    ]
     out = {}
     hosts = [r for r in live if r["class_name"] == "AtlAxWinLic140"]
 
-    def kind(h):  # the IE pane sharing the host's rectangle names the page: wb-log-room-data / wb-edit-data
+    def kind(
+        h,
+    ):  # the IE pane sharing the host's rectangle names the page: wb-log-room-data / wb-edit-data
         for r in rows:
-            if (r["class_name"] == "Internet Explorer_Server"
-                    and (r["left"], r["top"], r["w"], r["h"]) == (h["left"], h["top"], h["w"], h["h"])):
+            if r["class_name"] == "Internet Explorer_Server" and (
+                r["left"],
+                r["top"],
+                r["w"],
+                r["h"],
+            ) == (h["left"], h["top"], h["w"], h["h"]):
                 return r["name"]
         return ""
+
     logs = [h for h in hosts if "wb-log-room-data" in kind(h)]
     edits_ = [h for h in hosts if "wb-edit-data" in kind(h)]
     if logs and edits_:
-        out["autoreply.history"] = (_sel(rows, max(logs, key=lambda r: r["w"] * r["h"])),
-                                    "room chat log (web pane wb-log-room-data)")
-        out["autoreply.input"] = (_sel(rows, max(edits_, key=lambda r: r["top"])),
-                                  "room chat input (web pane wb-edit-data)")
+        out["autoreply.history"] = (
+            _sel(rows, max(logs, key=lambda r: r["w"] * r["h"])),
+            "room chat log (web pane wb-log-room-data)",
+        )
+        out["autoreply.input"] = (
+            _sel(rows, max(edits_, key=lambda r: r["top"])),
+            "room chat input (web pane wb-edit-data)",
+        )
         rich = []
     else:
         rich = [r for r in live if r["class_name"].upper().startswith("RICHEDIT")]
     inp = max(rich, key=lambda r: (r["top"], r["w"]), default=None) if rich else None
     if inp:
-        out["autoreply.input"] = (_sel(rows, inp),
-                                  "bottom-most RichEdit = chat input")
-    docs = [r for r in live if r["control_type"] == "Document"] if not out.get("autoreply.history") else []
+        out["autoreply.input"] = (_sel(rows, inp), "bottom-most RichEdit = chat input")
+    docs = (
+        [r for r in live if r["control_type"] == "Document"]
+        if not out.get("autoreply.history")
+        else []
+    )
     if out.get("autoreply.history"):
         pass
     elif docs:
         d = max(docs, key=lambda r: r["w"] * r["h"])
-        out["autoreply.history"] = ({"control_type": "Document", "index": _nth(rows, d, "control_type")},
-                                    "largest Chromium Document = room log")
+        out["autoreply.history"] = (
+            {"control_type": "Document", "index": _nth(rows, d, "control_type")},
+            "largest Chromium Document = room log",
+        )
     else:
         rest = [r for r in rich if r is not inp]
         if rest:
             h = max(rest, key=lambda r: r["w"] * r["h"])
-            out["autoreply.history"] = (_sel(rows, h),
-                                        "largest other RichEdit (no Document found)")
-    edits = [r for r in live if r["class_name"].lower() == "edit" and "combo" in r["parent_class"].lower()]
+            out["autoreply.history"] = (
+                _sel(rows, h),
+                "largest other RichEdit (no Document found)",
+            )
+    edits = [
+        r
+        for r in live
+        if r["class_name"].lower() == "edit" and "combo" in r["parent_class"].lower()
+    ]
     if edits:
         e = min(edits, key=lambda r: (r["top"], r["left"]))
-        out["status.edit"] = (_sel(rows, e),
-                              "top-most combo-box Edit = custom status")
+        out["status.edit"] = (_sel(rows, e), "top-most combo-box Edit = custom status")
     else:
         combos = [r for r in live if "combobox" in r["class_name"].lower()]
         if combos:
             c = min(combos, key=lambda r: (r["top"], r["left"]))
-            out["status.edit"] = (_sel(rows, c),
-                                  "top-most ComboBox (no inner Edit exposed)")
+            out["status.edit"] = (
+                _sel(rows, c),
+                "top-most ComboBox (no inner Edit exposed)",
+            )
         else:
             edits_any = [r for r in live if r["class_name"].lower() == "edit"]
             if edits_any:
                 e2 = min(edits_any, key=lambda r: (r["top"], r["left"]))
-                out["status.edit"] = (_sel(rows, e2),
-                                      "top-most Edit (broad fallback, verify manually)")
+                out["status.edit"] = (
+                    _sel(rows, e2),
+                    "top-most Edit (broad fallback, verify manually)",
+                )
     return out
 
 
 def write_detect_report(rows, path):
     with Path(path).open("w", encoding="utf-8") as f:
-        f.write("class_name | control_type | name(<=40) | auto_id | visible | left,top,w,h | parent_class\n")
+        f.write(
+            "class_name | control_type | name(<=40) | auto_id | visible | left,top,w,h | parent_class\n"
+        )
         for r in rows:
             if r["control_type"] in STRUCT_SKIP:
                 continue
-            f.write(f"{r['class_name']} | {r['control_type']} | {r['name']} | {r['auto_id']} | "
-                    f"{int(r['visible'])} | {r['left']},{r['top']},{r['w']},{r['h']} | {r['parent_class']}\n")
+            f.write(
+                f"{r['class_name']} | {r['control_type']} | {r['name']} | {r['auto_id']} | "
+                f"{int(r['visible'])} | {r['left']},{r['top']},{r['w']},{r['h']} | {r['parent_class']}\n"
+            )
 
 
 def cmd_detect(cfg, cfg_path=None, apply=False, as_json=False):
@@ -2830,8 +3725,9 @@ def cmd_detect(cfg, cfg_path=None, apply=False, as_json=False):
         # IM trees that can contain thousands of UIA nodes and are irrelevant here.
         per_window = [describe_controls(win)]
     else:
-        per_window = [describe_controls(win)] + [describe_controls(w) for w in process_windows(win)
-                                                 if w.handle != win.handle]
+        per_window = [describe_controls(win)] + [
+            describe_controls(w) for w in process_windows(win) if w.handle != win.handle
+        ]
     rows = [r for rs in per_window for r in rs]
     found = {}
     for rs in per_window:  # selectors are per window (find() indexes inside one window)
@@ -2843,11 +3739,16 @@ def cmd_detect(cfg, cfg_path=None, apply=False, as_json=False):
     write_detect_report(rows, rep)
     if as_json:
         print("PROPOSAL " + json.dumps({k: v[0] for k, v in found.items()}))
-    keys = ("status.edit",) if APP_PROFILE == "status" else (
-        "status.edit", "autoreply.history", "autoreply.input")
+    keys = (
+        ("status.edit",)
+        if APP_PROFILE == "status"
+        else ("status.edit", "autoreply.history", "autoreply.input")
+    )
     for key in keys:
         if key in found:
-            print(t("det_found", k=key, sel=json.dumps(found[key][0]), why=found[key][1]))
+            print(
+                t("det_found", k=key, sel=json.dumps(found[key][0]), why=found[key][1])
+            )
         else:
             print(t("det_miss", k=key))
     print(t("det_report", p=rep))
@@ -2905,11 +3806,15 @@ def cmd_im_probe(cfg):
     if cfg["dry_run"]:
         problems.append("global dry_run is true: nothing is sent (dry-run only logs)")
     if im["dry_run"]:
-        problems.append("autoreply_im.dry_run is true: nothing is sent (dry-run only logs)")
+        problems.append(
+            "autoreply_im.dry_run is true: nothing is sent (dry-run only logs)"
+        )
     if not in_active_hours(cfg):
         problems.append("outside active_hours: the bot is idle")
-    print(f"  enabled={im['enabled']}  friends={len(friends)}  rules={len(im['rules'])}  "
-          f"log_kinds={im['log_kinds']}  dry_run(global/IM)={cfg['dry_run']}/{im['dry_run']}")
+    print(
+        f"  enabled={im['enabled']}  friends={len(friends)}  rules={len(im['rules'])}  "
+        f"log_kinds={im['log_kinds']}  dry_run(global/IM)={cfg['dry_run']}/{im['dry_run']}"
+    )
     for pr in problems:
         print("  PROBLEM: " + pr)
     if not problems:
@@ -2928,25 +3833,32 @@ def cmd_im_probe(cfg):
         try:
             _, hist = find(w, ar["input"]), find(w, ar["history"])
         except Exception:
-            print(f"  [other] {title!r}: no chat input/history panes found with the autoreply selectors")
+            print(
+                f"  [other] {title!r}: no chat input/history panes found with the autoreply selectors"
+            )
             continue
         kind = log_kind(hist) if is_web(hist) else ""
         if kind in im["log_kinds"]:
             n_im += 1
             verdict = f"{kind.upper()} window: WILL be tracked"
         elif kind == "mtim":
-            verdict = "MTIM window: ignored. If this is your private chat, add \"mtim\" to autoreply_im.log_kinds (unverified)"
+            verdict = 'MTIM window: ignored. If this is your private chat, add "mtim" to autoreply_im.log_kinds (unverified)'
         elif kind == "room":
             verdict = "room window: never used for IM"
         else:
-            verdict = "chat panes found but the page kind is unknown (UIA names not exposed?)"
+            verdict = (
+                "chat panes found but the page kind is unknown (UIA names not exposed?)"
+            )
         print(f"  [{kind or '?'}] {title!r}: {verdict}")
     if not n_im:
-        print("  PROBLEM: no private-chat window would be tracked. Open a private chat (not minimized to the tray) and retry.")
+        print(
+            "  PROBLEM: no private-chat window would be tracked. Open a private chat (not minimized to the tray) and retry."
+        )
     return 0 if (n_im and not problems) else 1
 
 
 def cmd_status(cfg, text):
+    cfg = apply_app_profile(cfg)
     st, sf = cfg["status"], cfg["safety"]
     text = clip(expand(text, own=cfg["autoreply"]["own_nickname"]), st["max_length"])
     if st.get("execution_mode", "interactive") == "strict_background":
@@ -2958,10 +3870,18 @@ def cmd_status(cfg, text):
     win = get_window(cfg)
     ctrl = find(win, st["edit"])
     btn = find(win, st["apply_button"]) if st["apply_button"] else None
-    ok = commit(win, ctrl, text, cfg["dry_run"], sf["require_foreground"], btn,
-                sf["restore_previous_window"], st.get("background_enter_target", "edit"),
-                background_if_not_foreground=True,
-                execution_mode=st.get("execution_mode", "interactive"))
+    ok = commit(
+        win,
+        ctrl,
+        text,
+        cfg["dry_run"],
+        sf["require_foreground"],
+        btn,
+        sf["restore_previous_window"],
+        st.get("background_enter_target", "edit"),
+        background_if_not_foreground=True,
+        execution_mode=st.get("execution_mode", "interactive"),
+    )
     print(t("ok") if ok else t("failed"))
     return 0 if ok else 1
 
@@ -2975,44 +3895,108 @@ def setup_logging(cfg):
     LOG_TEXT = lc["log_message_text"]
     handlers = [logging.StreamHandler()]
     if lc["file"]:
-        handlers.append(logging.handlers.RotatingFileHandler(
-            BASE / lc["file"], maxBytes=lc["max_bytes"], backupCount=lc["backups"],
-            encoding="utf-8"))
-    logging.basicConfig(level=getattr(logging, lc["level"].upper(), logging.INFO),
-                        format="%(asctime)s %(levelname)s %(message)s",
-                        handlers=handlers, force=True)
+        handlers.append(
+            logging.handlers.RotatingFileHandler(
+                BASE / lc["file"],
+                maxBytes=lc["max_bytes"],
+                backupCount=lc["backups"],
+                encoding="utf-8",
+            )
+        )
+    logging.basicConfig(
+        level=getattr(logging, lc["level"].upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s %(message)s",
+        handlers=handlers,
+        force=True,
+    )
 
 
 # Public command names used by GUI launchers when forwarding CLI arguments.
 CLI_COMMANDS = {
-    "check", "discover", "windows", "run", "start", "stop", "state",
-    "autostart-on", "autostart-off", "chat-probe", "im-probe", "detect",
-    "status", "init", "marquee", "history", "history-add", "history-import",
+    "check",
+    "discover",
+    "windows",
+    "run",
+    "start",
+    "stop",
+    "state",
+    "autostart-on",
+    "autostart-off",
+    "chat-probe",
+    "im-probe",
+    "detect",
+    "status",
+    "init",
+    "marquee",
+    "history",
+    "history-add",
+    "history-import",
     "test-rules",
 }
 
 PROFILE_COMMANDS = {
     "room": {
-        "check", "discover", "windows", "run", "start", "stop", "state",
-        "autostart-on", "autostart-off", "chat-probe", "detect", "init",
+        "check",
+        "discover",
+        "windows",
+        "run",
+        "start",
+        "stop",
+        "state",
+        "autostart-on",
+        "autostart-off",
+        "chat-probe",
+        "detect",
+        "init",
         "test-rules",
         "update",
     },
     "im_reply": {
-        "check", "discover", "windows", "run", "start", "stop", "state",
-        "autostart-on", "autostart-off", "im-probe", "detect", "init",
+        "check",
+        "discover",
+        "windows",
+        "run",
+        "start",
+        "stop",
+        "state",
+        "autostart-on",
+        "autostart-off",
+        "im-probe",
+        "detect",
+        "init",
         "test-rules",
         "update",
     },
     "status": {
-        "check", "discover", "windows", "run", "start", "stop", "state",
-        "status", "marquee", "history", "history-add", "history-import",
-        "detect", "init",
+        "check",
+        "discover",
+        "windows",
+        "run",
+        "start",
+        "stop",
+        "state",
+        "status",
+        "marquee",
+        "history",
+        "history-add",
+        "history-import",
+        "detect",
+        "init",
         "update",
     },
     "music": {
-        "check", "discover", "windows", "run", "start", "stop", "state",
-        "autostart-on", "autostart-off", "chat-probe", "detect", "init",
+        "check",
+        "discover",
+        "windows",
+        "run",
+        "start",
+        "stop",
+        "state",
+        "autostart-on",
+        "autostart-off",
+        "chat-probe",
+        "detect",
+        "init",
         "test-rules",
         "update",
     },
@@ -3038,21 +4022,37 @@ def profile_command_error(profile, args):
 def build_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--config", default=argparse.SUPPRESS)
-    common.add_argument("--lang", choices=["auto", "th", "en"], default=argparse.SUPPRESS)
+    common.add_argument(
+        "--lang", choices=["auto", "th", "en"], default=argparse.SUPPRESS
+    )
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--config", default=None)
     p.add_argument("--lang", choices=["auto", "th", "en"], default=None)
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name in ("check", "discover", "windows", "run", "start", "stop", "state",
-                 "autostart-on", "autostart-off"):
+    for name in (
+        "check",
+        "discover",
+        "windows",
+        "run",
+        "start",
+        "stop",
+        "state",
+        "autostart-on",
+        "autostart-off",
+    ):
         sub.add_parser(name, parents=[common])
-    up = sub.add_parser("update", parents=[common],
-                        help="self-update this executable from the GitHub release")
+    up = sub.add_parser(
+        "update",
+        parents=[common],
+        help="self-update this executable from the GitHub release",
+    )
     up.add_argument("asset", nargs="?", default=None)
     sub.add_parser("chat-probe", parents=[common])
     sub.add_parser("im-probe", parents=[common])
     dp = sub.add_parser("detect", parents=[common])
-    dp.add_argument("--apply", action="store_true", help="write detected selectors into config.json")
+    dp.add_argument(
+        "--apply", action="store_true", help="write detected selectors into config.json"
+    )
     s = sub.add_parser("status", parents=[common])
     s.add_argument("text")
     i = sub.add_parser("init", parents=[common])
@@ -3063,7 +4063,11 @@ def build_parser():
     mqp.add_argument("--stride", type=int)
     mqp.add_argument("--cycles", type=int)
     mqp.add_argument("--max-frames", dest="max_frames", type=int)
-    mqp.add_argument("--infinite-loop", action="store_true", help="loop continuously without settling")
+    mqp.add_argument(
+        "--infinite-loop",
+        action="store_true",
+        help="loop continuously without settling",
+    )
     sub.add_parser("history", parents=[common])
     ha = sub.add_parser("history-add", parents=[common])
     ha.add_argument("text")
@@ -3073,11 +4077,13 @@ def build_parser():
     tr.add_argument("text", nargs="?")
     tr.add_argument("--sender", default="TestUser")
     tr.add_argument("--file")
-    tr.add_argument("--im", action="store_true", help="test with the autoreply_im rules and limits")
+    tr.add_argument(
+        "--im", action="store_true", help="test with the autoreply_im rules and limits"
+    )
     return p
 
 
-def cli_main(argv=None):
+def cli_main(argv=None, force_strict_background=False):
     global LANG, LANG_LOCKED
     a = build_parser().parse_args(argv)
     LANG = resolve_lang(a.lang)
@@ -3101,6 +4107,18 @@ def cli_main(argv=None):
         return cmd_init(cfg_path, a.force)
     try:
         cfg = apply_app_profile(load_cfg(cfg_path))
+        if (
+            force_strict_background
+            and APP_PROFILE == "status"
+            and cfg.get("status", {}).get("execution_mode")
+            != "best_effort_background"
+            and not _unverified_status_test_submit_enabled()
+        ):
+            # Preserve the explicit best-effort choice made in the Status
+            # Changer UI. The worker still emits the activation warning and
+            # uses the combo-post route; only implicit/legacy modes are forced
+            # back to strict when launched as a hidden process.
+            cfg.setdefault("status", {})["execution_mode"] = "strict_background"
     except Exception as e:
         print(t("cannot_load", e=e))
         return 2
@@ -3148,7 +4166,10 @@ def cli_main(argv=None):
     except KeyboardInterrupt:
         log.info(t("interrupted"))
         return 0
-    except (RuntimeError, LookupError) as e:  # expected setup problems: message, no traceback
+    except (
+        RuntimeError,
+        LookupError,
+    ) as e:  # expected setup problems: message, no traceback
         log.error("%s", e)
         if "window_title_regex" in str(e):
             print(t("win_hint"))
@@ -3158,18 +4179,16 @@ def cli_main(argv=None):
         return 1
 
 
-
-
 def set_lang(value):
     """Set the module-global language used by t()/bi()."""
     global LANG
     LANG = value
 
 
-
 # ============================================================
 # GUI (from camfrog_status_gui.py), combined Random + Marquee modes.
 # ============================================================
+
 
 class SingleInstanceGuard:
     """Prevent multiple GUI instances using a Windows named mutex.
@@ -3197,7 +4216,11 @@ class SingleInstanceGuard:
                 print("[SingleInstanceGuard] --allow-multiple: skipping mutex check")
             return True
         self.kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        self.kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p)
+        self.kernel32.CreateMutexW.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.c_wchar_p,
+        )
         self.kernel32.CreateMutexW.restype = ctypes.c_void_p
         self.kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
         self.kernel32.CloseHandle.restype = ctypes.c_int
@@ -3205,9 +4228,13 @@ class SingleInstanceGuard:
         mutex_name = f"Local\\{self.name}"
         self.handle = self.kernel32.CreateMutexW(None, False, mutex_name)
         if not self.handle:
-            raise OSError(ctypes.get_last_error(), f"Could not create mutex {mutex_name}")
+            raise OSError(
+                ctypes.get_last_error(), f"Could not create mutex {mutex_name}"
+            )
         if ctypes.get_last_error() == self.ERROR_ALREADY_EXISTS:
-            print(f"[SingleInstanceGuard] Mutex {mutex_name} already exists - another instance running")
+            print(
+                f"[SingleInstanceGuard] Mutex {mutex_name} already exists - another instance running"
+            )
             # Another instance exists - try to restore it
             self._restore_existing_instance()
             return False
@@ -3222,25 +4249,46 @@ class SingleInstanceGuard:
             self.user32 = ctypes.WinDLL("user32", use_last_error=True)
             # Find window by class name (TkTopLevel) and title containing our app name
             # The first instance registers a window class we can find
-            self.user32.EnumWindows.argtypes = (ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p), ctypes.c_void_p)
+            self.user32.EnumWindows.argtypes = (
+                ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p),
+                ctypes.c_void_p,
+            )
             self.user32.EnumWindows.restype = ctypes.c_int
-            self.user32.GetWindowTextW.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int)
+            self.user32.GetWindowTextW.argtypes = (
+                ctypes.c_void_p,
+                ctypes.c_wchar_p,
+                ctypes.c_int,
+            )
             self.user32.GetWindowTextW.restype = ctypes.c_int
-            self.user32.GetClassNameW.argtypes = (ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int)
+            self.user32.GetClassNameW.argtypes = (
+                ctypes.c_void_p,
+                ctypes.c_wchar_p,
+                ctypes.c_int,
+            )
             self.user32.GetClassNameW.restype = ctypes.c_int
-            self.user32.PostMessageW.argtypes = (ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p)
+            self.user32.PostMessageW.argtypes = (
+                ctypes.c_void_p,
+                ctypes.c_uint,
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+            )
             self.user32.PostMessageW.restype = ctypes.c_int
 
             found = []
 
             def enum_callback(hwnd, lparam):
                 try:
-                    length = self.user32.GetWindowTextW(hwnd, ctypes.create_unicode_buffer(256), 256)
+                    length = self.user32.GetWindowTextW(
+                        hwnd, ctypes.create_unicode_buffer(256), 256
+                    )
                     if length > 0:
                         title = ctypes.create_unicode_buffer(256)
                         self.user32.GetWindowTextW(hwnd, title, 256)
-                        expected = ("Camfrog Status Changer" if self.mode == "both" else
-                                    f"Camfrog {self.mode.title()} Status")
+                        expected = (
+                            "ZChat Status Changer"
+                            if self.mode == "both"
+                            else f"ZChat {self.mode.title()} Status"
+                        )
                         if expected in title.value:
                             found.append(hwnd)
                             # Found it - send restore message
@@ -3250,12 +4298,18 @@ class SingleInstanceGuard:
                     pass
                 return True  # Continue enumeration
 
-            callback = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)(enum_callback)
+            callback = ctypes.WINFUNCTYPE(
+                ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p
+            )(enum_callback)
             self.user32.EnumWindows(callback, 0)
             if found:
-                print(f"[SingleInstanceGuard] Found existing window(s): {found} - sent restore message")
+                print(
+                    f"[SingleInstanceGuard] Found existing window(s): {found} - sent restore message"
+                )
             else:
-                print("[SingleInstanceGuard] Mutex exists but no matching window found (stale mutex?)")
+                print(
+                    "[SingleInstanceGuard] Mutex exists but no matching window found (stale mutex?)"
+                )
         except Exception as e:
             print(f"[SingleInstanceGuard] Error restoring instance: {e}")
             pass  # Best effort
@@ -3268,14 +4322,20 @@ class SingleInstanceGuard:
             return False
         try:
             kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-            kernel32.OpenMutexW.argtypes = (ctypes.c_int, ctypes.c_int, ctypes.c_wchar_p)
+            kernel32.OpenMutexW.argtypes = (
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_wchar_p,
+            )
             kernel32.OpenMutexW.restype = ctypes.c_void_p
             kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
             kernel32.CloseHandle.restype = ctypes.c_int
             mode = "both"
             suffix = "" if mode == "both" else f"-{mode}"
             mutex_name = f"Local\\{name or 'CamfrogStatusChanger' + suffix}"
-            handle = kernel32.OpenMutexW(0x1F0001, False, mutex_name)  # MUTEX_ALL_ACCESS
+            handle = kernel32.OpenMutexW(
+                0x1F0001, False, mutex_name
+            )  # MUTEX_ALL_ACCESS
             if handle:
                 kernel32.CloseHandle(handle)
                 print(f"[SingleInstanceGuard] Force-cleaned stale mutex: {mutex_name}")
@@ -3290,6 +4350,7 @@ class SingleInstanceGuard:
             self.kernel32.CloseHandle(self.handle)
         self.handle = None
 
+
 DEFAULTS = {
     "language": "auto",
     "reload_config": True,
@@ -3297,56 +4358,108 @@ DEFAULTS = {
     "window_title_regex": ".*Camfrog.*",
     "dry_run": True,
     "poll_seconds": 1.5,
-    "log": {"level": "INFO", "file": "camfrog_status_changer.log", "max_bytes": 1000000,
-            "backups": 3, "log_message_text": True},
+    "log": {
+        "level": "INFO",
+        "file": "camfrog_status_changer.log",
+        "max_bytes": 1000000,
+        "backups": 3,
+        "log_message_text": True,
+    },
     "active_hours": {"enabled": False, "start": "09:00", "end": "23:30"},
-    "safety": {"stop_file": "camfrog_status_changer.STOP",
-               "pid_file": "camfrog_status_changer.pid",
-               "require_foreground": True, "restore_previous_window": True,
-               "max_consecutive_failures": 5},
+    "safety": {
+        "stop_file": "camfrog_status_changer.STOP",
+        "pid_file": "camfrog_status_changer.pid",
+        "require_foreground": True,
+        "restore_previous_window": True,
+        "max_consecutive_failures": 5,
+    },
     "status": {
         "enabled": True,
-        "execution_mode": "interactive",  # or "strict_background" (no focus/input/clipboard/sound changes)
+        "execution_mode": "strict_background",
         "edit": {"class_name": "Edit", "auto_id": "1001", "index": 0},
         "apply_button": None,
         "background_enter_target": "edit",  # experimental "combo" targets the parent CComboBoxTS
-        "interval_seconds": 600, "set_on_start": True, "random": False,
-        "language_mode": "both", "retry_seconds": 30, "max_length": 120, "messages": [],
+        "interval_seconds": 600,
+        "set_on_start": True,
+        "random": False,
+        "language_mode": "both",
+        "retry_seconds": 30,
+        "max_length": 120,
+        "messages": [],
         "schedules": [],
         "language_cycle": [],
-        "marquee": {"enabled": False, "scroll": False, "width": 28, "stride": 2, "step_seconds": 0.5,
-                    "separator": "   \u2022   ", "cycles": 1, "max_frames": 80,
-                    "infinite_loop": False, "loop_slots": False},
-        "history": {"enabled": True, "file": "camfrog_status_changer_history.json", "max_items": 50,
-                    "record": True, "use_as_source": False, "seed_from_messages": True,
-                    "mode": "rotate"},
+        "marquee": {
+            "enabled": False,
+            "scroll": False,
+            "width": 28,
+            "stride": 2,
+            "step_seconds": 0.5,
+            "separator": "   \u2022   ",
+            "cycles": 1,
+            "max_frames": 80,
+            "infinite_loop": False,
+            "loop_slots": False,
+        },
+        "history": {
+            "enabled": True,
+            "file": "camfrog_status_changer_history.json",
+            "max_items": 50,
+            "record": True,
+            "use_as_source": False,
+            "seed_from_messages": True,
+            "mode": "rotate",
+        },
     },
     "autoreply": {
-        "enabled": True, "own_nickname": "", "window_title_regex": "", "log_kind": "room",
+        "enabled": True,
+        "own_nickname": "",
+        "window_title_regex": "",
+        "log_kind": "room",
         "history_tail": 150,
         "history": {"class_name": "AtlAxWinLic140", "auto_id": "1002", "index": 0},
         "input": {"class_name": "AtlAxWinLic140", "auto_id": "1002", "index": 1},
-        "ignore_nicknames": [], "only_nicknames": [],
-        "per_sender_cooldown_seconds": 300, "global_min_gap_seconds": 20,
-        "max_per_hour": 30, "delay_range_seconds": [2.0, 5.0],
-        "max_reply_length": 200, "max_incoming_length": 500, "rules": [],
-        "skip_patterns": [], "ignore_links": True,
+        "ignore_nicknames": [],
+        "only_nicknames": [],
+        "per_sender_cooldown_seconds": 300,
+        "global_min_gap_seconds": 20,
+        "max_per_hour": 30,
+        "delay_range_seconds": [2.0, 5.0],
+        "max_reply_length": 200,
+        "max_incoming_length": 500,
+        "rules": [],
+        "skip_patterns": [],
+        "ignore_links": True,
     },
     # Private-message (IM) auto-reply: separate opt-in, own rules, own limits. Reuses the
     # autoreply.history / autoreply.input selectors (IM windows have the same two web panes).
     "autoreply_im": {
-        "enabled": False, "dry_run": True, "window_title_regex": "", "max_windows": 5,
+        "enabled": False,
+        "dry_run": True,
+        "window_title_regex": "",
+        "max_windows": 5,
         "log_kinds": ["im"],
-        "only_nicknames": [], "rules": [], "skip_patterns": [], "ignore_links": True,
-        "prefix": "[auto] ", "answer_first_message": True,
-        "per_sender_cooldown_seconds": 3600, "max_per_sender_per_day": 3,
-        "global_min_gap_seconds": 20, "max_per_hour": 10, "delay_range_seconds": [2.0, 5.0],
-        "max_reply_length": 200, "max_incoming_length": 500,
+        "only_nicknames": [],
+        "rules": [],
+        "skip_patterns": [],
+        "ignore_links": True,
+        "prefix": "[auto] ",
+        "answer_first_message": True,
+        "per_sender_cooldown_seconds": 3600,
+        "max_per_sender_per_day": 3,
+        "global_min_gap_seconds": 20,
+        "max_per_hour": 10,
+        "delay_range_seconds": [2.0, 5.0],
+        "max_reply_length": 200,
+        "max_incoming_length": 500,
     },
     # Room music DJ: needs autoreply.enabled for chat plumbing (see CONFIG docs).
     "dj": {
-        "enabled": False, "prefix": "!", "queue_file": "dj_queue.json",
-        "max_per_user": 3, "music_dir": "music", "audio_backend": "chat",
+        "enabled": False,
+        "prefix": "!",
+        "queue_file": "dj_queue.json",
+        "max_per_user": 3,
+        "music_dir": "music",
+        "audio_backend": "chat",
         "announce_now": "[dj] Now playing: {title} (requested by {user})",
         "announce_queued": "[dj] Queued #{pos}: {title}",
     },
@@ -3380,8 +4493,11 @@ STATUS_CHANGER_THEME = {
 
 # Where this app keeps its own config, status pool, logs, and worker PID/STOP.
 # The combined app keeps its worker state together and status pools separate.
-DATA_DIR = Path(os.environ["ZCFATO_DATA_DIR"]) if os.environ.get("ZCFATO_DATA_DIR") \
+DATA_DIR = (
+    Path(os.environ["ZCFATO_DATA_DIR"])
+    if os.environ.get("ZCFATO_DATA_DIR")
     else BASE / "status-data"
+)
 
 # ---------- Original Status GUI ----------
 
@@ -3390,7 +4506,7 @@ ACTIVE_MODE_FILE = "camfrog_status_changer.mode"
 MODE_SETTINGS_FILE = "status-mode-settings.json"
 MARQUEE_STEP_MIN = 0.3
 MARQUEE_STRIDE_DEFAULT = 2
-RANDOM_INTERVAL_MIN = 0.3
+RANDOM_INTERVAL_MIN = 10
 RANDOM_INTERVAL_DEFAULT = 600
 RANDOM_INTERVAL_MAX = 86400
 STATUS_SLOTS = 10
@@ -3434,11 +4550,15 @@ def initial_combined_config():
     result = deep_merge(DEFAULTS, random_config or marquee_config or {})
     if marquee_config:
         result["status"]["marquee"] = copy.deepcopy(
-            marquee_config["status"].get("marquee", DEFAULTS["status"]["marquee"]))
+            marquee_config["status"].get("marquee", DEFAULTS["status"]["marquee"])
+        )
         result["status"]["background_enter_target"] = marquee_config["status"].get(
-            "background_enter_target", result["status"].get("background_enter_target", "edit"))
+            "background_enter_target",
+            result["status"].get("background_enter_target", "edit"),
+        )
         result["status"]["execution_mode"] = marquee_config["status"].get(
-            "execution_mode", result["status"].get("execution_mode", "interactive"))
+            "execution_mode", result["status"].get("execution_mode", "interactive")
+        )
     # The single worker identity belongs to the combined app, regardless of which
     # legacy config supplied the shared Camfrog selectors.
     result["status"]["random"] = False
@@ -3461,8 +4581,11 @@ def load_mode_intervals(legacy_configs=None, data_dir=None):
         pass
     result = {}
     for mode in ("random", "marquee"):
-        fallback = (legacy_configs.get(mode) or {}).get("status", {}).get(
-            "interval_seconds", DEFAULTS["status"]["interval_seconds"])
+        fallback = (
+            (legacy_configs.get(mode) or {})
+            .get("status", {})
+            .get("interval_seconds", DEFAULTS["status"]["interval_seconds"])
+        )
         raw = values.get(mode, fallback)
         try:
             result[mode] = parse_interval_seconds(raw)
@@ -3475,10 +4598,14 @@ def status_mode_config_paths(config_path):
     """Return independent config paths for the combined app's two status modes."""
     source = Path(config_path).resolve()
     if source.name == "camfrog-status-config.json":
-        return {mode: source.parent / f"{mode}-config.json"
-                for mode in ("random", "marquee")}
-    return {mode: source.with_name(f"{source.stem}-{mode}.json")
-            for mode in ("random", "marquee")}
+        return {
+            mode: source.parent / f"{mode}-config.json"
+            for mode in ("random", "marquee")
+        }
+    return {
+        mode: source.with_name(f"{source.stem}-{mode}.json")
+        for mode in ("random", "marquee")
+    }
 
 
 def initialize_status_mode_configs(config_path):
@@ -3492,7 +4619,8 @@ def initialize_status_mode_configs(config_path):
     if shared and not settings_path.is_file() and not legacy.get("random"):
         try:
             old_intervals["random"] = parse_interval_seconds(
-                shared["status"]["interval_seconds"])
+                shared["status"]["interval_seconds"]
+            )
         except (KeyError, TypeError, ValueError):
             pass
 
@@ -3538,14 +4666,16 @@ def parse_interval_seconds(raw):
     return int(value) if value.is_integer() else value
 
 
-def configure_status_mode(config, mode, messages, interval_seconds, marquee_options=None):
+def configure_status_mode(
+    config, mode, messages, interval_seconds, marquee_options=None
+):
     """Apply only the settings owned by the selected status workflow."""
     if mode not in ("random", "marquee"):
         raise ValueError("mode must be random or marquee")
 
     status = config["status"]
     marquee = status["marquee"]
-    status["interval_seconds"] = interval_seconds
+    status["interval_seconds"] = parse_interval_seconds(interval_seconds)
     status["messages"] = messages
     status["random"] = mode == "random"
     marquee["enabled"] = mode == "marquee"
@@ -3589,7 +4719,9 @@ def read_status_pool(path, seed_messages=None):
                 "(slot INTEGER PRIMARY KEY CHECK(slot BETWEEN 1 AND 10), message TEXT NOT NULL)"
             )
             if was_missing and seed_messages is not None:
-                values = [message_to_text(message) for message in seed_messages[:STATUS_SLOTS]]
+                values = [
+                    message_to_text(message) for message in seed_messages[:STATUS_SLOTS]
+                ]
                 values.extend([""] * (STATUS_SLOTS - len(values)))
                 connection.executemany(
                     "INSERT INTO status_slots(slot, message) VALUES(?, ?)",
@@ -3631,13 +4763,15 @@ def migrate_status_pools():
         try:
             # Read-only query; do not alter a database still owned by the old app.
             with closing(sqlite3.connect(source)) as connection:
-                rows = dict(connection.execute(
-                    "SELECT slot, message FROM status_slots"))
+                rows = dict(
+                    connection.execute("SELECT slot, message FROM status_slots")
+                )
             values = [str(rows.get(slot, "")) for slot in range(1, STATUS_SLOTS + 1)]
             write_status_pool(target, values)
         except (OSError, sqlite3.Error) as exc:
-            logging.warning("Could not import legacy %s status pool: %s",
-                            mode, type(exc).__name__)
+            logging.warning(
+                "Could not import legacy %s status pool: %s", mode, type(exc).__name__
+            )
     return paths
 
 
@@ -3686,6 +4820,16 @@ def runtime_config(config, mode="random"):
         raise ValueError("mode must be random or marquee")
     runtime = copy.deepcopy(config)
     status = runtime.setdefault("status", {})
+    # Normal workers fail closed in strict mode. An explicit local test flag
+    # opts into a combo-parent route that remains externally unverified and may
+    # activate Camfrog.
+    if _unverified_status_test_submit_enabled():
+        status["execution_mode"] = "interactive"
+        status["background_enter_target"] = "combo"
+    elif status.get("execution_mode") == "best_effort_background":
+        status["background_enter_target"] = "combo"
+    else:
+        status["execution_mode"] = "strict_background"
     status["random"] = mode == "random"
     status.setdefault("marquee", {})["enabled"] = mode == "marquee"
     if mode == "marquee":
@@ -3779,8 +4923,11 @@ def clean_worker_log_at_noon(now=None, handlers=None):
     if local_now.time().replace(tzinfo=None) < dt.time(12, 0):
         return ()
     handlers = logging.getLogger().handlers if handlers is None else handlers
-    worker_logs = {"random-status-worker.log", "marquee-status-worker.log",
-                   "camfrog_status_changer.log"}
+    worker_logs = {
+        "random-status-worker.log",
+        "marquee-status-worker.log",
+        "camfrog_status_changer.log",
+    }
     cleaned = []
     for handler in tuple(handlers):
         if not isinstance(handler, logging.handlers.RotatingFileHandler):
@@ -3818,10 +4965,14 @@ def write_activity_log(mode, message):
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         stamp = dt.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
         safe_mode = mode if mode in ("random", "marquee") else "app"
-        safe_message = " ".join(str(message).replace("\r", " ").replace("\n", " ").split())
+        safe_message = " ".join(
+            str(message).replace("\r", " ").replace("\n", " ").split()
+        )
         line = f"{stamp} | {safe_mode} | {safe_message}\n"
         with _ACTIVITY_LOG_LOCK:
-            with (DATA_DIR / "status_activity.log").open("a", encoding="utf-8") as stream:
+            with (DATA_DIR / "status_activity.log").open(
+                "a", encoding="utf-8"
+            ) as stream:
                 stream.write(line)
     except OSError:
         logging.exception("Could not append Status Changer activity log")
@@ -3837,21 +4988,27 @@ def active_worker_mode():
 
 def apply_status_text(config_path, text):
     """Apply one status with the saved safety settings, discovering controls if needed."""
-    config = load_cfg(config_path)
+    config = apply_app_profile(load_cfg(config_path))
     try:
         return cmd_status(config, text)
     except (LookupError, RuntimeError):
         try:
             detected = cmd_detect(config, config_path, apply=True)
         except RuntimeError as exc:
-            raise RuntimeError(t(
-                "Cannot find Camfrog window. Is Camfrog running?",
-                "ไม่พบหน้าต่าง Camfrog เปิดแล้วหรือยัง")) from exc
+            raise RuntimeError(
+                t(
+                    "Cannot find Camfrog window. Is Camfrog running?",
+                    "ไม่พบหน้าต่าง Camfrog เปิดแล้วหรือยัง",
+                )
+            ) from exc
         if detected == 0:
-            return cmd_status(load_cfg(config_path), text)
-        raise RuntimeError(t(
-            "Could not find status controls. Open a chat room in Camfrog and retry.",
-            "ไม่พบ control ของ status เปิดห้องแชทใน Camfrog แล้วลองใหม่"))
+            return cmd_status(apply_app_profile(load_cfg(config_path)), text)
+        raise RuntimeError(
+            t(
+                "Could not find status controls. Open a chat room in Camfrog and retry.",
+                "ไม่พบ control ของ status เปิดห้องแชทใน Camfrog แล้วลองใหม่",
+            )
+        )
 
 
 class StatusOperationCancelled(Exception):
@@ -3865,6 +5022,7 @@ def _raise_if_status_cancelled(cancel_event):
 
 def _commit_frames(config, frames, cancel_event=None):
     """Send prebuilt frames one by one, stopping between frames on request."""
+    config = apply_app_profile(config)
     st, sf = config["status"], config["safety"]
     mq = st["marquee"]
     strict = st.get("execution_mode", "interactive") == "strict_background"
@@ -3878,18 +5036,26 @@ def _commit_frames(config, frames, cancel_event=None):
         ctrl = find(win, st["edit"])
         btn = find(win, st["apply_button"]) if st["apply_button"] else None
     try:
-        step = max(0.3, float(mq.get("step_seconds", 0.3)))
+        step = max(MARQUEE_STEP_MIN, float(mq.get("step_seconds", MARQUEE_STEP_MIN)))
     except (TypeError, ValueError):
-        step = 0.3
+        step = MARQUEE_STEP_MIN
     for i, frame in enumerate(frames):
         _raise_if_status_cancelled(cancel_event)
         if strict:
             ok = commit_background(frame, dry=config["dry_run"])
         else:
-            ok = commit(win, ctrl, frame, config["dry_run"], sf["require_foreground"], btn,
-                        sf["restore_previous_window"], st.get("background_enter_target", "edit"),
-                        background_if_not_foreground=True,
-                        execution_mode=st.get("execution_mode", "interactive"))
+            ok = commit(
+                win,
+                ctrl,
+                frame,
+                config["dry_run"],
+                sf["require_foreground"],
+                btn,
+                sf["restore_previous_window"],
+                st.get("background_enter_target", "edit"),
+                background_if_not_foreground=True,
+                execution_mode=st.get("execution_mode", "interactive"),
+            )
         if not ok:
             print(t("failed"))
             return 1
@@ -3915,7 +5081,8 @@ def apply_status_scrolling(config_path, text, cancel_event=None):
     _raise_if_status_cancelled(cancel_event)
     config = load_cfg(config_path)
     frames = Runner(config).build_frames(
-        expand(text, own=config["autoreply"]["own_nickname"]))
+        expand(text, own=config["autoreply"]["own_nickname"])
+    )
     if len(frames) <= 1:
         _raise_if_status_cancelled(cancel_event)
         return apply_status_text(config_path, text)
@@ -3926,19 +5093,28 @@ def apply_status_scrolling(config_path, text, cancel_event=None):
         try:
             detected = cmd_detect(config, config_path, apply=True)
         except RuntimeError as exc:
-            raise RuntimeError(t(
-                "Cannot find Camfrog window. Is Camfrog running?",
-                "ไม่พบหน้าต่าง Camfrog เปิดแล้วหรือยัง")) from exc
+            raise RuntimeError(
+                t(
+                    "Cannot find Camfrog window. Is Camfrog running?",
+                    "ไม่พบหน้าต่าง Camfrog เปิดแล้วหรือยัง",
+                )
+            ) from exc
         if detected == 0:
             _raise_if_status_cancelled(cancel_event)
-            return _commit_frames(load_cfg(config_path), frames,
-                                  cancel_event=cancel_event)
-        raise RuntimeError(t(
-            "Could not find status controls. Open a chat room in Camfrog and retry.",
-            "ไม่พบ control ของ status เปิดห้องแชทใน Camfrog แล้วลองใหม่"))
+            return _commit_frames(
+                load_cfg(config_path), frames, cancel_event=cancel_event
+            )
+        raise RuntimeError(
+            t(
+                "Could not find status controls. Open a chat room in Camfrog and retry.",
+                "ไม่พบ control ของ status เปิดห้องแชทใน Camfrog แล้วลองใหม่",
+            )
+        )
 
 
 def cmd_start(cfg, args):
+    if _strict_status_start_blocked(cfg):
+        return 2
     pid = running_pid(cfg)
     if pid:
         print(t("already_running", pid=pid))
@@ -3949,17 +5125,33 @@ def cmd_start(cfg, args):
     if not cfg["log"]["file"]:
         print(t("bg_needs_log"))
         return 2
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    registered = read_pid(cfg)
+    if registered and pid_alive(registered):
+        print(f"Existing worker PID {registered} is alive but could not be verified; refusing another start.")
+        return 1
+    pid_path(cfg).unlink(missing_ok=True)
+    start_gate = worker_start_gate_path(cfg)
+    start_gate.unlink(missing_ok=True)
     logf = BASE / cfg["log"]["file"]
     flags = 0x08000000 | 0x00000200  # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
-    p = subprocess.Popen(child_cmd(args) + ["run"], stdin=subprocess.DEVNULL,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         creationflags=flags, close_fds=True, cwd=str(BASE),
-                         env=child_env())
-    time.sleep(2.5)
-    if p.poll() is not None:
-        raise RuntimeError(t("bg_failed", code=p.returncode, log=logf))
-    print(t("bg_started", pid=p.pid, log=logf))
+    env = child_env()
+    env["ZCFATO_WORKER_START_GATE"] = str(start_gate)
+    p = subprocess.Popen(
+        child_cmd(args) + ["run"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=flags,
+        close_fds=True,
+        cwd=str(BASE),
+        env=env,
+    )
+    if not _wait_for_worker_registration(cfg, p, logf, print):
+        return 1
+    print(t("bg_started", pid=read_pid(cfg), log=logf))
     return 0
+
 
 def worker_cmd(args):
     """Relaunch this standalone app in its hidden worker mode."""
@@ -3969,7 +5161,10 @@ def worker_cmd(args):
         python = Path(sys.executable)
         pythonw = python.with_name("pythonw.exe")
         entrypoint = Path(__file__).with_name("status_changer_entry.py")
-        command = [str(pythonw if pythonw.exists() else python), str(entrypoint.resolve())]
+        command = [
+            str(pythonw if pythonw.exists() else python),
+            str(entrypoint.resolve()),
+        ]
     command.append("--worker")
     cfg_arg = []
     if getattr(args, "config", None):
@@ -3979,7 +5174,9 @@ def worker_cmd(args):
     return command + cfg_arg
 
 
-def run_control_discovery(config_path, apply=True, timeout=CONTROL_DISCOVERY_TIMEOUT_SECONDS):
+def run_control_discovery(
+    config_path, apply=True, timeout=CONTROL_DISCOVERY_TIMEOUT_SECONDS
+):
     """Run UI Automation discovery out of process so a hung UIA call cannot pin the GUI busy."""
     args = SimpleNamespace(config=str(Path(config_path).resolve()), lang=None)
     command = worker_cmd(args)
@@ -4012,34 +5209,50 @@ def run_control_discovery(config_path, apply=True, timeout=CONTROL_DISCOVERY_TIM
     return result.returncode
 
 
-def cmd_start_worker(cfg, args):
+def cmd_start_worker(cfg, args, report=None):
     """Start this app's hidden status worker in the background."""
+    emit = report if report is not None else print
+    if _strict_status_start_blocked(cfg, emit=emit):
+        return 2
     pid = running_pid(cfg)
     if pid:
-        print(t("already_running", pid=pid))
+        emit(t("already_running", pid=pid))
         return 1
     if os.name != "nt":
-        print(t("win_only"))
+        emit(t("win_only"))
         return 2
     if not cfg["log"]["file"]:
-        print(t("bg_needs_log"))
+        emit(t("bg_needs_log"))
         return 2
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    registered = read_pid(cfg)
+    if registered and pid_alive(registered):
+        emit(f"Existing worker PID {registered} is alive but could not be verified; refusing another start.")
+        return 1
+    pid_path(cfg).unlink(missing_ok=True)
+    start_gate = worker_start_gate_path(cfg)
+    start_gate.unlink(missing_ok=True)
     logf = DATA_DIR / cfg["log"]["file"]
     flags = 0x08000000 | 0x00000200  # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
     env = child_env()
     env["ZCFATO_DATA_DIR"] = str(DATA_DIR)
     env["ZCFATO_STATUS_MODE"] = STATUS_MODE
-    p = subprocess.Popen(worker_cmd(args) + ["run"], stdin=subprocess.DEVNULL,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         creationflags=flags, close_fds=True, cwd=str(DATA_DIR),
-                         env=env)
-    time.sleep(2.5)
-    if p.poll() is not None:
-        print(t("bg_failed", code=p.returncode, log=logf))
+    env["ZCFATO_WORKER_START_GATE"] = str(start_gate)
+    p = subprocess.Popen(
+        worker_cmd(args) + ["run"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=flags,
+        close_fds=True,
+        cwd=str(DATA_DIR),
+        env=env,
+    )
+    if not _wait_for_worker_registration(cfg, p, logf, emit):
         return 1
-    print(t("bg_started", pid=p.pid, log=logf))
+    emit(t("bg_started", pid=read_pid(cfg), log=logf))
     return 0
+
 
 def cmd_stop(cfg):
     pid = running_pid(cfg)
@@ -4058,8 +5271,12 @@ def cmd_stop(cfg):
     forced = False
     if pid_alive(pid):
         try:
-            subprocess.run([system_taskkill_path(), "/PID", str(pid), "/T", "/F"],
-                           capture_output=True, check=False, timeout=10)
+            subprocess.run(
+                [system_taskkill_path(), "/PID", str(pid), "/T", "/F"],
+                capture_output=True,
+                check=False,
+                timeout=10,
+            )
             forced = True
         except (OSError, subprocess.TimeoutExpired):
             log.exception("taskkill failed for PID %s", pid)
@@ -4076,13 +5293,20 @@ def cmd_stop(cfg):
     (DATA_DIR / ACTIVE_MODE_FILE).unlink(missing_ok=True)
     return 0
 
+
 STRUCT_SKIP = {"Text", "Hyperlink", "Image", "ListItem", "DataItem", "TreeItem"}
 
 # ---------- Inlined ClipboardController ----------
 
 
 _WIDGET_CLASSES = {
-    "Entry", "TEntry", "TCombobox", "Spinbox", "TSpinbox", "Text", "Listbox",
+    "Entry",
+    "TEntry",
+    "TCombobox",
+    "Spinbox",
+    "TSpinbox",
+    "Text",
+    "Listbox",
 }
 _EDITABLE_CLASSES = {"Entry", "TEntry", "TCombobox", "Spinbox", "TSpinbox", "Text"}
 
@@ -4234,15 +5458,23 @@ class ClipboardController:
         self.target = None
         self.widgets = []
         import weakref
+
         self._installed_widgets = weakref.WeakSet()
         self.menu = tk.Menu(root, tearoff=False)
-        for label, action in (("Cut|ตัด", "cut"), ("Copy|คัดลอก", "copy"),
-                              ("Paste|วาง", "paste")):
-            self.menu.add_command(label=self.translate(label),
-                                  command=lambda op=action: self.perform(self.target, op))
+        for label, action in (
+            ("Cut|ตัด", "cut"),
+            ("Copy|คัดลอก", "copy"),
+            ("Paste|วาง", "paste"),
+        ):
+            self.menu.add_command(
+                label=self.translate(label),
+                command=lambda op=action: self.perform(self.target, op),
+            )
         self.menu.add_separator()
-        self.menu.add_command(label=self.translate("Select all|เลือกทั้งหมด"),
-                              command=lambda: self.select_all(self.target))
+        self.menu.add_command(
+            label=self.translate("Select all|เลือกทั้งหมด"),
+            command=lambda: self.select_all(self.target),
+        )
 
     def refresh_menu(self):
         labels = (
@@ -4259,29 +5491,42 @@ class ClipboardController:
         """Bind editors recursively, including controls added after the first build."""
         for widget in parent.winfo_children():
             widget_class = _widget_class(widget)
-            if widget_class in _WIDGET_CLASSES and widget not in self._installed_widgets:
+            if (
+                widget_class in _WIDGET_CLASSES
+                and widget not in self._installed_widgets
+            ):
                 self._installed_widgets.add(widget)
                 self.widgets.append(widget)
                 if widget_class in {"Text", "Listbox"}:
                     try:
                         widget.configure(
-                            background=(STATUS_CHANGER_THEME["entry"]
-                                        if widget_class == "Text"
-                                        else STATUS_CHANGER_THEME["surface"]),
+                            background=(
+                                STATUS_CHANGER_THEME["entry"]
+                                if widget_class == "Text"
+                                else STATUS_CHANGER_THEME["surface"]
+                            ),
                             foreground=STATUS_CHANGER_THEME["text"],
                             selectbackground=STATUS_CHANGER_THEME["accent"],
                             selectforeground=STATUS_CHANGER_THEME["surface"],
                             insertbackground=STATUS_CHANGER_THEME["text"],
                             highlightbackground=STATUS_CHANGER_THEME["border"],
-                            highlightcolor=STATUS_CHANGER_THEME["accent"])
+                            highlightcolor=STATUS_CHANGER_THEME["accent"],
+                        )
                     except Exception:
                         pass
                 for sequence, action in (
-                    ("<Control-c>", "copy"), ("<Control-x>", "cut"),
-                    ("<Control-v>", "paste"), ("<Control-Insert>", "copy"),
-                    ("<Shift-Delete>", "cut"), ("<Shift-Insert>", "paste"),
+                    ("<Control-c>", "copy"),
+                    ("<Control-x>", "cut"),
+                    ("<Control-v>", "paste"),
+                    ("<Control-Insert>", "copy"),
+                    ("<Shift-Delete>", "cut"),
+                    ("<Shift-Insert>", "paste"),
                 ):
-                    widget.bind(sequence, lambda event, op=action: self.handle(event, op), add="+")
+                    widget.bind(
+                        sequence,
+                        lambda event, op=action: self.handle(event, op),
+                        add="+",
+                    )
                 # The generic key binding also recognizes Windows virtual-key
                 # codes and control characters when a Thai/non-Latin layout
                 # reports an unknown keysym for Ctrl+A/C/V/X.
@@ -4305,8 +5550,14 @@ class ClipboardController:
             "v": ({"v", "\x16"}, 86, "paste"),
             "x": ({"x", "\x18"}, 88, "cut"),
         }
-        key = next((name for name, (chars, code, _action) in shortcuts.items()
-                    if keysym == name or char in chars or keycode == code), None)
+        key = next(
+            (
+                name
+                for name, (chars, code, _action) in shortcuts.items()
+                if keysym == name or char in chars or keycode == code
+            ),
+            None,
+        )
         if key is None:
             return None
         self.target = event.widget
@@ -4366,29 +5617,41 @@ class ClipboardController:
             except Exception:
                 pass
         return "break"
+
+
 def build_app():
     import tkinter as tk
     from tkinter import messagebox, ttk
 
     class StatusChanger:
-        def __init__(self, config_path):
+        def __init__(
+            self, config_path, *, parent=None, on_closed=None, on_close_failed=None
+        ):
+            self.embedded = parent is not None
+            self.on_closed = on_closed
+            self.on_close_failed = on_close_failed
+            self._closed_callback_called = False
             self.config_paths = initialize_status_mode_configs(config_path)
             self.config_path = self.config_paths["random"]
             self.runtime_config_paths = {
                 "random": DATA_DIR / "random-status-runtime.json",
                 "marquee": DATA_DIR / "marquee-status-runtime.json",
             }
-            self.root = tk.Tk()
+            self.root = parent if self.embedded else tk.Tk()
             self.root.configure(background=STATUS_CHANGER_THEME["background"])
             self.app_name = "Status Changer"
-            self.root.title(f"Camfrog {self.app_name}")
-            self.root.geometry("520x700")
-            self.root.minsize(480, 640)
-            self.root.resizable(True, True)
-            try:
-                self.root.iconbitmap(str(BASE / "app.ico"))
-            except (tk.TclError, OSError):
-                pass
+            if not self.embedded:
+                title = f"ZChat {self.app_name}"
+                if _unverified_status_test_submit_enabled():
+                    title += " [UNVERIFIED TEST MODE]"
+                self.root.title(title)
+                self.root.geometry("520x700")
+                self.root.minsize(480, 640)
+                self.root.resizable(True, True)
+                try:
+                    self.root.iconbitmap(str(_application_icon_path()))
+                except (tk.TclError, OSError):
+                    pass
             self.busy = False
             self.close_requested = False
             self.stop_in_progress = False
@@ -4407,8 +5670,11 @@ def build_app():
             try:
                 self.config = load_cfg(self.config_path)
             except Exception as exc:
-                messagebox.showerror(f"Camfrog {self.app_name}", str(exc), parent=self.root)
-                self.root.destroy()
+                messagebox.showerror(
+                    f"ZChat {self.app_name}", str(exc), parent=self.root
+                )
+                if not self.embedded:
+                    self.root.destroy()
                 raise SystemExit(2)
             global LANG
             self.language_preference = self.config.get("language", "auto")
@@ -4416,51 +5682,93 @@ def build_app():
             self.pool_paths = migrate_status_pools()
             # Only Random has a wall-clock switch interval. Marquee advances by
             # its Frame setting, so it has no hidden Every control/value.
-            self.intervals = {"random": tk.StringVar(value=str(
-                self.config["status"]["interval_seconds"]))}
+            self.intervals = {
+                "random": tk.StringVar(
+                    value=str(self.config["status"]["interval_seconds"])
+                )
+            }
             self.random_fields = [tk.StringVar(value="") for _ in range(STATUS_SLOTS)]
             self.marquee_fields = [tk.StringVar(value="") for _ in range(STATUS_SLOTS)]
-            self.step = tk.StringVar(value=str(max(
-                MARQUEE_STEP_MIN, self.config["status"]["marquee"]["step_seconds"])))
-            self.stride = tk.StringVar(value=str(self.config["status"]["marquee"].get(
-                "stride", MARQUEE_STRIDE_DEFAULT)))
+            self.step = tk.StringVar(
+                value=str(
+                    max(
+                        MARQUEE_STEP_MIN,
+                        self.config["status"]["marquee"]["step_seconds"],
+                    )
+                )
+            )
+            self.stride = tk.StringVar(
+                value=str(
+                    self.config["status"]["marquee"].get(
+                        "stride", MARQUEE_STRIDE_DEFAULT
+                    )
+                )
+            )
             marquee = self.config["status"]["marquee"]
-            self.loop_slots = tk.BooleanVar(value=bool(
-                marquee.get("loop_slots", False) or marquee.get("infinite_loop", False)))
-            self.scroll_frames = tk.BooleanVar(value=bool(
-                self.config["status"]["marquee"].get("scroll", False)))
-            self.combo_enter = tk.BooleanVar(value=(
-                self.config["status"].get("background_enter_target", "edit") == "combo"))
+            self.loop_slots = tk.BooleanVar(
+                value=bool(
+                    marquee.get("loop_slots", False)
+                    or marquee.get("infinite_loop", False)
+                )
+            )
+            self.scroll_frames = tk.BooleanVar(
+                value=bool(self.config["status"]["marquee"].get("scroll", False))
+            )
+            initial_submit_mode = self.config["status"].get("execution_mode", "strict_background")
+            if initial_submit_mode not in ("strict_background", "best_effort_background"):
+                initial_submit_mode = "strict_background"
+            self.execution_mode = tk.StringVar(value=initial_submit_mode)
             self.live_send = tk.BooleanVar(value=not self.config.get("dry_run", True))
             try:
                 self._load_fields()
             except (OSError, sqlite3.Error) as exc:
-                messagebox.showerror(f"Camfrog {self.app_name}", str(exc), parent=self.root)
-                self.root.destroy()
+                messagebox.showerror(
+                    f"ZChat {self.app_name}", str(exc), parent=self.root
+                )
+                if not self.embedded:
+                    self.root.destroy()
                 raise SystemExit(2)
-            for variable in (self.random_fields + self.marquee_fields +
-                             list(self.intervals.values()) +
-                             [self.step, self.stride, self.live_send]):
+            for variable in (
+                self.random_fields
+                + self.marquee_fields
+                + list(self.intervals.values())
+                + [self.step, self.stride, self.live_send, self.execution_mode]
+            ):
                 variable.trace_add("write", self.schedule_save)
             self._build()
             self.clean_logs_at_noon()
             self._log_activity("Application opened", "app")
+            if _unverified_status_test_submit_enabled():
+                self._log_activity(
+                    "UNVERIFIED TEST MODE enabled: combo-post dispatch; "
+                    "Camfrog may activate and friend-list PASS/FAIL must be "
+                    "recorded separately",
+                    "app",
+                )
             self.clipboard_controller = ClipboardController(
-                self.root, translate=self._translate_clipboard, on_error=self._clipboard_error)
+                self.root,
+                translate=self._translate_clipboard,
+                on_error=self._clipboard_error,
+            )
             self.clipboard_controller.install(self.root)
-            self.root.protocol("WM_DELETE_WINDOW", self.close_app)
+            if not self.embedded:
+                self.root.protocol("WM_DELETE_WINDOW", self.close_app)
             self.task_poll_job = self.root.after(100, self.poll_task_results)
             self.state_job = self.root.after(500, self.refresh_state)
             self.activity_refresh_job = self.root.after(500, self.refresh_activity_log)
-            self.root.after(2500, self._auto_update_check)
+            if not self.embedded:
+                self.root.after(1000, self._discover_controls_on_start)
+                self.root.after(2500, self._auto_update_check)
 
             # A second launch restores the visible standalone window.
-            if os.name == "nt":
+            if os.name == "nt" and not self.embedded:
                 self._register_single_instance_handler()
 
         def _load_fields(self):
-            for mode, fields in (("random", self.random_fields),
-                                 ("marquee", self.marquee_fields)):
+            for mode, fields in (
+                ("random", self.random_fields),
+                ("marquee", self.marquee_fields),
+            ):
                 mode_config = load_cfg(self.config_paths[mode])
                 seed = mode_config["status"].get("messages", [])[:STATUS_SLOTS]
                 values = read_status_pool(self.pool_paths[mode], seed_messages=seed)
@@ -4478,8 +5786,12 @@ def build_app():
                 self.config_path = self.config_paths[mode]
                 self.config = load_cfg(self.config_path)
                 self.live_send.set(not self.config.get("dry_run", True))
-                self.combo_enter.set(
-                    self.config["status"].get("background_enter_target", "edit") == "combo")
+                submit_mode = self.config["status"].get("execution_mode", "strict_background")
+                self.execution_mode.set(
+                    submit_mode if submit_mode in (
+                        "strict_background", "best_effort_background"
+                    ) else "strict_background"
+                )
                 status = self.config["status"]
                 if mode == "random":
                     self.intervals["random"].set(str(status["interval_seconds"]))
@@ -4487,8 +5799,12 @@ def build_app():
                     marquee = status["marquee"]
                     self.step.set(str(max(MARQUEE_STEP_MIN, marquee["step_seconds"])))
                     self.stride.set(str(marquee.get("stride", MARQUEE_STRIDE_DEFAULT)))
-                    self.loop_slots.set(bool(
-                        marquee.get("loop_slots", False) or marquee.get("infinite_loop", False)))
+                    self.loop_slots.set(
+                        bool(
+                            marquee.get("loop_slots", False)
+                            or marquee.get("infinite_loop", False)
+                        )
+                    )
                     self.scroll_frames.set(bool(marquee.get("scroll", False)))
             finally:
                 self.loading_mode = False
@@ -4510,8 +5826,9 @@ def build_app():
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 logging.exception("Could not save Status Changer language preference")
                 try:
-                    self.note.configure(text=str(exc),
-                                        foreground=STATUS_CHANGER_THEME["error"])
+                    self.note.configure(
+                        text=str(exc), foreground=STATUS_CHANGER_THEME["error"]
+                    )
                 except (AttributeError, tk.TclError):
                     pass
             self._build()
@@ -4531,15 +5848,17 @@ def build_app():
 
         def _clipboard_error(self, exc):
             try:
-                self.note.configure(text=self._tr(f"Clipboard error: {exc}",
-                                                   f"คลิปบอร์ดผิดพลาด: {exc}"))
+                self.note.configure(
+                    text=self._tr(f"Clipboard error: {exc}", f"คลิปบอร์ดผิดพลาด: {exc}")
+                )
             except tk.TclError:
                 pass
 
         def _build(self):
             root = self.root
             clipboard_menu = getattr(
-                getattr(self, "clipboard_controller", None), "menu", None)
+                getattr(self, "clipboard_controller", None), "menu", None
+            )
             for child in root.winfo_children():
                 if child is not clipboard_menu:
                     child.destroy()
@@ -4552,106 +5871,226 @@ def build_app():
             colors = STATUS_CHANGER_THEME
             root.configure(background=colors["background"])
             style.configure("TFrame", background=colors["background"])
-            style.configure("TLabel", background=colors["background"],
-                            foreground=colors["text"], font=("Segoe UI", 9))
-            style.configure("TCheckbutton", background=colors["background"],
-                            foreground=colors["text"], font=("Segoe UI", 9))
-            style.map("TCheckbutton", background=[("active", colors["background"])],
-                      foreground=[("disabled", colors["muted"])])
-            style.configure("TRadiobutton", background=colors["background"],
-                            foreground=colors["text"])
-            style.configure("TLabelframe", background=colors["background"],
-                            bordercolor=colors["border"], relief="solid", padding=8)
-            style.configure("TLabelframe.Label", background=colors["background"],
-                            foreground=colors["accent"], font=("Segoe UI", 9, "bold"))
-            style.configure("TButton", padding=(10, 6), background=colors["surface_high"],
-                            foreground=colors["button_text"], bordercolor=colors["border"],
-                            font=("Segoe UI", 9, "bold"), relief="flat")
-            style.map("TButton", background=[("disabled", colors["surface"]),
-                                              ("pressed", colors["button_pressed"]),
-                                              ("active", colors["button_active"])],
-                      foreground=[("disabled", colors["muted"])])
-            style.configure("Action.TButton", padding=(8, 7),
-                            font=("Segoe UI", 9, "bold"))
-            style.configure("Primary.TButton", padding=(12, 7),
-                            background=colors["accent"], foreground=colors["surface"],
-                            bordercolor=colors["accent"], font=("Segoe UI", 9, "bold"),
-                            relief="flat")
-            style.map("Primary.TButton", background=[("disabled", colors["surface_high"]),
-                                                       ("pressed", colors["accent"]),
-                                                       ("active", colors["accent_hover"])],
-                      foreground=[("disabled", colors["muted"])])
-            style.configure("Success.TButton", padding=(9, 7),
-                            background=colors["success"], foreground=colors["surface"],
-                            bordercolor=colors["success"], font=("Segoe UI", 9, "bold"),
-                            relief="flat")
-            style.map("Success.TButton", background=[("disabled", colors["surface_high"]),
-                                                       ("pressed", colors["success"]),
-                                                       ("active", colors["success"])],
-                      foreground=[("disabled", colors["muted"])])
-            style.configure("Danger.TButton", padding=(9, 7),
-                            background=colors["danger"], foreground=colors["surface"],
-                            bordercolor=colors["danger"], font=("Segoe UI", 9, "bold"),
-                            relief="flat")
-            style.map("Danger.TButton", background=[("disabled", colors["surface_high"]),
-                                                      ("pressed", colors["danger"]),
-                                                      ("active", colors["danger"])],
-                      foreground=[("disabled", colors["muted"])])
-            style.configure("TEntry", padding=(7, 6), fieldbackground=colors["entry"],
-                            foreground=colors["text"], bordercolor=colors["border"],
-                            lightcolor=colors["accent"], darkcolor=colors["border"])
-            style.configure("TSpinbox", padding=(5, 5), fieldbackground=colors["entry"],
-                            foreground=colors["text"], bordercolor=colors["border"],
-                            arrowcolor=colors["accent"])
+            style.configure(
+                "TLabel",
+                background=colors["background"],
+                foreground=colors["text"],
+                font=("Segoe UI", 9),
+            )
+            style.configure(
+                "TCheckbutton",
+                background=colors["background"],
+                foreground=colors["text"],
+                font=("Segoe UI", 9),
+            )
+            style.map(
+                "TCheckbutton",
+                background=[("active", colors["background"])],
+                foreground=[("disabled", colors["muted"])],
+            )
+            style.configure(
+                "TRadiobutton",
+                background=colors["background"],
+                foreground=colors["text"],
+            )
+            style.configure(
+                "TLabelframe",
+                background=colors["background"],
+                bordercolor=colors["border"],
+                relief="solid",
+                padding=8,
+            )
+            style.configure(
+                "TLabelframe.Label",
+                background=colors["background"],
+                foreground=colors["accent"],
+                font=("Segoe UI", 9, "bold"),
+            )
+            style.configure(
+                "TButton",
+                padding=(10, 6),
+                background=colors["surface_high"],
+                foreground=colors["button_text"],
+                bordercolor=colors["border"],
+                font=("Segoe UI", 9, "bold"),
+                relief="flat",
+            )
+            style.map(
+                "TButton",
+                background=[
+                    ("disabled", colors["surface"]),
+                    ("pressed", colors["button_pressed"]),
+                    ("active", colors["button_active"]),
+                ],
+                foreground=[("disabled", colors["muted"])],
+            )
+            style.configure(
+                "Action.TButton", padding=(8, 7), font=("Segoe UI", 9, "bold")
+            )
+            style.configure(
+                "Primary.TButton",
+                padding=(12, 7),
+                background=colors["accent"],
+                foreground=colors["surface"],
+                bordercolor=colors["accent"],
+                font=("Segoe UI", 9, "bold"),
+                relief="flat",
+            )
+            style.map(
+                "Primary.TButton",
+                background=[
+                    ("disabled", colors["surface_high"]),
+                    ("pressed", colors["accent"]),
+                    ("active", colors["accent_hover"]),
+                ],
+                foreground=[("disabled", colors["muted"])],
+            )
+            style.configure(
+                "Success.TButton",
+                padding=(9, 7),
+                background=colors["success"],
+                foreground=colors["surface"],
+                bordercolor=colors["success"],
+                font=("Segoe UI", 9, "bold"),
+                relief="flat",
+            )
+            style.map(
+                "Success.TButton",
+                background=[
+                    ("disabled", colors["surface_high"]),
+                    ("pressed", colors["success"]),
+                    ("active", colors["success"]),
+                ],
+                foreground=[("disabled", colors["muted"])],
+            )
+            style.configure(
+                "Danger.TButton",
+                padding=(9, 7),
+                background=colors["danger"],
+                foreground=colors["surface"],
+                bordercolor=colors["danger"],
+                font=("Segoe UI", 9, "bold"),
+                relief="flat",
+            )
+            style.map(
+                "Danger.TButton",
+                background=[
+                    ("disabled", colors["surface_high"]),
+                    ("pressed", colors["danger"]),
+                    ("active", colors["danger"]),
+                ],
+                foreground=[("disabled", colors["muted"])],
+            )
+            style.configure(
+                "TEntry",
+                padding=(7, 6),
+                fieldbackground=colors["entry"],
+                foreground=colors["text"],
+                bordercolor=colors["border"],
+                lightcolor=colors["accent"],
+                darkcolor=colors["border"],
+            )
+            style.configure(
+                "TSpinbox",
+                padding=(5, 5),
+                fieldbackground=colors["entry"],
+                foreground=colors["text"],
+                bordercolor=colors["border"],
+                arrowcolor=colors["accent"],
+            )
             style.configure("TNotebook", background=colors["background"], borderwidth=0)
-            style.configure("TNotebook.Tab", padding=(14, 8),
-                            background=colors["surface_high"], foreground=colors["muted"],
-                            font=("Segoe UI", 9, "bold"))
-            style.map("TNotebook.Tab", background=[("selected", colors["surface"])],
-                      foreground=[("selected", colors["accent"])])
-            style.configure("Brand.TLabel", background=colors["background"],
-                            font=("Segoe UI", 10, "bold"), foreground=colors["accent"])
-            style.configure("State.TLabel", background=colors["background"],
-                            foreground=colors["text"], font=("Segoe UI", 9, "bold"))
-            style.configure("State.OK.TLabel", background=colors["background"],
-                            font=("Segoe UI", 9, "bold"), foreground=colors["success"])
-            style.configure("State.STOP.TLabel", background=colors["background"],
-                            font=("Segoe UI", 9, "bold"), foreground=colors["danger"])
-            style.configure("Hint.TLabel", background=colors["background"],
-                            font=("Segoe UI", 8), foreground=colors["muted"])
+            style.configure(
+                "TNotebook.Tab",
+                padding=(14, 8),
+                background=colors["surface_high"],
+                foreground=colors["muted"],
+                font=("Segoe UI", 9, "bold"),
+            )
+            style.map(
+                "TNotebook.Tab",
+                background=[("selected", colors["surface"])],
+                foreground=[("selected", colors["accent"])],
+            )
+            style.configure(
+                "Brand.TLabel",
+                background=colors["background"],
+                font=("Segoe UI", 10, "bold"),
+                foreground=colors["accent"],
+            )
+            style.configure(
+                "State.TLabel",
+                background=colors["background"],
+                foreground=colors["text"],
+                font=("Segoe UI", 9, "bold"),
+            )
+            style.configure(
+                "State.OK.TLabel",
+                background=colors["background"],
+                font=("Segoe UI", 9, "bold"),
+                foreground=colors["success"],
+            )
+            style.configure(
+                "State.STOP.TLabel",
+                background=colors["background"],
+                font=("Segoe UI", 9, "bold"),
+                foreground=colors["danger"],
+            )
+            style.configure(
+                "Hint.TLabel",
+                background=colors["background"],
+                font=("Segoe UI", 8),
+                foreground=colors["muted"],
+            )
             style.configure("Mode.TNotebook", tabmargins=(0, 5, 0, 0))
-            style.configure("Mode.TNotebook.Tab", padding=(12, 7),
-                            font=("Segoe UI", 9, "bold"))
+            style.configure(
+                "Mode.TNotebook.Tab", padding=(12, 7), font=("Segoe UI", 9, "bold")
+            )
             style.configure("Card.TFrame", background=colors["surface"], padding=(3, 3))
-            style.configure("Card.TLabel", background=colors["surface"],
-                            foreground=colors["text"], font=("Segoe UI", 9))
-            style.configure("Index.TLabel", background=colors["surface"],
-                            foreground=colors["accent"], font=("Segoe UI", 8, "bold"))
+            style.configure(
+                "Card.TLabel",
+                background=colors["surface"],
+                foreground=colors["text"],
+                font=("Segoe UI", 9),
+            )
+            style.configure(
+                "Index.TLabel",
+                background=colors["surface"],
+                foreground=colors["accent"],
+                font=("Segoe UI", 8, "bold"),
+            )
             style.configure("Entry.TEntry", padding=(7, 4))
             outer = ttk.Frame(root, padding=(12, 10, 12, 10))
             outer.pack(fill="both", expand=True)
 
             header = ttk.Frame(outer)
             header.pack(fill="x", pady=(0, 2))
-            ttk.Label(header, text=self.app_name.upper(), style="Brand.TLabel").pack(side="left")
+            ttk.Label(header, text=self.app_name.upper(), style="Brand.TLabel").pack(
+                side="left"
+            )
             self.state_label = ttk.Label(header, text="", style="State.TLabel")
             self.state_label.pack(side="right")
             self.language_box = ttk.Combobox(
-                header, values=("TH", "EN"), width=3, state="readonly")
+                header, values=("TH", "EN"), width=3, state="readonly"
+            )
             self.language_box.set("TH" if LANG == "th" else "EN")
             self.language_box.pack(side="right", padx=(0, 9))
             self.language_box.bind("<<ComboboxSelected>>", self._change_language)
-            hint = self._tr("Random and Marquee status tools with a combined activity log.",
-                            "จัดการสถานะสุ่มและข้อความเลื่อน พร้อมบันทึกกิจกรรม")
-            ttk.Label(outer, text=hint, style="Hint.TLabel").pack(anchor="w", pady=(0, 6))
+            hint = self._tr(
+                "Random and Marquee status tools with a combined activity log.",
+                "จัดการสถานะสุ่มและข้อความเลื่อน พร้อมบันทึกกิจกรรม",
+            )
+            ttk.Label(outer, text=hint, style="Hint.TLabel").pack(
+                anchor="w", pady=(0, 6)
+            )
 
             self.tabs = ttk.Notebook(outer, style="Mode.TNotebook")
             self.tabs.pack(fill="both", expand=True)
             self.pages = {}
             for name_en, name_th, mode in (
-                    ("Random", "สุ่ม", "random"),
-                    ("Marquee", "เลื่อน", "marquee"),
-                    ("Activity Log", "บันทึกกิจกรรม", "activity")):
+                ("Random", "สุ่ม", "random"),
+                ("Marquee", "เลื่อน", "marquee"),
+                ("Activity Log", "บันทึกกิจกรรม", "activity"),
+            ):
                 page = ttk.Frame(self.tabs, padding=8)
                 self.tabs.add(page, text=self._tr(name_en, name_th))
                 self.pages[mode] = page
@@ -4660,8 +6099,14 @@ def build_app():
             if self.mode in self.pages:
                 self.tabs.select(self.pages[self.mode])
 
-            self.note = ttk.Label(outer, text="", font=("Segoe UI", 8), anchor="w",
-                                  foreground=colors["muted"], wraplength=420)
+            self.note = ttk.Label(
+                outer,
+                text="",
+                font=("Segoe UI", 8),
+                anchor="w",
+                foreground=colors["muted"],
+                wraplength=420,
+            )
             self.note.pack(fill="x", pady=(7, 5))
             options = ttk.Frame(outer)
             options.pack(fill="x", pady=(0, 5))
@@ -4673,40 +6118,73 @@ def build_app():
             ).pack(side="left")
             ttk.Checkbutton(
                 options,
-                text=self._tr("Use background status updates", "ส่งสถานะเบื้องหลัง"),
-                variable=self.combo_enter,
-                command=self.schedule_save,
-            ).pack(side="left", padx=(8, 0))
+                text=self._tr("Submit mode", "โหมดส่งสถานะ"),
+                style="Hint.TLabel",
+            ).pack(side="left", padx=(8, 3))
+            ttk.Combobox(
+                options, textvariable=self.execution_mode, state="readonly", width=24,
+                values=("strict_background", "best_effort_background"),
+            ).pack(side="left")
+            self.execution_mode.trace_add("write", self.schedule_save)
+            ttk.Label(
+                outer,
+                text=self._tr(
+                    "Best-effort uses combo-post; Camfrog may flash or take focus. Strict currently refuses.",
+                    "Best-effort ใช้ combo-post; Camfrog อาจกระพริบหรือแย่งโฟกัส ส่วน Strict ยังปฏิเสธการส่ง",
+                ),
+                style="Hint.TLabel", wraplength=420,
+            ).pack(fill="x", pady=(0, 5))
             self._build_actions(outer)
-            ttk.Label(outer, text=f"CAMFROG {self.app_name.upper()}", style="Brand.TLabel",
-                      anchor="center").pack(fill="x")
+            ttk.Label(
+                outer,
+                text=f"ZCHAT {self.app_name.upper()}",
+                style="Brand.TLabel",
+                anchor="center",
+            ).pack(fill="x")
 
         def _build_page(self, page, mode):
             if mode == "activity":
                 toolbar = ttk.Frame(page)
                 toolbar.pack(fill="x", pady=(0, 5))
-                ttk.Label(toolbar, text=self._tr(
-                    "GUI actions and worker logs appear here. Sent status text is included when log_message_text is enabled. Logs clear daily at 12:00 local time; if the app is closed, cleanup runs at next launch.",
-                    "บันทึก GUI และ worker จะแสดงที่นี่ โดยข้อความสถานะที่ส่งจะอยู่ใน log เมื่อเปิด log_message_text ระบบล้าง log ทุกวันเวลา 12:00 ตามเวลาท้องถิ่น หากปิดแอปไว้จะล้างเมื่อเปิดครั้งถัดไป"),
-                    style="Hint.TLabel").pack(side="left", fill="x", expand=True)
-                ttk.Button(toolbar, text=self._tr("Open log folder", "เปิดโฟลเดอร์ log"),
-                           command=self.open_log_folder).pack(side="right")
+                ttk.Label(
+                    toolbar,
+                    text=self._tr(
+                        "GUI actions and worker logs appear here. Sent status text is included when log_message_text is enabled. Logs clear daily at 12:00 local time; if the app is closed, cleanup runs at next launch.",
+                        "บันทึก GUI และ worker จะแสดงที่นี่ โดยข้อความสถานะที่ส่งจะอยู่ใน log เมื่อเปิด log_message_text ระบบล้าง log ทุกวันเวลา 12:00 ตามเวลาท้องถิ่น หากปิดแอปไว้จะล้างเมื่อเปิดครั้งถัดไป",
+                    ),
+                    style="Hint.TLabel",
+                ).pack(side="left", fill="x", expand=True)
+                ttk.Button(
+                    toolbar,
+                    text=self._tr("Open log folder", "เปิดโฟลเดอร์ log"),
+                    command=self.open_log_folder,
+                ).pack(side="right")
                 frame = ttk.Frame(page)
                 frame.pack(fill="both", expand=True)
                 self.activity_text = tk.Text(
-                    frame, wrap="none", state="disabled", height=24,
+                    frame,
+                    wrap="none",
+                    state="disabled",
+                    height=24,
                     background=STATUS_CHANGER_THEME["entry"],
                     foreground=STATUS_CHANGER_THEME["log_text"],
                     insertbackground=STATUS_CHANGER_THEME["accent"],
                     selectbackground=STATUS_CHANGER_THEME["border"],
-                    relief="flat", padx=9, pady=8,
-                    font=("Consolas", 9), undo=False)
-                scroll_y = ttk.Scrollbar(frame, orient="vertical",
-                                         command=self.activity_text.yview)
-                scroll_x = ttk.Scrollbar(frame, orient="horizontal",
-                                         command=self.activity_text.xview)
-                self.activity_text.configure(yscrollcommand=scroll_y.set,
-                                             xscrollcommand=scroll_x.set)
+                    relief="flat",
+                    padx=9,
+                    pady=8,
+                    font=("Consolas", 9),
+                    undo=False,
+                )
+                scroll_y = ttk.Scrollbar(
+                    frame, orient="vertical", command=self.activity_text.yview
+                )
+                scroll_x = ttk.Scrollbar(
+                    frame, orient="horizontal", command=self.activity_text.xview
+                )
+                self.activity_text.configure(
+                    yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set
+                )
                 self.activity_text.grid(row=0, column=0, sticky="nsew")
                 scroll_y.grid(row=0, column=1, sticky="ns")
                 scroll_x.grid(row=1, column=0, sticky="ew")
@@ -4715,53 +6193,96 @@ def build_app():
                 self.activity_snapshot = None
                 return
 
-            title = self._tr("Random status pool", "ชุดข้อความสุ่ม") if mode == "random" \
+            title = (
+                self._tr("Random status pool", "ชุดข้อความสุ่ม")
+                if mode == "random"
                 else self._tr("Marquee status pool", "ชุดข้อความเลื่อน")
-            hint = self._tr("Pick one of these entries on each switch.",
-                            "สุ่มเลือกหนึ่งข้อความเมื่อถึงรอบเปลี่ยน") if mode == "random" \
-                else self._tr("Marquee settings and messages stay separate from Random.",
-                              "ตั้งค่าความเร็วและข้อความแยกจากโหมดสุ่ม")
+            )
+            hint = (
+                self._tr(
+                    "Pick one of these entries on each switch.",
+                    "สุ่มเลือกหนึ่งข้อความเมื่อถึงรอบเปลี่ยน",
+                )
+                if mode == "random"
+                else self._tr(
+                    "Marquee settings and messages stay separate from Random.",
+                    "ตั้งค่าความเร็วและข้อความแยกจากโหมดสุ่ม",
+                )
+            )
             ttk.Label(page, text=title, font=("Segoe UI", 9, "bold")).pack(
-                anchor="w", pady=(0, 3))
+                anchor="w", pady=(0, 3)
+            )
             ttk.Label(page, text=hint, style="Hint.TLabel").pack(
-                anchor="w", pady=(0, 6))
+                anchor="w", pady=(0, 6)
+            )
 
             timing = ttk.Frame(page, style="Card.TFrame", padding=(7, 6))
             timing.pack(fill="x", pady=(0, 4))
             colors = STATUS_CHANGER_THEME
             if mode == "random":
-                ttk.Label(timing, text=self._tr("Every", "เปลี่ยนทุก"),
-                          style="Card.TLabel").pack(side="left", padx=(2, 0))
-                ttk.Spinbox(timing, textvariable=self.intervals["random"],
-                            from_=RANDOM_INTERVAL_MIN, to=RANDOM_INTERVAL_MAX,
-                            increment=1, width=6).pack(side="left", padx=(5, 3))
+                ttk.Label(
+                    timing, text=self._tr("Every", "เปลี่ยนทุก"), style="Card.TLabel"
+                ).pack(side="left", padx=(2, 0))
+                ttk.Spinbox(
+                    timing,
+                    textvariable=self.intervals["random"],
+                    from_=RANDOM_INTERVAL_MIN,
+                    to=RANDOM_INTERVAL_MAX,
+                    increment=1,
+                    width=6,
+                ).pack(side="left", padx=(5, 3))
                 ttk.Label(timing, text="s", style="Card.TLabel").pack(
-                    side="left", padx=(0, 7))
-                ttk.Label(timing, text=self._tr("status interval", "ช่วงเปลี่ยน"),
-                          style="Card.TLabel", foreground=colors["muted"]).pack(side="left")
+                    side="left", padx=(0, 7)
+                )
+                ttk.Label(
+                    timing,
+                    text=self._tr("status interval", "ช่วงเปลี่ยน"),
+                    style="Card.TLabel",
+                    foreground=colors["muted"],
+                ).pack(side="left")
             else:
-                ttk.Label(timing, text=self._tr("Frame", "จังหวะ"),
-                          style="Card.TLabel").pack(side="left", padx=(2, 0))
-                ttk.Spinbox(timing, textvariable=self.step, from_=MARQUEE_STEP_MIN,
-                            to=10, increment=0.1, width=5).pack(side="left", padx=(4, 3))
+                ttk.Label(
+                    timing, text=self._tr("Frame", "จังหวะ"), style="Card.TLabel"
+                ).pack(side="left", padx=(2, 0))
+                ttk.Spinbox(
+                    timing,
+                    textvariable=self.step,
+                    from_=MARQUEE_STEP_MIN,
+                    to=3600,
+                    increment=0.1,
+                    width=5,
+                ).pack(side="left", padx=(4, 3))
                 ttk.Label(timing, text="s", style="Card.TLabel").pack(side="left")
-                ttk.Label(timing, text=self._tr("Stride", "ก้าว"),
-                          style="Card.TLabel").pack(side="left", padx=(8, 2))
-                ttk.Spinbox(timing, textvariable=self.stride, from_=1, to=10,
-                            increment=1, width=3).pack(side="left")
-                ttk.Checkbutton(timing, text=self._tr("Loop slots", "วนช่อง 1–10"),
-                                variable=self.loop_slots,
-                                command=self.schedule_save).pack(side="left", padx=(8, 0))
-                ttk.Checkbutton(timing, text=self._tr("Scroll", "เลื่อน"),
-                                variable=self.scroll_frames,
-                                command=self.schedule_save).pack(side="left", padx=(8, 0))
+                ttk.Label(
+                    timing, text=self._tr("Stride", "ก้าว"), style="Card.TLabel"
+                ).pack(side="left", padx=(8, 2))
+                ttk.Spinbox(
+                    timing,
+                    textvariable=self.stride,
+                    from_=1,
+                    to=10,
+                    increment=1,
+                    width=3,
+                ).pack(side="left")
+                ttk.Checkbutton(
+                    timing,
+                    text=self._tr("Loop slots", "วนช่อง 1–10"),
+                    variable=self.loop_slots,
+                    command=self.schedule_save,
+                ).pack(side="left", padx=(8, 0))
+                ttk.Checkbutton(
+                    timing,
+                    text=self._tr("Scroll", "เลื่อน"),
+                    variable=self.scroll_frames,
+                    command=self.schedule_save,
+                ).pack(side="left", padx=(8, 0))
 
             entries = ttk.Frame(page, style="Card.TFrame", padding=4)
             entries.pack(fill="both", expand=True, pady=(4, 0))
             for index, var in enumerate(self._fields_for_mode(mode)):
-                ttk.Label(entries, text=f"{index + 1:02d}", width=3,
-                          style="Index.TLabel").grid(
-                    row=index, column=0, sticky="w", pady=1, padx=(4, 8))
+                ttk.Label(
+                    entries, text=f"{index + 1:02d}", width=3, style="Index.TLabel"
+                ).grid(row=index, column=0, sticky="w", pady=1, padx=(4, 8))
                 entry = ttk.Entry(entries, textvariable=var, style="Entry.TEntry")
                 entry.grid(row=index, column=1, sticky="ew", pady=1, padx=(0, 4))
                 self.entry_widgets[mode].append((entry, var))
@@ -4773,29 +6294,72 @@ def build_app():
             actions.pack(fill="x", pady=(2, 8))
             for col in range(4):
                 actions.columnconfigure(col, weight=1, uniform="action")
-            for index, (title_en, title_th, command, button_style) in enumerate((
-                ("1. Discovery", "1. ค้นหา Control", self.discover, "Action.TButton"),
-                ("2. Save Data", "2. บันทึกข้อมูล", self.save_data, "Success.TButton"),
-                ("3. Start", "3. เริ่ม", lambda: self.set_worker_running(self.mode, True), "Primary.TButton"),
-                ("4. Stop", "4. หยุด", lambda: self.set_worker_running(self.mode, False), "Danger.TButton"),
-            )):
-                button = ttk.Button(actions, text=self._tr(title_en, title_th),
-                                    command=command, style=button_style, takefocus=True)
-                button.grid(row=0, column=index,
-                            padx=(0, 4) if index < 3 else (0, 0),
-                            pady=(0, 4), sticky="ew")
-            ttk.Button(parent, text=self._tr("Check for updates", "ตรวจอัปเดต"),
-                       command=self.check_update).pack(fill="x", pady=(0, 5))
-            ttk.Label(parent, text=self._tr(
-                "Close / X stops this app's worker before exiting.",
-                "ปิดหน้าต่างด้วย X เพื่อหยุด worker ของแอปก่อนออก"),
-                 style="Hint.TLabel").pack(anchor="w", pady=(0, 5))
+            for index, (title_en, title_th, command, button_style) in enumerate(
+                (
+                    (
+                        "1. Discovery",
+                        "1. ค้นหา Control",
+                        self.discover,
+                        "Action.TButton",
+                    ),
+                    ("2. Save Data", "2. บันทึกข้อมูล", self.save_data, "Success.TButton"),
+                    (
+                        "3. Start",
+                        "3. เริ่ม",
+                        lambda: self.set_worker_running(self.mode, True),
+                        "Primary.TButton",
+                    ),
+                    (
+                        "4. Stop",
+                        "4. หยุด",
+                        lambda: self.set_worker_running(self.mode, False),
+                        "Danger.TButton",
+                    ),
+                )
+            ):
+                button = ttk.Button(
+                    actions,
+                    text=self._tr(title_en, title_th),
+                    command=command,
+                    style=button_style,
+                    takefocus=True,
+                )
+                button.grid(
+                    row=0,
+                    column=index,
+                    padx=(0, 4) if index < 3 else (0, 0),
+                    pady=(0, 4),
+                    sticky="ew",
+                )
+            if not self.embedded:
+                ttk.Button(
+                    parent,
+                    text=self._tr("Check for updates", "ตรวจอัปเดต"),
+                    command=self.check_update,
+                ).pack(fill="x", pady=(0, 5))
+            ttk.Label(
+                parent,
+                text=self._tr(
+                    (
+                        "Closing ZChat stops this feature's worker."
+                        if self.embedded
+                        else "Close / X stops this app's worker before exiting."
+                    ),
+                    (
+                        "เมื่อปิด ZChat จะหยุด worker ของฟีเจอร์นี้ก่อนออก"
+                        if self.embedded
+                        else "ปิดหน้าต่างด้วย X เพื่อหยุด worker ของแอปก่อนออก"
+                    ),
+                ),
+                style="Hint.TLabel",
+            ).pack(anchor="w", pady=(0, 5))
 
         def _tab_changed(self, _event=None):
             try:
                 selected = str(self.tabs.select())
-                selected_mode = next(mode for mode, page in self.pages.items()
-                                     if str(page) == selected)
+                selected_mode = next(
+                    mode for mode, page in self.pages.items() if str(page) == selected
+                )
             except (StopIteration, tk.TclError):
                 return
             if selected_mode not in ("random", "marquee") or selected_mode == self.mode:
@@ -4820,7 +6384,9 @@ def build_app():
                 try:
                     self._load_mode_controls(old_mode)
                     self.tabs.select(self.pages[old_mode])
-                    self.note.configure(text=str(exc), foreground=STATUS_CHANGER_THEME["error"])
+                    self.note.configure(
+                        text=str(exc), foreground=STATUS_CHANGER_THEME["error"]
+                    )
                 except (OSError, ValueError, KeyError, tk.TclError):
                     pass
 
@@ -4835,14 +6401,19 @@ def build_app():
             if widget is not None:
                 entries = []
                 sources = [(DATA_DIR / "status_activity.log", "GUI")]
-                sources.extend((DATA_DIR / f"{mode}-status-worker.log",
-                                f"{mode.title()} worker")
-                               for mode in ("random", "marquee"))
+                sources.extend(
+                    (DATA_DIR / f"{mode}-status-worker.log", f"{mode.title()} worker")
+                    for mode in ("random", "marquee")
+                )
                 for path, source in sources:
                     try:
                         with path.open("rb") as stream:
                             stream.seek(max(0, path.stat().st_size - 500_000))
-                            raw_lines = stream.read().decode("utf-8", errors="replace").splitlines()
+                            raw_lines = (
+                                stream.read()
+                                .decode("utf-8", errors="replace")
+                                .splitlines()
+                            )
                     except OSError:
                         continue
                     for line in raw_lines[-1500:]:
@@ -4853,13 +6424,18 @@ def build_app():
                 if text != self.activity_snapshot:
                     widget.configure(state="normal")
                     widget.delete("1.0", "end")
-                    widget.insert("end", text or self._tr(
-                        "No activity recorded yet.", "ยังไม่มีบันทึกกิจกรรม"))
+                    widget.insert(
+                        "end",
+                        text
+                        or self._tr("No activity recorded yet.", "ยังไม่มีบันทึกกิจกรรม"),
+                    )
                     widget.configure(state="disabled")
                     widget.see("end")
                     self.activity_snapshot = text
             try:
-                self.activity_refresh_job = self.root.after(1000, self.refresh_activity_log)
+                self.activity_refresh_job = self.root.after(
+                    1000, self.refresh_activity_log
+                )
             except tk.TclError:
                 self.activity_refresh_job = None
 
@@ -4883,7 +6459,9 @@ def build_app():
                 next_noon += dt.timedelta(days=1)
             delay_ms = max(1000, int((next_noon - now).total_seconds() * 1000))
             try:
-                self.log_cleanup_job = self.root.after(delay_ms, self.clean_logs_at_noon)
+                self.log_cleanup_job = self.root.after(
+                    delay_ms, self.clean_logs_at_noon
+                )
             except tk.TclError:
                 self.log_cleanup_job = None
 
@@ -4892,22 +6470,39 @@ def build_app():
                 if os.name == "nt":
                     os.startfile(str(DATA_DIR))
                 else:
-                    self.note.configure(text=self._tr(
-                        f"Logs are stored in {DATA_DIR}", f"ไฟล์ log อยู่ที่ {DATA_DIR}"))
+                    self.note.configure(
+                        text=self._tr(
+                            f"Logs are stored in {DATA_DIR}", f"ไฟล์ log อยู่ที่ {DATA_DIR}"
+                        )
+                    )
             except OSError as exc:
-                self.note.configure(text=str(exc), foreground=STATUS_CHANGER_THEME["error"])
+                self.note.configure(
+                    text=str(exc), foreground=STATUS_CHANGER_THEME["error"]
+                )
 
         def check_update(self):
-            self.note.configure(text=self._tr("Checking for updates...",
-                                              "กำลังตรวจอัปเดต..."),
-                                foreground=STATUS_CHANGER_THEME["muted"])
+            self.note.configure(
+                text=self._tr("Checking for updates...", "กำลังตรวจอัปเดต..."),
+                foreground=STATUS_CHANGER_THEME["muted"],
+            )
 
             def work():
                 try:
                     state, message = self_update("status-changer.exe")
-                except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
-                    logging.warning("Manual update check unavailable: %s", type(exc).__name__)
-                    state, message = "failed", "Update check unavailable (network or metadata error)."
+                except (
+                    OSError,
+                    ValueError,
+                    KeyError,
+                    TypeError,
+                    AttributeError,
+                ) as exc:
+                    logging.warning(
+                        "Manual update check unavailable: %s", type(exc).__name__
+                    )
+                    state, message = (
+                        "failed",
+                        "Update check unavailable (network or metadata error).",
+                    )
                 try:
                     self.root.after(0, lambda: self._update_done(state, message))
                 except RuntimeError:
@@ -4918,9 +6513,13 @@ def build_app():
         def _update_done(self, state, message):
             self.note.configure(
                 text=message,
-                foreground=(STATUS_CHANGER_THEME["error"] if state == "failed"
-                            else STATUS_CHANGER_THEME["success"]))
-            if state == "ready":
+                foreground=(
+                    STATUS_CHANGER_THEME["error"]
+                    if state == "failed"
+                    else STATUS_CHANGER_THEME["success"]
+                ),
+            )
+            if state == "ready" and not self.embedded:
                 self.root.after(1200, self.root.destroy)
 
         def _auto_update_check(self):
@@ -4929,10 +6528,19 @@ def build_app():
                     found = check_for_update("status-changer.exe")
                     if found:
                         self.root.after(0, self.check_update)
-                except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+                except (
+                    OSError,
+                    ValueError,
+                    KeyError,
+                    TypeError,
+                    AttributeError,
+                ) as exc:
                     # GitHub 403/rate limits, offline mode and invalid metadata
                     # must not crash an unattended GUI background thread.
-                    logging.warning("Automatic update check unavailable: %s", type(exc).__name__)
+                    logging.warning(
+                        "Automatic update check unavailable: %s", type(exc).__name__
+                    )
+
             threading.Thread(target=work, daemon=True).start()
 
         def schedule_save(self, *_args):
@@ -4949,16 +6557,24 @@ def build_app():
             mode = mode if mode in ("random", "marquee") else self.mode
             self._save_pools()
             config = status_config_for_live_send(
-                load_cfg(self.config_path), self.live_send.get())
+                load_cfg(self.config_path), self.live_send.get()
+            )
             config["language"] = self.language_preference
             st = config["status"]
-            st["background_enter_target"] = "combo" if self.combo_enter.get() else "edit"
+            st["execution_mode"] = self.execution_mode.get()
+            st["background_enter_target"] = (
+                "combo" if st["execution_mode"] == "best_effort_background" else "edit"
+            )
             if mode == "random":
                 try:
                     interval = parse_interval_seconds(self.intervals["random"].get())
                 except ValueError as exc:
-                    raise ValueError(self._tr("Enter a valid switch interval.",
-                                              "กรอกช่วงเวลาเปลี่ยนสถานะให้ถูกต้อง")) from exc
+                    raise ValueError(
+                        self._tr(
+                            "Enter a valid switch interval.",
+                            "กรอกช่วงเวลาเปลี่ยนสถานะให้ถูกต้อง",
+                        )
+                    ) from exc
             else:
                 # The engine uses marquee.step_seconds to pace slot changes.
                 # Keep the legacy schema field valid without an Every control.
@@ -4973,13 +6589,21 @@ def build_app():
                 }
             try:
                 configure_status_mode(
-                    config, mode,
-                    messages_from_slots(var.get() for var in self._fields_for_mode(mode)),
-                    interval, marquee_options,
+                    config,
+                    mode,
+                    messages_from_slots(
+                        var.get() for var in self._fields_for_mode(mode)
+                    ),
+                    interval,
+                    marquee_options,
                 )
             except ValueError as exc:
-                raise ValueError(self._tr("Enter valid marquee speed values.",
-                                          "กรอกค่าความเร็วข้อความเลื่อนให้ถูกต้อง")) from exc
+                raise ValueError(
+                    self._tr(
+                        "Enter valid marquee speed values.",
+                        "กรอกค่าความเร็วข้อความเลื่อนให้ถูกต้อง",
+                    )
+                ) from exc
             if enabled:
                 # "Start" means rotate a status now, not after one interval.
                 st["set_on_start"] = True
@@ -4988,9 +6612,12 @@ def build_app():
             else:
                 active = active_worker_mode()
                 st["enabled"] = bool(
-                    active == mode and running_pid(runtime_config(config, mode)))
+                    active == mode and running_pid(runtime_config(config, mode))
+                )
             if st["enabled"] and not st["messages"]:
-                raise ValueError(self._tr("Enter at least one status.", "กรอกสถานะอย่างน้อยหนึ่งข้อความ"))
+                raise ValueError(
+                    self._tr("Enter at least one status.", "กรอกสถานะอย่างน้อยหนึ่งข้อความ")
+                )
             errors, _warnings = validate(config)
             if errors:
                 raise ValueError("\n".join(errors))
@@ -5007,18 +6634,61 @@ def build_app():
                 self.config = config
                 self._log_activity("Status lines saved", mode)
                 if notify:
-                    self.note.configure(text=self._tr("Saved to standalone status config",
-                                                      "บันทึกการตั้งค่า Status Changer แล้ว"))
+                    self.note.configure(
+                        text=self._tr(
+                            "Saved to standalone status config",
+                            "บันทึกการตั้งค่า Status Changer แล้ว",
+                        )
+                    )
                 return config
             except (OSError, sqlite3.Error, ValueError, KeyError) as exc:
-                self.note.configure(text=str(exc), foreground=STATUS_CHANGER_THEME["error"])
+                self.note.configure(
+                    text=str(exc), foreground=STATUS_CHANGER_THEME["error"]
+                )
                 return None
 
         def _save_pools(self):
             modes = ("random", "marquee")
             for mode in modes:
                 write_status_pool(
-                    self.pool_paths[mode], [var.get() for var in self._fields_for_mode(mode)])
+                    self.pool_paths[mode],
+                    [var.get() for var in self._fields_for_mode(mode)],
+                )
+
+        def _save_discovery_inputs(self):
+            """Persist both status modes before discovery touches either config."""
+            if self.save_job is not None:
+                try:
+                    self.root.after_cancel(self.save_job)
+                except tk.TclError:
+                    pass
+                self.save_job = None
+
+            if self.save_settings() is None:
+                return False
+
+            try:
+                for mode in ("random", "marquee"):
+                    config_path = self.config_paths[mode]
+                    config = load_cfg(config_path)
+                    config["status"]["messages"] = messages_from_slots(
+                        var.get() for var in self._fields_for_mode(mode)
+                    )
+                    errors, _warnings = validate(config)
+                    if errors:
+                        raise ValueError("\n".join(errors))
+                    write_config(config_path, config)
+                    write_config(
+                        self.runtime_config_paths[mode], runtime_config(config, mode)
+                    )
+                    if mode != self.mode:
+                        self._log_activity("Status lines saved", mode)
+                return True
+            except (OSError, sqlite3.Error, ValueError, KeyError, TypeError) as exc:
+                self.note.configure(
+                    text=str(exc), foreground=STATUS_CHANGER_THEME["error"]
+                )
+                return False
 
         def save_data(self):
             """Persist current status pools and settings without contacting Camfrog."""
@@ -5035,38 +6705,75 @@ def build_app():
                 return
             self.note.configure(
                 text=self._tr("Status data saved.", "บันทึกข้อมูลสถานะแล้ว"),
-                foreground=STATUS_CHANGER_THEME["success"])
+                foreground=STATUS_CHANGER_THEME["success"],
+            )
 
         def discover(self):
             """Scan the running Camfrog window for status/room controls and write the
             detected selectors into this app's config (apply=True)."""
             if self.busy:
                 return
-            # Persist current operator edits before discovery rewrites selectors.
-            if self.save_settings() is None:
+            # Flush pending debounced saves and both mode pools before discovery.
+            if not self._save_discovery_inputs():
                 return
+
             def do():
                 rc = run_control_discovery(self.config_path)
                 if rc == 0:
                     self.config = load_cfg(self.config_path)
                 return rc
-            self.run_task(do, self._tr("Controls discovered", "ดึง control แล้ว"),
-                          action=self._tr("Discover controls", "ค้นหา control"))
+
+            self.run_task(
+                do,
+                self._tr("Controls discovered", "ดึง control แล้ว"),
+                action=self._tr("Discover controls", "ค้นหา control"),
+            )
+
+        def _discover_controls_on_start(self):
+            """Save current settings, then discover controls for both status modes."""
+            if self.embedded or self.close_requested or self.busy:
+                return
+            if not self._save_discovery_inputs():
+                return
+
+            def do():
+                failures = []
+                for mode in ("random", "marquee"):
+                    try:
+                        run_control_discovery(self.config_paths[mode])
+                    except Exception as exc:
+                        failures.append(f"{mode}: {type(exc).__name__}: {exc}")
+                if failures:
+                    raise RuntimeError("Control discovery failed (" + "; ".join(failures) + ")")
+                self.config = load_cfg(self.config_path)
+                return 0
+
+            self.run_task(
+                do,
+                self._tr("Controls discovered", "ดึง control แล้ว"),
+                action=self._tr("Discover controls", "ค้นหา control"),
+            )
 
         def set_worker_running(self, mode, should_run):
             """Start or stop the single worker for the explicitly selected mode."""
             if mode not in ("random", "marquee"):
-                self.note.configure(text=self._tr("Select a status mode first.",
-                                                  "กรุณาเลือกโหมดสถานะก่อน"),
-                                    foreground=STATUS_CHANGER_THEME["error"])
+                self.note.configure(
+                    text=self._tr(
+                        "Select a status mode first.", "กรุณาเลือกโหมดสถานะก่อน"
+                    ),
+                    foreground=STATUS_CHANGER_THEME["error"],
+                )
                 return
             if not should_run:
                 self.mode = mode
                 if self.stop_in_progress:
                     self.note.configure(
-                        text=self._tr("A stop request is already running.",
-                                      "กำลังดำเนินการหยุด worker อยู่แล้ว"),
-                        foreground=STATUS_CHANGER_THEME["muted"])
+                        text=self._tr(
+                            "A stop request is already running.",
+                            "กำลังดำเนินการหยุด worker อยู่แล้ว",
+                        ),
+                        foreground=STATUS_CHANGER_THEME["muted"],
+                    )
                     return
                 # Stop is an emergency/operator action: do not validate or save
                 # unsaved form data first. Invalid input must never block Stop.
@@ -5075,25 +6782,34 @@ def build_app():
                     runtime = runtime_config(config, mode)
                     worker_pid = running_pid(runtime)
                 except (OSError, sqlite3.Error, ValueError, KeyError) as exc:
-                    self.note.configure(text=str(exc), foreground=STATUS_CHANGER_THEME["error"])
+                    self.note.configure(
+                        text=str(exc), foreground=STATUS_CHANGER_THEME["error"]
+                    )
                     return
                 if worker_pid:
                     self._start_stop_task(
                         runtime,
                         self._tr("Status worker stopped.", "หยุดตัวเปลี่ยนสถานะแล้ว"),
-                        action=self._tr("Stop worker", "หยุด worker"))
+                        action=self._tr("Stop worker", "หยุด worker"),
+                    )
                 elif self.busy:
                     # A Start task may be between spawning the worker and
                     # recording its PID. Recheck as soon as that task returns.
                     self.pending_stop_mode = mode
                     self.note.configure(
-                        text=self._tr("Stop queued until the current task finishes.",
-                                      "รับคำสั่งหยุดแล้ว จะตรวจอีกครั้งเมื่องานปัจจุบันเสร็จ"),
-                        foreground=STATUS_CHANGER_THEME["muted"])
+                        text=self._tr(
+                            "Stop queued until the current task finishes.",
+                            "รับคำสั่งหยุดแล้ว จะตรวจอีกครั้งเมื่องานปัจจุบันเสร็จ",
+                        ),
+                        foreground=STATUS_CHANGER_THEME["muted"],
+                    )
                 else:
-                    self.note.configure(text=self._tr("Status rotation is not running.",
-                                                      "ไม่ได้เปิดการเปลี่ยนสถานะอยู่"),
-                                        foreground=STATUS_CHANGER_THEME["muted"])
+                    self.note.configure(
+                        text=self._tr(
+                            "Status rotation is not running.", "ไม่ได้เปิดการเปลี่ยนสถานะอยู่"
+                        ),
+                        foreground=STATUS_CHANGER_THEME["muted"],
+                    )
                 return
 
             if self.busy or self.stop_in_progress:
@@ -5106,10 +6822,13 @@ def build_app():
             runtime = runtime_config(config, mode)
             if running_pid(runtime):
                 active = active_worker_mode() or self._tr("another mode", "อีกโหมด")
-                self.note.configure(text=self._tr(
-                    f"Status worker is already running ({active}). Stop it before switching modes.",
-                    f"worker กำลังทำงานโหมด {active} อยู่ ให้หยุดก่อนเปลี่ยนโหมด"),
-                                    foreground=STATUS_CHANGER_THEME["success"])
+                self.note.configure(
+                    text=self._tr(
+                        f"Status worker is already running ({active}). Stop it before switching modes.",
+                        f"worker กำลังทำงานโหมด {active} อยู่ ให้หยุดก่อนเปลี่ยนโหมด",
+                    ),
+                    foreground=STATUS_CHANGER_THEME["success"],
+                )
                 return
             self._start_worker(config, mode)
 
@@ -5119,27 +6838,46 @@ def build_app():
             args = SimpleNamespace(config=str(runtime_path), lang=None)
 
             def start():
-                rc = cmd_start_worker(runtime, args)
+                messages = []
+                rc = cmd_start_worker(runtime, args, report=messages.append)
+                if rc != 0:
+                    detail = "\n".join(messages).strip()
+                    raise RuntimeError(
+                        detail
+                        or self._tr(
+                            "Could not start the status worker.",
+                            "เริ่ม worker สถานะไม่ได้",
+                        )
+                    )
                 if rc == 0:
                     deadline = time.monotonic() + 5.0
                     while time.monotonic() < deadline:
                         if running_pid(runtime):
-                            (DATA_DIR / ACTIVE_MODE_FILE).write_text(mode, encoding="utf-8")
+                            (DATA_DIR / ACTIVE_MODE_FILE).write_text(
+                                mode, encoding="utf-8"
+                            )
                             return rc
                         time.sleep(0.1)
-                    raise RuntimeError(self._tr(
-                        "Worker started but its process could not be verified.",
-                        "เริ่ม worker แล้วแต่ตรวจสอบโปรเซสไม่ได้"))
+                    raise RuntimeError(
+                        self._tr(
+                            "Worker started but its process could not be verified.",
+                            "เริ่ม worker แล้วแต่ตรวจสอบโปรเซสไม่ได้",
+                        )
+                    )
                 return rc
 
             if config["dry_run"]:
                 done_text = self._tr(
                     "Status worker started in dry-run mode; no statuses will be sent.",
-                    "เริ่ม worker ในโหมดทดลองแล้ว จะยังไม่ส่งสถานะ")
+                    "เริ่ม worker ในโหมดทดลองแล้ว จะยังไม่ส่งสถานะ",
+                )
             else:
                 done_text = self._tr("Status worker started.", "เริ่มตัวเปลี่ยนสถานะแล้ว")
-            self.run_task(start, done_text,
-                          action=self._tr(f"Start {mode} worker", f"เริ่ม worker โหมด{mode}"))
+            self.run_task(
+                start,
+                done_text,
+                action=self._tr(f"Start {mode} worker", f"เริ่ม worker โหมด{mode}"),
+            )
 
         def _stop_worker(self, runtime):
             return cmd_stop(runtime)
@@ -5148,7 +6886,10 @@ def build_app():
             if self.busy or self.stop_in_progress:
                 return False
             self.busy = True
-            self.note.configure(text=self._tr("Working…", "กำลังทำงาน…"), foreground=STATUS_CHANGER_THEME["muted"])
+            self.note.configure(
+                text=self._tr("Working…", "กำลังทำงาน…"),
+                foreground=STATUS_CHANGER_THEME["muted"],
+            )
             task_mode = self.mode
             if action:
                 self._log_activity(f"{action} started", task_mode)
@@ -5156,30 +6897,42 @@ def build_app():
             def worker():
                 try:
                     result = function()
-                    text = done_text if result in (None, 0) else self._tr("Command failed.", "คำสั่งไม่สำเร็จ")
+                    text = (
+                        done_text
+                        if result in (None, 0)
+                        else self._tr("Command failed.", "คำสั่งไม่สำเร็จ")
+                    )
                     ok = result in (None, 0)
                     if action:
-                        self._log_activity(f"{action} {'succeeded' if ok else 'failed'}", task_mode)
+                        self._log_activity(
+                            f"{action} {'succeeded' if ok else 'failed'}", task_mode
+                        )
                 except StatusOperationCancelled:
                     text = self._tr("Status update stopped.", "หยุดการเปลี่ยนสถานะแล้ว")
                     ok = True
                     if action:
                         self._log_activity(
                             self._tr("Apply status cancelled", "ยกเลิกการใช้สถานะ"),
-                            task_mode)
+                            task_mode,
+                        )
                 except Exception as exc:
                     text, ok = str(exc), False
                     if action:
                         self._log_activity(
-                            f"{action} failed | {type(exc).__name__}: {exc}", task_mode)
+                            f"{action} failed | {type(exc).__name__}: {exc}", task_mode
+                        )
                 self.task_results.put((text, ok, on_done))
 
             try:
-                threading.Thread(target=worker, daemon=True, name="camfrog-status-task").start()
+                threading.Thread(
+                    target=worker, daemon=True, name="camfrog-status-task"
+                ).start()
                 return True
             except RuntimeError as exc:
                 self.busy = False
-                self.note.configure(text=str(exc), foreground=STATUS_CHANGER_THEME["error"])
+                self.note.configure(
+                    text=str(exc), foreground=STATUS_CHANGER_THEME["error"]
+                )
                 return False
 
         def _start_stop_task(self, runtime, done_text, on_done=None, action=None):
@@ -5187,8 +6940,10 @@ def build_app():
             if self.stop_in_progress:
                 return False
             self.stop_in_progress = True
-            self.note.configure(text=self._tr("Stopping worker…", "กำลังหยุด worker…"),
-                                foreground=STATUS_CHANGER_THEME["muted"])
+            self.note.configure(
+                text=self._tr("Stopping worker…", "กำลังหยุด worker…"),
+                foreground=STATUS_CHANGER_THEME["muted"],
+            )
             task_mode = self.mode
             if action:
                 self._log_activity(f"{action} started", task_mode)
@@ -5196,26 +6951,34 @@ def build_app():
             def worker():
                 try:
                     result = self._stop_worker(runtime)
-                    text = done_text if result in (None, 0) else self._tr(
-                        "Command failed.", "คำสั่งไม่สำเร็จ")
+                    text = (
+                        done_text
+                        if result in (None, 0)
+                        else self._tr("Command failed.", "คำสั่งไม่สำเร็จ")
+                    )
                     ok = result in (None, 0)
                     if action:
                         self._log_activity(
-                            f"{action} {'succeeded' if ok else 'failed'}", task_mode)
+                            f"{action} {'succeeded' if ok else 'failed'}", task_mode
+                        )
                 except Exception as exc:
                     text, ok = str(exc), False
                     if action:
                         self._log_activity(
-                            f"{action} failed | {type(exc).__name__}: {exc}", task_mode)
+                            f"{action} failed | {type(exc).__name__}: {exc}", task_mode
+                        )
                 self.stop_results.put((text, ok, on_done))
 
             try:
-                threading.Thread(target=worker, daemon=True,
-                                 name="camfrog-status-stop").start()
+                threading.Thread(
+                    target=worker, daemon=True, name="camfrog-status-stop"
+                ).start()
                 return True
             except RuntimeError as exc:
                 self.stop_in_progress = False
-                self.note.configure(text=str(exc), foreground=STATUS_CHANGER_THEME["error"])
+                self.note.configure(
+                    text=str(exc), foreground=STATUS_CHANGER_THEME["error"]
+                )
                 return False
 
         def poll_task_results(self):
@@ -5228,7 +6991,9 @@ def build_app():
             except Exception as exc:
                 logging.exception("Could not process Status Changer task result")
                 if self.root.winfo_exists():
-                    self.note.configure(text=str(exc), foreground=STATUS_CHANGER_THEME["error"])
+                    self.note.configure(
+                        text=str(exc), foreground=STATUS_CHANGER_THEME["error"]
+                    )
             try:
                 while True:
                     text, ok, on_done = self.stop_results.get_nowait()
@@ -5238,7 +7003,9 @@ def build_app():
             except Exception as exc:
                 logging.exception("Could not process Status Changer stop result")
                 if self.root.winfo_exists():
-                    self.note.configure(text=str(exc), foreground=STATUS_CHANGER_THEME["error"])
+                    self.note.configure(
+                        text=str(exc), foreground=STATUS_CHANGER_THEME["error"]
+                    )
             try:
                 self.task_poll_job = self.root.after(100, self.poll_task_results)
             except tk.TclError:
@@ -5246,8 +7013,14 @@ def build_app():
 
         def finish_task(self, text, ok, on_done=None):
             self.busy = False
-            self.note.configure(text=text, foreground=(
-                STATUS_CHANGER_THEME["success"] if ok else STATUS_CHANGER_THEME["error"]))
+            self.note.configure(
+                text=text,
+                foreground=(
+                    STATUS_CHANGER_THEME["success"]
+                    if ok
+                    else STATUS_CHANGER_THEME["error"]
+                ),
+            )
             self.refresh_state()
             close_after_task = self.close_requested
             self.close_requested = False
@@ -5267,8 +7040,14 @@ def build_app():
 
         def finish_stop_task(self, text, ok, on_done=None):
             self.stop_in_progress = False
-            self.note.configure(text=text, foreground=(
-                STATUS_CHANGER_THEME["success"] if ok else STATUS_CHANGER_THEME["error"]))
+            self.note.configure(
+                text=text,
+                foreground=(
+                    STATUS_CHANGER_THEME["success"]
+                    if ok
+                    else STATUS_CHANGER_THEME["error"]
+                ),
+            )
             self.refresh_state()
             close_after_stop = self.close_requested
             self.close_requested = False
@@ -5293,40 +7072,56 @@ def build_app():
             """Stop the standalone worker and exit; never leave the UI in the tray."""
             if self.stop_in_progress:
                 self.close_requested = True
-                self.note.configure(text=self._tr(
-                    "Waiting for the worker to stop before exit…",
-                    "กำลังรอให้ worker หยุดก่อนปิดโปรแกรม…"),
-                    foreground=STATUS_CHANGER_THEME["muted"])
+                self.note.configure(
+                    text=self._tr(
+                        "Waiting for the worker to stop before exit…",
+                        "กำลังรอให้ worker หยุดก่อนปิดโปรแกรม…",
+                    ),
+                    foreground=STATUS_CHANGER_THEME["muted"],
+                )
                 return
             if self.busy:
                 self.close_requested = True
-                self.note.configure(text=self._tr(
-                    "Finishing the current task before exit…",
-                    "รอให้งานปัจจุบันเสร็จแล้วปิดโปรแกรม…"), foreground=STATUS_CHANGER_THEME["muted"])
+                self.note.configure(
+                    text=self._tr(
+                        "Finishing the current task before exit…",
+                        "รอให้งานปัจจุบันเสร็จแล้วปิดโปรแกรม…",
+                    ),
+                    foreground=STATUS_CHANGER_THEME["muted"],
+                )
                 return
             try:
                 config = load_cfg(self.config_path)
                 runtime = runtime_config(config, self.mode)
                 if running_pid(runtime):
-                    self.note.configure(text=self._tr(
-                        "Stopping the status worker before exit…",
-                        "กำลังหยุดตัวเปลี่ยนสถานะก่อนออก…"), foreground=STATUS_CHANGER_THEME["muted"])
-                    self._start_stop_task(
+                    self.note.configure(
+                        text=self._tr(
+                            "Stopping the status worker before exit…",
+                            "กำลังหยุดตัวเปลี่ยนสถานะก่อนออก…",
+                        ),
+                        foreground=STATUS_CHANGER_THEME["muted"],
+                    )
+                    started = self._start_stop_task(
                         runtime,
                         self._tr("Status worker stopped.", "หยุดตัวเปลี่ยนสถานะแล้ว"),
                         on_done=self._close_after_worker_stop,
                         action=self._tr("Stop worker before exit", "หยุด worker ก่อนออก"),
                     )
+                    if not started and self.embedded and callable(self.on_close_failed):
+                        self.on_close_failed()
                     return
             except Exception as exc:
                 logging.exception("Could not prepare a clean Status Changer exit")
                 messagebox.showerror(
-                    f"Camfrog {self.app_name}",
+                    f"ZChat {self.app_name}",
                     self._tr(
                         f"Could not verify worker shutdown: {exc}",
-                        f"ตรวจสอบการหยุด worker ไม่สำเร็จ: {exc}"),
+                        f"ตรวจสอบการหยุด worker ไม่สำเร็จ: {exc}",
+                    ),
                     parent=self.root,
                 )
+                if self.embedded and callable(self.on_close_failed):
+                    self.on_close_failed()
                 return
             self._finalize_close()
 
@@ -5334,12 +7129,19 @@ def build_app():
             if ok:
                 self._finalize_close()
             else:
-                self.note.configure(text=self._tr(
-                    "Worker did not confirm shutdown. The window stays open so you can retry.",
-                    "worker ยังไม่ยืนยันว่าหยุดแล้ว หน้าต่างยังเปิดไว้ให้ลองใหม่"),
-                    foreground=STATUS_CHANGER_THEME["error"])
+                self.note.configure(
+                    text=self._tr(
+                        "Worker did not confirm shutdown. The window stays open so you can retry.",
+                        "worker ยังไม่ยืนยันว่าหยุดแล้ว หน้าต่างยังเปิดไว้ให้ลองใหม่",
+                    ),
+                    foreground=STATUS_CHANGER_THEME["error"],
+                )
+                if self.embedded and callable(self.on_close_failed):
+                    self.on_close_failed()
 
         def _finalize_close(self):
+            if self._closed_callback_called:
+                return
             if self.save_job is not None:
                 try:
                     self.root.after_cancel(self.save_job)
@@ -5347,21 +7149,30 @@ def build_app():
                     pass
                 self.save_job = None
             self.save_settings(enabled=False, mode=self.mode)
-            for job in (self.state_job, self.task_poll_job, self.activity_refresh_job,
-                        self.log_cleanup_job):
+            for job in (
+                self.state_job,
+                self.task_poll_job,
+                self.activity_refresh_job,
+                self.log_cleanup_job,
+            ):
                 if job is not None:
                     try:
                         self.root.after_cancel(job)
                     except tk.TclError:
                         pass
-            try:
-                self.root.quit()
-            except tk.TclError:
-                pass
-            try:
-                self.root.destroy()
-            except tk.TclError:
-                pass
+            if self.embedded:
+                self._closed_callback_called = True
+                if callable(self.on_closed):
+                    self.on_closed()
+            else:
+                try:
+                    self.root.quit()
+                except tk.TclError:
+                    pass
+                try:
+                    self.root.destroy()
+                except tk.TclError:
+                    pass
 
         def _register_single_instance_handler(self):
             """Subclass the Tk root window proc to handle WM_SHOWME from second instance."""
@@ -5369,10 +7180,21 @@ def build_app():
                 return
             try:
                 import ctypes
+
                 self.user32 = ctypes.WinDLL("user32", use_last_error=True)
-                self.user32.SetWindowLongPtrW.argtypes = (ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p)
+                self.user32.SetWindowLongPtrW.argtypes = (
+                    ctypes.c_void_p,
+                    ctypes.c_int,
+                    ctypes.c_void_p,
+                )
                 self.user32.SetWindowLongPtrW.restype = ctypes.c_void_p
-                self.user32.CallWindowProcW.argtypes = (ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p)
+                self.user32.CallWindowProcW.argtypes = (
+                    ctypes.c_void_p,
+                    ctypes.c_void_p,
+                    ctypes.c_uint,
+                    ctypes.c_void_p,
+                    ctypes.c_void_p,
+                )
                 self.user32.CallWindowProcW.restype = ctypes.c_void_p
 
                 self.root.update_idletasks()
@@ -5382,12 +7204,22 @@ def build_app():
                     if msg == SingleInstanceGuard.WM_SHOWME:
                         self.root.after(0, self._restore_window)
                         return 0
-                    return self.user32.CallWindowProcW(self.old_wndproc, hwnd, msg, wparam, lparam)
+                    return self.user32.CallWindowProcW(
+                        self.old_wndproc, hwnd, msg, wparam, lparam
+                    )
 
-                self.new_wndproc = ctypes.WINFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p)(new_wndproc)
+                self.new_wndproc = ctypes.WINFUNCTYPE(
+                    ctypes.c_void_p,
+                    ctypes.c_void_p,
+                    ctypes.c_uint,
+                    ctypes.c_void_p,
+                    ctypes.c_void_p,
+                )(new_wndproc)
 
                 GWLP_WNDPROC = -4
-                self.old_wndproc = self.user32.SetWindowLongPtrW(hwnd, GWLP_WNDPROC, self.new_wndproc)
+                self.old_wndproc = self.user32.SetWindowLongPtrW(
+                    hwnd, GWLP_WNDPROC, self.new_wndproc
+                )
             except Exception:
                 pass
 
@@ -5399,9 +7231,14 @@ def build_app():
                 pid = running_pid(runtime_config(config, self.mode))
                 running = bool(pid)
                 active = active_worker_mode() if running else None
-                label = (self._tr("RUNNING", "ทำงาน") +
-                         (f" · {active.title()}" if active else "")) if running else \
-                    self._tr("STOPPED", "หยุด")
+                label = (
+                    (
+                        self._tr("RUNNING", "ทำงาน")
+                        + (f" · {active.title()}" if active else "")
+                    )
+                    if running
+                    else self._tr("STOPPED", "หยุด")
+                )
                 self.state_label.configure(
                     text=label,
                     style=("State.OK.TLabel" if running else "State.STOP.TLabel"),
@@ -5421,7 +7258,7 @@ def main(argv=None):
 
     if "--worker" in argv:
         argv.remove("--worker")
-        return cli_main(argv)
+        return cli_main(argv, force_strict_background=True)
 
     # Handle --cleanup-mutex before single-instance guard
     if "--cleanup-mutex" in argv:
@@ -5430,10 +7267,11 @@ def main(argv=None):
             return 2
         return 0 if SingleInstanceGuard.force_cleanup() else 1
 
-    parser = argparse.ArgumentParser(description="Camfrog Status Changer")
+    parser = argparse.ArgumentParser(description="ZChat Status Changer")
     parser.add_argument("--config", help="use an alternate app-local config")
-    parser.add_argument("--allow-multiple", action="store_true",
-                        help="allow a second GUI instance")
+    parser.add_argument(
+        "--allow-multiple", action="store_true", help="allow a second GUI instance"
+    )
     try:
         args = parser.parse_args(argv)
         if args.config is not None and not args.config.strip():
@@ -5450,13 +7288,16 @@ def main(argv=None):
         try:
             candidate.relative_to(DATA_DIR.resolve())
         except ValueError:
-            print("Status Changer config must stay inside this executable's private data folder.")
+            print(
+                "Status Changer config must stay inside this executable's private data folder."
+            )
             return 2
         config_path = candidate
 
     if os.name == "nt":
         try:
             import ctypes
+
             ctypes.windll.shcore.SetProcessDpiAwareness(1)
         except Exception:
             pass
@@ -5486,7 +7327,7 @@ def main(argv=None):
 # Read-only GitHub API (no token needed for public repos, stdlib only). Each
 # packaged app checks the same repo's latest release and downloads only its
 # own executable asset, verified against the release's SHA256SUMS.txt.
-APP_VERSION = "2.19.2"
+APP_VERSION = "2.19.3"
 GITHUB_REPO = os.environ.get("CAMFROG_UPDATE_REPO", "cvsz/zchat")
 UPDATE_ASSET_SUMS = "SHA256SUMS.txt"
 
@@ -5506,7 +7347,8 @@ def version_newer(latest, current=APP_VERSION):
 def _validate_github_release_url(url):
     """Accept only HTTPS URLs on GitHub's release and asset hosts."""
     allowed_hosts = {
-        "github.com", "objects.githubusercontent.com",
+        "github.com",
+        "objects.githubusercontent.com",
         "release-assets.githubusercontent.com",
     }
     try:
@@ -5514,10 +7356,13 @@ def _validate_github_release_url(url):
         port = parsed.port
     except (TypeError, ValueError) as exc:
         raise ValueError("invalid GitHub release URL") from exc
-    if (parsed.scheme.casefold() != "https"
-            or (parsed.hostname or "").casefold() not in allowed_hosts
-            or parsed.username or parsed.password
-            or port not in (None, 443)):
+    if (
+        parsed.scheme.casefold() != "https"
+        or (parsed.hostname or "").casefold() not in allowed_hosts
+        or parsed.username
+        or parsed.password
+        or port not in (None, 443)
+    ):
         raise ValueError("update URL must use HTTPS on a GitHub release host")
     return str(url)
 
@@ -5532,8 +7377,11 @@ def github_latest_release(timeout=15.0):
     """(tag, notes, {asset_name: url}) for the newest release, or None."""
     request = urllib.request.Request(
         "https://api.github.com/repos/{0}/releases/latest".format(GITHUB_REPO),
-        headers={"Accept": "application/vnd.github+json",
-                 "User-Agent": "camfrog-auto/{0}".format(APP_VERSION)})
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "camfrog-auto/{0}".format(APP_VERSION),
+        },
+    )
     with urllib.request.urlopen(request, timeout=timeout) as response:
         data = json.loads(response.read().decode("utf-8", "replace"))
     if not isinstance(data, dict):
@@ -5572,8 +7420,14 @@ def check_release_assets(asset_name, timeout=15.0):
         return None
     sums_url = assets.get(UPDATE_ASSET_SUMS, "")
     if not sums_url:  # e.g. release-SHA256SUMS.txt alongside SHA256SUMS.txt
-        sums_url = next((value for name, value in sorted(assets.items())
-                         if name.endswith("SHA256SUMS.txt")), "")
+        sums_url = next(
+            (
+                value
+                for name, value in sorted(assets.items())
+                if name.endswith("SHA256SUMS.txt")
+            ),
+            "",
+        )
     if not sums_url:
         return None
     try:
@@ -5613,7 +7467,8 @@ def download_update(url, target, timeout=60.0):
     """Stream a GitHub release asset to `target`. Returns the bytes written."""
     _validate_github_release_url(url)
     request = urllib.request.Request(
-        url, headers={"User-Agent": "camfrog-auto/{0}".format(APP_VERSION)})
+        url, headers={"User-Agent": "camfrog-auto/{0}".format(APP_VERSION)}
+    )
     written = 0
     with urllib.request.urlopen(request, timeout=timeout) as response:
         _validate_github_response_url(response, url)
@@ -5631,7 +7486,8 @@ def verify_against_sums(sums_url, asset_name, local_path, timeout=30.0):
     """True when local_path matches the GitHub release's SHA256SUMS entry."""
     _validate_github_release_url(sums_url)
     request = urllib.request.Request(
-        sums_url, headers={"User-Agent": "camfrog-auto/{0}".format(APP_VERSION)})
+        sums_url, headers={"User-Agent": "camfrog-auto/{0}".format(APP_VERSION)}
+    )
     with urllib.request.urlopen(request, timeout=timeout) as response:
         _validate_github_response_url(response, sums_url)
         text = response.read().decode("utf-8", "replace")
@@ -5660,8 +7516,8 @@ def stage_and_swap_update(url, asset_name, sums_url=None):
     if not sums_url:
         return False, "release checksum is unavailable; update refused."
     if not isinstance(asset_name, str) or not re.fullmatch(
-            r"[A-Za-z0-9][A-Za-z0-9._-]{0,123}\.exe",
-            asset_name, flags=re.IGNORECASE):
+        r"[A-Za-z0-9][A-Za-z0-9._-]{0,123}\.exe", asset_name, flags=re.IGNORECASE
+    ):
         return False, "invalid update asset name."
     try:
         _validate_github_release_url(url)
@@ -5685,10 +7541,14 @@ def stage_and_swap_update(url, asset_name, sums_url=None):
         "@echo off\r\n"
         "ping -n 4 127.0.0.1 >nul\r\n"
         'move /Y "{staged}" "{exe}"\r\n'
-        'del "%~f0"\r\n'.format(staged=staged, exe=exe), encoding="utf-8")
+        'del "%~f0"\r\n'.format(staged=staged, exe=exe),
+        encoding="utf-8",
+    )
     command = ["cmd", "/c", str(script)]
     spawn = {"cwd": str(exe.parent)}
     if os.name == "nt":  # CREATE_NO_WINDOW: no console flash during the swap
         spawn["creationflags"] = 0x08000000
     subprocess.Popen(command, close_fds=True, **spawn)
-    return True, "update is staged; it will replace {0} after the app exits.".format(asset_name)
+    return True, "update is staged; it will replace {0} after the app exits.".format(
+        asset_name
+    )

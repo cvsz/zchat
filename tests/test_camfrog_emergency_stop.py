@@ -16,6 +16,9 @@ Verifies:
 from __future__ import annotations
 
 import ast
+import json
+import multiprocessing
+import os
 import sys
 import threading
 import time
@@ -44,9 +47,44 @@ from camfrog_emergency_stop import (
 )
 
 
+def test_local_emergency_stop_cli_activates_lists_and_deactivates(capsys):
+    scope = EmergencyStopScope.FEATURE.value
+    resource = "camfrog.status-random"
+    assert es.main(
+        [
+            "activate",
+            "--scope",
+            scope,
+            "--reason",
+            "OPERATOR_HALT",
+            "--operator",
+            "operator-test",
+            "--resource",
+            resource,
+        ]
+    ) == 0
+    activated = json.loads(capsys.readouterr().out)
+    assert activated["activated"] is True
+    assert activated["stop"]["affected_resources"] == [resource]
+    assert EmergencyStopRegistry().is_stopped(EmergencyStopScope.FEATURE, resource)
+    assert not EmergencyStopRegistry().is_stopped(
+        EmergencyStopScope.FEATURE, "camfrog.status-changer"
+    )
+
+    assert es.main(["status"]) == 0
+    assert len(json.loads(capsys.readouterr().out)["active_stops"]) == 1
+
+    assert es.main(["deactivate", "--scope", scope, "--resource", resource]) == 0
+    assert json.loads(capsys.readouterr().out)["deactivated"] is True
+    assert not EmergencyStopRegistry().is_stopped(EmergencyStopScope.FEATURE, resource)
+
+
 @pytest.fixture(autouse=True)
-def clean_registry():
-    """Isolate tests: the registry is a process-wide singleton."""
+def clean_registry(tmp_path, monkeypatch):
+    """Isolate the persistent registry for each test."""
+    monkeypatch.setenv(
+        "ZCHAT_EMERGENCY_STOP_DB", str(tmp_path / "emergency-stops.sqlite3")
+    )
     EmergencyStopRegistry()._reset_for_testing()
     yield
     EmergencyStopRegistry()._reset_for_testing()
@@ -54,6 +92,17 @@ def clean_registry():
 
 def _reg() -> EmergencyStopRegistry:
     return EmergencyStopRegistry()
+
+
+def _observe_and_deactivate_in_child(database_path: str, result_queue) -> None:
+    os.environ["ZCHAT_EMERGENCY_STOP_DB"] = database_path
+    registry = EmergencyStopRegistry()
+    result_queue.put(
+        (
+            registry.is_stopped(EmergencyStopScope.FEATURE, "feature-1"),
+            registry.deactivate(EmergencyStopScope.GLOBAL),
+        )
+    )
 
 
 # ---------- Singleton ----------
@@ -158,6 +207,31 @@ def test_audit_log_survives_deactivation():
     assert entry["operator_id"] == "op-1"
     assert entry["active"] is False
     assert entry["deactivated_at"] is not None
+
+
+def test_stop_and_deactivation_are_shared_across_processes():
+    database_path = str(EmergencyStopRegistry._storage_path())
+    reason = _reg().activate(EmergencyStopScope.GLOBAL, "OPERATOR_HALT", "op-1")
+    context = multiprocessing.get_context("spawn")
+    result_queue = context.Queue()
+    child = context.Process(
+        target=_observe_and_deactivate_in_child,
+        args=(database_path, result_queue),
+    )
+    child.start()
+    child.join(timeout=15)
+    if child.is_alive():
+        child.terminate()
+        child.join(timeout=5)
+        pytest.fail("child process did not finish the shared emergency-stop operation")
+
+    assert child.exitcode == 0
+    assert result_queue.get(timeout=2) == (True, True)
+    assert _reg().is_stopped(EmergencyStopScope.FEATURE, "feature-1") is False
+    audit = _reg().get_audit_log()
+    assert len(audit) == 1
+    assert audit[0]["stop_id"] == reason.stop_id
+    assert audit[0]["active"] is False
 
 
 def test_stops_do_not_auto_expire():

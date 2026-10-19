@@ -47,16 +47,16 @@ def test_windows_provider_launches_only_configured_executable_and_dispatches_roo
     assert launched[0][0] == [str(executable)]
     assert launched[0][1]["shell"] is False
     assert provider.execute({"operation": "join_room", "payload": {"room": "ZeaZ Dev"}}) == (
-        "succeeded",
-        "ok",
+        "effect_unknown",
+        "handoff_accepted",
     )
     assert provider.execute({"operation": "add_friend", "payload": {"nickname": "Friend One"}}) == (
-        "succeeded",
-        "ok",
+        "effect_unknown",
+        "handoff_accepted",
     )
     assert provider.execute({"operation": "open_im", "payload": {"nickname": "Friend One"}}) == (
-        "succeeded",
-        "ok",
+        "effect_unknown",
+        "handoff_accepted",
     )
     assert uris == [
         "camfrog://join_room/?name=ZeaZ%20Dev",
@@ -76,6 +76,21 @@ def test_windows_provider_requires_existing_absolute_exe_and_windows(tmp_path) -
         WindowsCamfrogClientProvider(str(executable), platform_name="linux")
     with pytest.raises(ValueError, match="absolute .exe"):
         WindowsCamfrogClientProvider(str(tmp_path / "missing.exe"), platform_name="win32")
+
+
+def test_windows_provider_does_not_report_launch_success_after_immediate_exit(tmp_path) -> None:
+    executable = tmp_path / "Camfrog.exe"
+    executable.write_bytes(b"Not a valid Windows executable.")
+    process = FakeProcess()
+    process.returncode = 1
+    provider = WindowsCamfrogClientProvider(
+        str(executable),
+        platform_name="win32",
+        popen=lambda *_args, **_kwargs: process,
+    )
+
+    assert provider.execute({"operation": "launch"}) == ("failed", "execution_failed")
+    assert provider.process_state() == "unknown"
 
 
 def test_windows_provider_does_not_implement_unverified_leave_room(tmp_path) -> None:

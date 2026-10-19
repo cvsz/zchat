@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -49,21 +49,49 @@ class CommandState(StrEnum):
     claimed = "claimed"
     succeeded = "succeeded"
     failed = "failed"
+    effect_unknown = "effect_unknown"
+    operator_reconciled = "operator_reconciled"
     canceled = "canceled"
 
 
 class CommandResultState(StrEnum):
     succeeded = "succeeded"
     failed = "failed"
+    effect_unknown = "effect_unknown"
 
 
 class CommandResultCode(StrEnum):
     ok = "ok"
+    handoff_accepted = "handoff_accepted"
     provider_not_configured = "provider_not_configured"
     client_not_found = "client_not_found"
     timed_out = "timed_out"
     execution_failed = "execution_failed"
     lease_expired = "lease_expired"
+    operator_reconciled = "operator_reconciled"
+
+
+class CommandReconciliationOutcome(StrEnum):
+    effect_observed = "effect_observed"
+    no_effect_observed = "no_effect_observed"
+
+
+class CommandReconciliationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: CommandReconciliationOutcome
+    evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    observed_at: datetime
+    acknowledge_manual_attestation: Literal[True]
+
+    @field_validator("observed_at")
+    @classmethod
+    def require_aware_observation_time(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("Observation time must include a timezone.")
+        if value > datetime.now(UTC):
+            raise ValueError("Observation time cannot be in the future.")
+        return value
 
 
 class ChatMessageDirection(StrEnum):
@@ -78,6 +106,7 @@ class ChatMessageState(StrEnum):
     delivered = "delivered"
     failed = "failed"
     canceled = "canceled"
+    delivery_unknown = "delivery_unknown"
 
 
 class AgentCreate(BaseModel):
@@ -192,7 +221,83 @@ class AccountRuntimeRead(BaseModel):
     observed_at: datetime | None
 
 
+class ZChatFeatureCapability(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    feature_id: str
+    provider: str
+    standalone_supported: bool
+    unified_supported: bool
+    requires_provider_client: bool
+    supports_offline: bool
+    supports_read_only: bool
+    supports_strict_background: bool
+    supports_minimized_client: bool
+    supports_hidden_client: bool
+    supports_remote_commands: bool
+    supports_external_outcome_verification: bool
+    requires_exclusive_resource: bool
+    verified_platforms: list[str]
+    verified_provider_versions: list[str]
+    implementation_status: str
+    evidence_status: str
+
+    @field_validator("feature_id", "provider", "implementation_status", "evidence_status")
+    @classmethod
+    def require_non_empty_contract_label(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Capability contract labels must not be empty.")
+        return normalized
+
+    @field_validator("verified_platforms", "verified_provider_versions")
+    @classmethod
+    def require_unique_non_empty_evidence_values(cls, values: list[str]) -> list[str]:
+        if any(not value.strip() or value != value.strip() for value in values):
+            raise ValueError("Capability evidence values must be non-empty and trimmed.")
+        if len(values) != len(set(values)):
+            raise ValueError("Capability evidence values must be unique.")
+        return values
+
+
+class ZChatWorkforceCapabilitiesV1(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    protocol: str
+    protocol_version: str
+    compatible_versions: list[str]
+    server_version: str
+    features: list[ZChatFeatureCapability]
+    read_only_resources: list[str]
+
+    @field_validator("protocol", "protocol_version", "server_version")
+    @classmethod
+    def require_non_empty_contract_version(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Capability contract versions must not be empty.")
+        return normalized
+
+    @field_validator("compatible_versions", "read_only_resources")
+    @classmethod
+    def require_unique_non_empty_contract_values(cls, values: list[str]) -> list[str]:
+        if any(not value.strip() or value != value.strip() for value in values):
+            raise ValueError("Capability contract values must be non-empty and trimmed.")
+        if len(values) != len(set(values)):
+            raise ValueError("Capability contract values must be unique.")
+        return values
+
+    @model_validator(mode="after")
+    def reject_duplicate_feature_ids(self) -> ZChatWorkforceCapabilitiesV1:
+        feature_ids = [feature.feature_id for feature in self.features]
+        if len(feature_ids) != len(set(feature_ids)):
+            raise ValueError("Capability feature IDs must be unique.")
+        return self
+
+
 class CommandCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     account_id: UUID
     operation: CommandOperation
     payload: dict[str, Any] = Field(default_factory=dict)
@@ -244,6 +349,7 @@ class AgentCommand(BaseModel):
     operation: CommandOperation
     payload: dict[str, Any]
     claim_token: str = Field(repr=False)
+    claim_issued_at: datetime
     claim_expires_at: datetime
 
 
@@ -327,16 +433,28 @@ class ChatMessageAckRequest(BaseModel):
 
 
 class CommandResultRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     claim_token: str = Field(min_length=32, max_length=128, repr=False)
     state: CommandResultState
     code: CommandResultCode
 
     @model_validator(mode="after")
     def result_state_matches_code(self) -> CommandResultRequest:
+        if self.code == CommandResultCode.operator_reconciled:
+            raise ValueError("Only the operator reconciliation route can use this result code.")
         if self.state == CommandResultState.succeeded and self.code != CommandResultCode.ok:
             raise ValueError("Successful commands must use result code 'ok'.")
-        if self.state == CommandResultState.failed and self.code == CommandResultCode.ok:
+        if self.state == CommandResultState.failed and self.code in {
+            CommandResultCode.ok,
+            CommandResultCode.handoff_accepted,
+        }:
             raise ValueError("Failed commands must use a failure result code.")
+        if (
+            self.state == CommandResultState.effect_unknown
+            and self.code != CommandResultCode.handoff_accepted
+        ):
+            raise ValueError("Unknown external effects must use result code 'handoff_accepted'.")
         return self
 
 

@@ -488,7 +488,6 @@ class WindowsCamfrogWindowClassifier:
        - Fail-closed: marked as UNKNOWN and never targeted for role actions.
     """
 
-    OWN_GUI_CLASSES = {"TkTopLevel"}
     OWN_GUI_TITLE_PREFIXES = (
         "Camfrog Status Changer",
         "Camfrog Random Status",
@@ -502,13 +501,9 @@ class WindowsCamfrogWindowClassifier:
 
     def is_own_gui_window(self, win: Any) -> bool:
         """Return True if window belongs to ZChat's own GUI."""
-        try:
-            cls = getattr(win, "class_name", lambda: "")()
-            if cls in self.OWN_GUI_CLASSES:
-                return True
-        except Exception:
-            pass
-
+        # A generic toolkit class (for example TkTopLevel) does not establish
+        # ownership. Camfrog or a controlled fixture may use the same class;
+        # use the ZChat-specific title prefixes instead.
         try:
             txt = getattr(win, "window_text", lambda: "")() or ""
             if any(txt.startswith(p) for p in self.OWN_GUI_TITLE_PREFIXES):

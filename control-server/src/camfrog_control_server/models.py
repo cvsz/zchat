@@ -87,13 +87,15 @@ class ControlCommand(Base):
             name="ck_commands_operation",
         ),
         CheckConstraint(
-            "state IN ('pending', 'claimed', 'succeeded', 'failed', 'canceled')",
+            "state IN ('pending', 'claimed', 'succeeded', 'failed', 'effect_unknown', "
+            "'operator_reconciled', 'canceled')",
             name="ck_commands_state",
         ),
         CheckConstraint(
             "result_code IS NULL OR result_code IN "
-            "('ok', 'provider_not_configured', 'client_not_found', 'timed_out', "
-            "'execution_failed', 'lease_expired')",
+            "('ok', 'handoff_accepted', 'provider_not_configured', "
+            "'client_not_found', 'timed_out', "
+            "'execution_failed', 'lease_expired', 'operator_reconciled')",
             name="ck_commands_result_code",
         ),
         Index("ix_commands_agent_state_created", "agent_id", "state", "created_at"),
@@ -109,7 +111,7 @@ class ControlCommand(Base):
     )
     operation: Mapped[str] = mapped_column(String(32), nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
-    state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    state: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
     claim_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     claim_token_hash: Mapped[str | None] = mapped_column(String(64))
     claim_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -131,7 +133,8 @@ class ChatMessage(Base):
             name="ck_chat_messages_direction",
         ),
         CheckConstraint(
-            "state IN ('queued', 'claimed', 'received', 'delivered', 'failed', 'canceled')",
+            "state IN ('queued', 'claimed', 'received', 'delivered', 'failed', 'canceled', "
+            "'delivery_unknown')",
             name="ck_chat_messages_state",
         ),
         CheckConstraint(
