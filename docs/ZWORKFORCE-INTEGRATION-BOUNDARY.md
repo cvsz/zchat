@@ -11,6 +11,12 @@ External source revision: UNVERIFIED. Immutable commit IDs and revision-pinned p
 - zWorkforce AGENTS.md requires tenant isolation, bounded execution, explicit mutation authorization and durable state.
 - zWorkforce's external production evidence stages A–I are pending. Neither repository's documentation proves an end-to-end Camfrog mutation path.
 
+## Baseline pinning (required before reproducible claims)
+
+- zWorkforce repository URL: `https://github.com/cvsz/zworkforce` (placeholder until confirmed).
+- Immutable commit: `UNVERIFIED` — must be recorded before treating cross-repository claims as reproducible evidence.
+- Paths: `UNVERIFIED` — must be pinned to the recorded commit.
+
 ## Ownership
 
 | Boundary | Authority |
