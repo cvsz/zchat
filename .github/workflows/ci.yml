@@ -8,10 +8,18 @@ jobs:
     permissions:
       contents: read
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with: { python-version: "3.12" }
+        with: { python-version: "${{ matrix.python-version }}" }
+      - uses: actions/cache@0057852b8a8c7e9a7402f59b99f63c3a68e57969 # v4.3.0
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('requirements*.txt', 'zchat-client/requirements*.txt', 'control-server/pyproject.toml') }}
       - run: python scripts/validate_repo.py
       - run: sudo apt-get update && sudo apt-get install -y xvfb python3-tk
       - run: python -m pip install --upgrade pip
@@ -48,6 +56,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with: { python-version: "3.12" }
+      - uses: actions/cache@0057852b8a8c7e9a7402f59b99f63c3a68e57969 # v4.3.0
+        with:
+          path: ~/.cache/pip
+          key: pip-cs-${{ runner.os }}-${{ hashFiles('control-server/pyproject.toml') }}
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e '.[test,lint]'
       - run: python -m pip install 'pip-audit>=2.7,<3'
