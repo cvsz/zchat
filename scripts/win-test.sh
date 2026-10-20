@@ -67,7 +67,7 @@ fi
 # Verify .venv-win python is 3.12.x (matching CI python-version)
 winpy_abs=$(wslpath -w "$PWD/$pywin")
 tmpbat=$(mktemp /tmp/vercheck_XXXX.bat)
-printf '@echo off\r\n"%s" --version > %s\verout.txt 2>&1\r\n' "$winpy_abs" "$winout" > "$tmpbat"
+printf '@echo off\r\n"%s" --version > %s\\verout.txt 2>&1\r\n' "$winpy_abs" "$winout" > "$tmpbat"
 winbat=$(wslpath -w "$tmpbat")
 cmd.exe /c "$winbat" >/dev/null 2>&1
 rm -f "$tmpbat"
@@ -159,7 +159,27 @@ fi
 
 # Parse junit.xml with Windows venv python
 if [ -f "$out/junit.xml" ]; then
-    errors=$(cmd.exe /c "\"$winpy_abs\" -c \"import xml.etree.ElementTree as ET; t=ET.parse(r'$winout\\junit.xml'); r=t.getroot(); print(r.get('errors','MISSING'))\"" 2>&1 | tr -d '\r' | tail -1)
+    tmpbat3=$(mktemp /tmp/parsexml_XXXX.bat)
+    printf '@echo off\r\n"%s" -c "import xml.etree.ElementTree as ET; t=ET.parse(chr(39)+chr(39).join([chr(39),chr(39)]).replace(chr(39)+chr(39),chr(39)+%s+chr(39))) if False else None" 2>nul\r\n' "$winpy_abs" > "$tmpbat3"
+    # Simpler: write a temp Python script
+    rm -f "$tmpbat3"
+    tmp_py=$(mktemp /tmp/parsexml_XXXX.py)
+    cat > "$tmp_py" <<'PYEOF'
+import xml.etree.ElementTree as ET, sys
+try:
+    t = ET.parse(sys.argv[1])
+    r = t.getroot()
+    print(r.get("errors", "MISSING"))
+except Exception as e:
+    print("MISSING")
+PYEOF
+    winpy_abs=$(wslpath -w "$PWD/$pywin")
+    winpy_script=$(wslpath -w "$tmp_py")
+    winjunit=$(wslpath -w "$out/junit.xml")
+    cmd.exe /c "\"$winpy_abs\" \"$winpy_script\" \"$winjunit\"" > "$out/errout.txt" 2>&1
+    rm -f "$tmp_py"
+    errors=$(tr -d '\r' < "$out/errout.txt" 2>/dev/null | tail -1 || echo "")
+    errors=$(tr -d '\r' < "$out/errout.txt" 2>/dev/null | tail -1 || echo "")
     if [ "$errors" = "MISSING" ] || [ -z "$errors" ]; then
         echo "ERRORS=UNVERIFIED (junit.xml parse failed)" | tee -a "$out/console.log"
         promote_status "UNVERIFIED"
