@@ -1297,12 +1297,6 @@ def _commit_impl(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply
     if dry:
         log.info(t("dry_send", text=shown(text)))
         return True
-    if execution_mode == "best_effort_background":
-        log.error(
-            "BEST_EFFORT_BACKGROUND_DISABLED: Camfrog combo-post can take "
-            "desktop focus and interrupt keyboard input; refusing status send."
-        )
-        return False
     if is_web(ctrl):
         return commit_web(win, ctrl, text, require_fg, restore)
     user32 = ctypes.windll.user32
@@ -2642,12 +2636,6 @@ def _strict_status_start_blocked(cfg, emit=print):
     """Fail closed before a status worker starts when live submit is unverified."""
     if cfg.get("dry_run", True) or not cfg.get("status", {}).get("enabled", True):
         return False
-    if cfg.get("status", {}).get("execution_mode") == "best_effort_background":
-        emit(
-            "BEST_EFFORT_BACKGROUND_DISABLED: Camfrog combo-post can take "
-            "desktop focus and interrupt keyboard input. Status worker refused."
-        )
-        return True
     if cfg.get("status", {}).get("execution_mode") == "interactive":
         if not _unverified_status_test_submit_enabled():
             emit("INTERACTIVE_TEST_DISABLED: explicit Windows test opt-in required.")
@@ -2656,6 +2644,8 @@ def _strict_status_start_blocked(cfg, emit=print):
             "UNVERIFIED TEST MODE: interactive status submission may activate "
             "Camfrog and interrupt desktop input; independently verify provider state."
         )
+        return False
+    if cfg.get("status", {}).get("execution_mode") == "best_effort_background":
         return False
     try:
         from camfrog_status_engine import strict_background_submit_supported

@@ -483,7 +483,7 @@ class AgentChatWindow:
         self.message_label.grid(row=0, column=0, sticky=tk.W, pady=(0, 3))
         self.message_input = tk.Text(
             composer,
-            height=3,
+            height=1,
             wrap=tk.WORD,
             undo=False,
             background=PALETTE["entry"],

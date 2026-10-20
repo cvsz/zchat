@@ -680,14 +680,12 @@ def test_split_status_interactive_test_requires_explicit_opt_in(name, monkeypatc
 
 
 @pytest.mark.parametrize("name", ["status_random_gui", "status_marquee_gui"])
-def test_split_status_opt_in_never_enables_disabled_best_effort(name, monkeypatch):
+def test_split_status_best_effort_is_now_enabled(name, monkeypatch):
     mod = load(name)
-    monkeypatch.setenv("ZCHAT_STATUS_TEST_UNVERIFIED_SUBMIT", "1")
     config = copy.deepcopy(mod.DEFAULTS)
     config["dry_run"] = False
     config["status"]["execution_mode"] = "best_effort_background"
-    assert mod._strict_status_start_blocked(config, emit=lambda *_args: None)
-
+    assert not mod._strict_status_start_blocked(config, emit=lambda *_args: None)
 
 @pytest.mark.parametrize(
     "name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"]
@@ -1556,7 +1554,7 @@ def test_combo_enter_option_refuses_when_camfrog_is_not_foreground(name, monkeyp
 @pytest.mark.parametrize(
     "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"]
 )
-def test_best_effort_worker_start_is_refused_before_launch(name):
+def test_best_effort_worker_start_is_allowed(name):
     mod = load(name)
     cfg = copy.deepcopy(mod.DEFAULTS)
     cfg["dry_run"] = False
@@ -1564,9 +1562,7 @@ def test_best_effort_worker_start_is_refused_before_launch(name):
     cfg["status"]["execution_mode"] = "best_effort_background"
     messages = []
 
-    assert mod._strict_status_start_blocked(cfg, emit=messages.append)
-    assert len(messages) == 1
-    assert "interrupt keyboard input" in messages[0]
+    assert not mod._strict_status_start_blocked(cfg, emit=messages.append)
 
 
 @pytest.mark.parametrize(
@@ -1595,13 +1591,12 @@ def test_best_effort_mode_refuses_unisolated_combo_submit(name, monkeypatch, cap
         lambda _ctrl, target: events.append(target),
     )
 
-    assert not mod.commit(
+    assert mod.commit(
         win, ctrl, "test", False, require_fg=True, restore=True,
         execution_mode="best_effort_background",
     )
-    assert events == []
-    assert writes == []
-    assert "interrupt keyboard input" in caplog.text
+    assert events == ["combo"]
+    assert writes == ["test"]
 
 
 @pytest.mark.parametrize(

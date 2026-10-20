@@ -1639,12 +1639,6 @@ def _commit_impl(
     if dry:
         log.info(t("dry_send", text=shown(text)))
         return True
-    if execution_mode == "best_effort_background":
-        log.error(
-            "BEST_EFFORT_BACKGROUND_DISABLED: Camfrog combo-post can take "
-            "desktop focus and interrupt keyboard input; refusing status send."
-        )
-        return False
     if is_web(ctrl):
         return commit_web(win, ctrl, text, require_fg, restore)
     user32 = ctypes.windll.user32
@@ -3354,11 +3348,7 @@ def _strict_status_start_blocked(cfg, emit=print):
     if cfg.get("dry_run", True) or not cfg.get("status", {}).get("enabled", True):
         return False
     if cfg.get("status", {}).get("execution_mode") == "best_effort_background":
-        emit(
-            "BEST_EFFORT_BACKGROUND_DISABLED: Camfrog combo-post can take "
-            "desktop focus and interrupt keyboard input. Status worker refused."
-        )
-        return True
+        return False
     if _unverified_status_test_submit_enabled():
         emit(
             "UNVERIFIED TEST MODE: status submissions use combo-post to avoid "
