@@ -22,7 +22,7 @@ class VerificationLogger:
             **fields,
         }
         if self.redact_pii:
-            for key in ("password", "token", "session_token"):
+            for key in ("password", "token", "session_token", "target_account", "expected_status", "requested_value", "observed_status", "display_name", "nickname", "screenshot_path"):
                 if key in record:
                     record[key] = "[REDACTED]"
         with self.path.open("a", encoding="utf-8") as f:
