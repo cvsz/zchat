@@ -12,7 +12,10 @@ owner-side GitHub App permission issue; it cannot be fixed in repository code.
 
 ## Required check names to pass to scripts/github_admin.py (dry-run first)
 
-- `ci / test`
+Matrix jobs report per-version names:
+- `ci / test (3.12)`
+- `ci / test (3.13)`
+- `ci / test (3.14)`
 - `ci / control-server`
 - `ci / build-windows`
 - `CodeQL / Analyze`
