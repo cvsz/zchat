@@ -2,12 +2,14 @@
 
 ## Prerequisites
 - Two Windows 11 machines (Primary + Secondary)
+
+> **Not yet executable end-to-end:** `FriendListObserver.observe()` is a fail-closed placeholder. Discovery in the unified client warns that the Camfrog friend list cannot yet be read. Do not treat UI input, command dispatch, or log records as external provider verification.
 - Two authorized Camfrog accounts (Account A and Account B)
 - zchat-client built on both machines
 - `.env` configured with verification settings
 
 ## Setup
-1. Install dependencies: `pip install -r zchat-client/requirements.txt`
+1. From the repository root, run `build.bat` to create the repository `.venv` and required build prerequisites.
 2. Build client: `zchat-client\build.bat`
 3. Configure `.env`:
    - Primary: `ZCHAT_VERIFICATION_ENABLED=true`, `ZCHAT_VERIFICATION_ROLE=primary`, `ZCHAT_VERIFICATION_TARGET_ACCOUNT=<Account B>`
@@ -24,7 +26,7 @@
 8. Poll secondary Friend List for expected change.
 9. Compare observed vs requested values.
 10. Capture screenshots on change detection.
-11. Verify evidence bundle: `evidence/<run_id>/` with manifest.json and checksums.sha256.
+11. Once a real observer and evidence collector are implemented and independently tested, verify evidence bundle: `evidence/<run_id>/` with manifest.json and checksums.sha256.
 
 ## Hotkeys
 - `F3` — Start configured worker.
@@ -34,7 +36,7 @@
 - If Camfrog not detected: ensure process running and version supported.
 - If friend missing: verify exact account identifier and authentication.
 - If permission denied: run as non-administrator.
-- Logs: `keep_log.txt`, `evidence/` directory.
+- Logs: `%LOCALAPPDATA%\ZChat\keep_log.txt`, `evidence/` directory (when evidence collection is implemented).
 
 ## Rollback
 - Stop worker (F4), close client, remove evidence directory if needed.
