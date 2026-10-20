@@ -36,7 +36,10 @@ class WindowsWindowScreenshotCapture:
             if not window.exists() or not window.is_visible() or window.is_minimized():
                 return False
             process = psutil.Process(window.process_id())
-            if process.name().casefold() not in {"camfrog.exe", "camfrog video chat.exe"}:
+            if process.name().casefold() not in {
+                "camfrog.exe",
+                "camfrog video chat.exe",
+            }:
                 return False
             image = window.capture_as_image()
             destination = Path(destination)

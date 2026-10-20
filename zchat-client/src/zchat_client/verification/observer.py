@@ -59,12 +59,18 @@ class FriendListObserver:
             try:
                 pid = window.process_id()
                 process = psutil.Process(pid)
-                if process.name().casefold() not in {"camfrog.exe", "camfrog video chat.exe"}:
+                if process.name().casefold() not in {
+                    "camfrog.exe",
+                    "camfrog video chat.exe",
+                }:
                     continue
                 # An exact accessible friend identity is required. Window titles,
                 # substrings and free-form text must not qualify as identity.
                 for item in window.descendants(control_type="ListItem"):
-                    if normalize_text(item.window_text()).casefold() != target.casefold():
+                    if (
+                        normalize_text(item.window_text()).casefold()
+                        != target.casefold()
+                    ):
                         continue
                     # Status/name controls differ between Camfrog builds and cannot
                     # be inferred from row position or visible labels alone.
@@ -75,5 +81,10 @@ class FriendListObserver:
                 continue
         if len(matches) == 1:
             return matches[0]
-        return Observation(False, None, None, "low",
-                           "ambiguous_identity" if matches else "friend_not_observed")
+        return Observation(
+            False,
+            None,
+            None,
+            "low",
+            "ambiguous_identity" if matches else "friend_not_observed",
+        )

@@ -1284,7 +1284,11 @@ class UnifiedClientWindow:
         log_label.pack(anchor=tk.W)
         self.keep_log_text = tk.Text(body, height=10, state=tk.DISABLED)
         self.keep_log_text.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
-        self._keep_log_path = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / ".zchat")) / "ZChat" / "keep_log.txt"
+        self._keep_log_path = (
+            Path(os.environ.get("LOCALAPPDATA") or (Path.home() / ".zchat"))
+            / "ZChat"
+            / "keep_log.txt"
+        )
         self._load_keep_log()
 
     def _load_keep_log(self) -> None:
