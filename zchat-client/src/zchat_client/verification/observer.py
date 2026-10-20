@@ -67,16 +67,11 @@ class FriendListObserver:
                 # An exact accessible friend identity is required. Window titles,
                 # substrings and free-form text must not qualify as identity.
                 for item in window.descendants(control_type="ListItem"):
-                    if (
-                        normalize_text(item.window_text()).casefold()
-                        != target.casefold()
-                    ):
+                    if normalize_text(item.window_text()).casefold() != target.casefold():
                         continue
                     # Status/name controls differ between Camfrog builds and cannot
                     # be inferred from row position or visible labels alone.
-                    matches.append(
-                        Observation(True, None, None, "low", "uia_identity_only")
-                    )
+                    matches.append(Observation(True, None, None, "low", "uia_identity_only"))
             except (OSError, RuntimeError, AttributeError, ValueError, psutil.Error):
                 continue
         if len(matches) == 1:

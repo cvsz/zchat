@@ -28,9 +28,7 @@ def root():
             pass
 
 
-def test_process_monitor_refresh_without_camfrog_never_raises(
-    root, monkeypatch
-) -> None:
+def test_process_monitor_refresh_without_camfrog_never_raises(root, monkeypatch) -> None:
     from camfrog_windows_runtime import WindowsCamfrogProcessDiscovery
 
     monkeypatch.setattr(
@@ -161,10 +159,7 @@ def test_shell_language_toggle_updates_nav_and_pages(root) -> None:
     shell.language.set("th")
     root.update()
     assert shell.nav_buttons["monitor"].cget("text") == SHELL_TEXT["th"]["nav_monitor"]
-    assert (
-        shell.nav_buttons["private_chat"].cget("text")
-        == SHELL_TEXT["th"]["nav_private_chat"]
-    )
+    assert shell.nav_buttons["private_chat"].cget("text") == SHELL_TEXT["th"]["nav_private_chat"]
     assert shell.monitor_page.refresh_button.cget("text") == PM_TEXT["th"]["refresh"]
     # Agent page shares the same language variable.
     assert shell.agent_page.language is shell.language
@@ -176,9 +171,7 @@ def test_agent_window_still_works_standalone(root) -> None:
     assert window.language.get() == "en"
 
 
-def test_icon_helper_windows_hosts_and_embedded_frames(
-    root, monkeypatch, tmp_path
-) -> None:
+def test_icon_helper_windows_hosts_and_embedded_frames(root, monkeypatch, tmp_path) -> None:
     """Exercise the Windows branch, including real Tk/Toplevel host types."""
     from zchat_client import ui
 

@@ -13,14 +13,10 @@ from .logger import VerificationLogger
 class VerificationRun:
     run_id: str = field(default_factory=lambda: "run-" + uuid.uuid4().hex[:12])
     requested_value: str = ""
-    started_at: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    started_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
-def record_request(
-    logger: VerificationLogger, run: VerificationRun, module: str
-) -> None:
+def record_request(logger: VerificationLogger, run: VerificationRun, module: str) -> None:
     logger.log(
         "status_change_requested",
         verification_run_id=run.run_id,
