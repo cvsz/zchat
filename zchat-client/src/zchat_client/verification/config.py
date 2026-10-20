@@ -30,7 +30,12 @@ def load_config(env: dict[str, str] | None = None) -> VerificationConfig:
         raw = source.get(key)
         if raw is None:
             return default
-        return raw.strip().lower() in {"1", "true", "yes", "on"}
+        value = raw.strip().lower()
+        if value in {"1", "true", "yes", "on"}:
+            return True
+        if value in {"0", "false", "no", "off"}:
+            return False
+        raise ValueError(f"{key} must be a boolean (true/false)")
 
     role = source.get("ZCHAT_VERIFICATION_ROLE", "primary").strip().lower()
     if role not in {"primary", "secondary"}:
