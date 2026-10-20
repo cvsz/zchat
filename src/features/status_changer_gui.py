@@ -1486,16 +1486,8 @@ class UserActivityGuard:
     Windows only: elsewhere `user_idle_ms()` is None and the guard never blocks.
     """
 
-    def __init__(
-        self,
-        idle_ms=None,
-        poll=0.25,
-        max_wait=120.0,
-        tick=None,
-        last_input=None,
-        sleep=None,
-        clock=None,
-    ):
+    def __init__(self, idle_ms=None, poll=0.25, max_wait=120.0, tick=None,
+                 last_input=None, sleep=None, clock=None):
         if idle_ms is None:
             try:
                 idle_ms = int(os.environ.get("ZCHAT_USER_IDLE_MS", "2000"))
@@ -1559,7 +1551,7 @@ class UserActivityGuard:
             if not self._is_own(last):
                 self._user_tick = last
             if self._user_tick is None:
-                return 10**9  # only our own input seen so far
+                return 10 ** 9  # only our own input seen so far
             return (self._tick() - self._user_tick) & 0xFFFFFFFF
         except Exception:
             return None
@@ -1574,9 +1566,7 @@ class UserActivityGuard:
             idle = self.user_idle_ms()
             if idle is None:
                 if os.name == "nt":
-                    log.error(
-                        "Cannot verify Windows user activity; refusing desktop input injection"
-                    )
+                    log.error("Cannot verify Windows user activity; refusing desktop input injection")
                     return False
                 return True
             if idle >= self.idle_ms:
@@ -1584,9 +1574,7 @@ class UserActivityGuard:
             if self._clock() >= deadline:
                 return False
             if not noted:
-                log.info(
-                    "User is active; deferring input injection until the desktop is idle"
-                )
+                log.info("User is active; deferring input injection until the desktop is idle")
                 noted = True
             self._sleep(self.poll)
 
@@ -1612,9 +1600,7 @@ def _injects_global_input(bound) -> bool:
         return True
     if bound.get("apply_btn") is not None:
         return True
-    if bound.get("background_enter_target") == "combo" or not bound.get(
-        "require_fg", True
-    ):
+    if bound.get("background_enter_target") == "combo" or not bound.get("require_fg", True):
         return False
     return True
 
@@ -1622,7 +1608,6 @@ def _injects_global_input(bound) -> bool:
 def commit(*args, **kwargs) -> bool:
     """Gate `_commit_impl` so input-injecting sends never run while the user is active."""
     import inspect
-
     bound = inspect.signature(_commit_impl).bind(*args, **kwargs)
     bound.apply_defaults()
     if not _injects_global_input(bound.arguments):
@@ -1631,8 +1616,6 @@ def commit(*args, **kwargs) -> bool:
         log.error("Deferred: user stayed active; not taking over mouse/keyboard")
         return False
     return USER_GUARD.run(_commit_impl, *args, **kwargs)
-
-
 # --- end user-activity guard ---
 
 
