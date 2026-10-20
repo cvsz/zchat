@@ -66,3 +66,4 @@ docs/mock/
 # Pinned GUI test-app checkout; fetched only by the Windows integration tests.
 windows_tests/fixtures/_cache/
 .venv-win/
+reports/
