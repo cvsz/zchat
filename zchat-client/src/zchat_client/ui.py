@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import queue
 import sys
 import time
@@ -1289,7 +1290,23 @@ class UnifiedClientWindow:
     def _load_keep_log(self) -> None:
         try:
             if self._keep_log_path.exists():
-                content = self._keep_log_path.read_text(encoding="utf-8")
+                try:
+                    content = self._keep_log_path.read_text(encoding="utf-8")
+                except UnicodeDecodeError:
+                    stamp = datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%z")
+                    quarantined = self._keep_log_path.with_name(
+                        f"keep_log.corrupt-{stamp}"
+                    )
+                    try:
+                        shutil.move(str(self._keep_log_path), str(quarantined))
+                    except OSError:
+                        pass
+                    messagebox.showwarning(
+                        "Keep Log",
+                        "keep_log.txt contained invalid UTF-8 and was quarantined. "
+                        "A new log will be started.",
+                    )
+                    return
                 self.keep_log_text.configure(state=tk.NORMAL)
                 self.keep_log_text.insert(tk.END, content)
                 self.keep_log_text.see(tk.END)
