@@ -1,7 +1,11 @@
 import tempfile
 from pathlib import Path
 
-from zchat_client.verification.evidence import create_run_dir, write_checksums, write_manifest
+from zchat_client.verification.evidence import (
+    create_run_dir,
+    write_checksums,
+    write_manifest,
+)
 
 
 def test_evidence_bundle():

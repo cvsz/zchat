@@ -18,7 +18,9 @@ def create_run_dir(base: Path, run_id: str) -> Path:
 
 def write_manifest(run_dir: Path, data: dict) -> Path:
     manifest = run_dir / "manifest.json"
-    manifest.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    manifest.write_text(
+        json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
     return manifest
 
 

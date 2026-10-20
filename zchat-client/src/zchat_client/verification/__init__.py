@@ -8,7 +8,11 @@ from .logger import VerificationLogger
 from .observer import FriendListObserver, Observation
 from .report import write_report
 from .screenshot import NullScreenshotCapture, ScreenshotCapture
-from .state_machine import VerificationResult, VerificationState, VerificationStateMachine
+from .state_machine import (
+    VerificationResult,
+    VerificationState,
+    VerificationStateMachine,
+)
 from .sync import sync_keep_log
 from .transport import EvidenceTransport, TransportResult
 
