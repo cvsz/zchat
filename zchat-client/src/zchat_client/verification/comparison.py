@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import unicodedata
+
 
 def normalize_text(value: str | None) -> str:
     if value is None:
         return ""
-    return " ".join(value.split())
+    return unicodedata.normalize("NFC", " ".join(value.split()))
 
 
 def texts_equal(a: str | None, b: str | None) -> bool:
