@@ -1644,7 +1644,8 @@ def _commit_impl(
     user32 = ctypes.windll.user32
     foreground = user32.GetForegroundWindow()
     window_is_foreground = foreground == getattr(win, "handle", None)
-    if apply_btn is None and not window_is_foreground and (
+    best_effort = execution_mode == "best_effort_background"
+    if not best_effort and apply_btn is None and not window_is_foreground and (
         background_if_not_foreground
         or not require_fg
         or background_enter_target == "combo"
@@ -1659,7 +1660,6 @@ def _commit_impl(
     # its verified CComboBoxTS parent. Explicit combo mode uses the same path
     # even while Camfrog is foreground (useful on builds that beep on Edit Enter).
     unverified_test_submit = _unverified_status_test_submit_enabled()
-    best_effort = execution_mode == "best_effort_background"
     background_submit = apply_btn is None and (
         best_effort
         or (unverified_test_submit and background_if_not_foreground)

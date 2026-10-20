@@ -1,0 +1,99 @@
+diff --git a/full-build.bat b/full-build.bat
+--- a/full-build.bat
++++ b/full-build.bat
+@@ -1,4 +1,20 @@
+ @echo off
+ chcp 65001 >nul
+-setlocal
++setlocal EnableDelayedExpansion
+ cd /d "%~dp0"
++
++rem --- Capture the entire build (stdout + stderr) to a durable full log ---
++rem Logs are stored outside the repository to preserve the clean-tree release gate.
++if not defined ZCHAT_FULL_BUILD_LOG_CHILD (
++    if exist ".venv\Scripts\python.exe" (
++        ".venv\Scripts\python.exe" "tools\full_build_logger.py" "%~f0" %*
++        exit /b !errorlevel!
++    )
++    where py >nul 2>nul
++    if not errorlevel 1 (
++        py -3 "tools\full_build_logger.py" "%~f0" %*
++        exit /b !errorlevel!
++    )
++    echo ERROR: Python is required for full-build logging.
++    exit /b 1
++)
+diff --git a/tools/full_build_logger.py b/tools/full_build_logger.py
+new file mode 100644
+--- /dev/null
++++ b/tools/full_build_logger.py
+@@ -0,0 +1,69 @@
++"""Stream a Windows batch build to the console and a timestamped full log.
++
++The log lives outside the Git checkout so release clean-tree checks remain valid.
++"""
++
++from __future__ import annotations
++
++import datetime as dt
++import os
++import subprocess
++import sys
++from pathlib import Path
++
++
++def main(argv: list[str]) -> int:
++    if not argv:
++        print("Usage: full_build_logger.py FULL_BUILD_BAT [ARGS...]", file=sys.stderr)
++        return 2
++
++    batch = Path(argv[0]).resolve()
++    if not batch.is_file():
++        print(f"Build script not found: {batch}", file=sys.stderr)
++        return 2
++
++    base = os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP")
++    if not base:
++        print("Neither LOCALAPPDATA nor TEMP is configured", file=sys.stderr)
++        return 2
++
++    log_dir = Path(base) / "ZChat" / "build-logs"
++    try:
++        log_dir.mkdir(parents=True, exist_ok=True)
++        stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
++        log_path = log_dir / f"full-build-{stamp}-{os.getpid()}.log"
++        # Use an explicit child marker to prevent recursive wrapping.
++        env = os.environ.copy()
++        env["ZCHAT_FULL_BUILD_LOG_CHILD"] = "1"
++        command = [os.environ.get("ComSpec", "cmd.exe"), "/d", "/c", str(batch), *argv[1:]]
++        print(f"Full build log: {log_path}", flush=True)
++        with log_path.open("xb") as log:
++            with subprocess.Popen(
++                command,
++                cwd=batch.parent,
++                env=env,
++                stdout=subprocess.PIPE,
++                stderr=subprocess.STDOUT,
++                bufsize=0,
++            ) as child:
++                assert child.stdout is not None
++                while True:
++                    chunk = child.stdout.read(4096)
++                    if not chunk:
++                        break
++                    log.write(chunk)
++                    log.flush()
++                    sys.stdout.buffer.write(chunk)
++                    sys.stdout.buffer.flush()
++                code = child.wait()
++            footer = f"\r\n[full-build] exit code: {code}\r\n".encode("utf-8")
++            log.write(footer)
++        print(f"Full build log saved: {log_path}", flush=True)
++        return code
++    except (OSError, subprocess.SubprocessError) as exc:
++        print(f"Full build logger failed: {exc}", file=sys.stderr)
++        return 1
++
++
++if __name__ == "__main__":
++    sys.exit(main(sys.argv[1:]))

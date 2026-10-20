@@ -1302,7 +1302,8 @@ def _commit_impl(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply
     user32 = ctypes.windll.user32
     foreground = user32.GetForegroundWindow()
     window_is_foreground = foreground == getattr(win, "handle", None)
-    if apply_btn is None and not window_is_foreground and (
+    best_effort = execution_mode == "best_effort_background"
+    if not best_effort and apply_btn is None and not window_is_foreground and (
         background_if_not_foreground
         or not require_fg
         or background_enter_target == "combo"
@@ -1312,7 +1313,6 @@ def _commit_impl(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply
             "and take desktop focus."
         )
         return False
-    best_effort = execution_mode == "best_effort_background"
     background_submit = apply_btn is None and (
         best_effort or background_enter_target == "combo" or not require_fg or
         (background_if_not_foreground and not window_is_foreground))
