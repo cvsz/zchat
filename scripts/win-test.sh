@@ -56,7 +56,7 @@ promote_status() {
 
 if [ ! -f "$pywin" ]; then
     echo "ERROR: $pywin not found." >&2
-    echo "Create it first:" >&2
+    echo "Create it first (requires py -3.12):" >&2
     echo "  py -3.12 -m venv .venv-win" >&2
     echo "  .venv-win\\Scripts\\python -m pip install -r requirements.txt -r requirements-dev.txt" >&2
     status=CONFIG_ERROR
@@ -64,10 +64,18 @@ if [ ! -f "$pywin" ]; then
     exit 2
 fi
 
-# Verify py -3.12 exists
-if ! cmd.exe /c "py -3.12 --version" >/dev/null 2>&1; then
-    echo "ERROR: py -3.12 (Python 3.12) is not installed on Windows." >&2
-    echo "Install Python 3.12 from https://www.python.org/downloads/" >&2
+# Verify .venv-win python is 3.12.x (matching CI python-version)
+winpy_abs=$(wslpath -w "$PWD/$pywin")
+tmpbat=$(mktemp /tmp/vercheck_XXXX.bat)
+printf '@echo off\r\n"%s" --version > %s\verout.txt 2>&1\r\n' "$winpy_abs" "$winout" > "$tmpbat"
+winbat=$(wslpath -w "$tmpbat")
+cmd.exe /c "$winbat" >/dev/null 2>&1
+rm -f "$tmpbat"
+pyver=$(tr -d '\r' < "$out/verout.txt" 2>/dev/null || echo "")
+if ! echo "$pyver" | grep -q "Python 3.12"; then
+    echo "ERROR: .venv-win Python is not 3.12.x (CI requires python-version 3.12)." >&2
+    echo "Found: $pyver" >&2
+    echo "Recreate with: py -3.12 -m venv .venv-win" >&2
     status=CONFIG_ERROR
     rc=2
     exit 2
