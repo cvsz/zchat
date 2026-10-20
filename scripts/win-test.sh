@@ -11,9 +11,11 @@ case "$PWD" in
   *)
     echo "ERROR: this script must run from /mnt/<drive>/... (WSL-mounted Windows path)" >&2
     echo "Current path: $PWD" >&2
-    status=CONFIG_ERROR
-    rc=2
-    mkdir -p "reports/windows-runs/$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
+    mkdir -p "reports/windows-runs" 2>/dev/null || true
+    ts0=$(date +%Y%m%d-%H%M%S)
+    out0="reports/windows-runs/$ts0"
+    mkdir -p "$out0"
+    echo "exit=2 status=CONFIG_ERROR" > "$out0/exit.txt"
     exit 2
     ;;
 esac
@@ -32,22 +34,20 @@ trap 'write_exit' EXIT
 trap 'status=INTERRUPTED; rc=130; exit 130' INT
 trap 'status=INTERRUPTED; rc=143; exit 143' TERM
 
-# Status ordering: PASSED < FAILED < SETUP_ERROR < CRASHED < CONFIG_ERROR < INTERRUPTED
 status_rank() {
     case "$1" in
         PASSED) echo 0 ;;
-        FAILED) echo 1 ;;
-        SETUP_ERROR) echo 2 ;;
-        CRASHED) echo 3 ;;
-        CONFIG_ERROR) echo 4 ;;
-        INTERRUPTED) echo 5 ;;
-        UNVERIFIED) echo 6 ;;
+        UNVERIFIED) echo 1 ;;
+        FAILED) echo 2 ;;
+        SETUP_ERROR) echo 3 ;;
+        CRASHED) echo 4 ;;
+        CONFIG_ERROR) echo 5 ;;
+        INTERRUPTED) echo 6 ;;
         *) echo 0 ;;
     esac
 }
 
 promote_status() {
-    # promote_status <new_status>
     local new="$1"
     if [ "$(status_rank "$new")" -gt "$(status_rank "$status")" ]; then
         status="$new"
@@ -64,7 +64,6 @@ if [ ! -f "$pywin" ]; then
     exit 2
 fi
 
-# Verify .venv-win python is 3.12.x (matching CI python-version)
 winpy_abs=$(wslpath -w "$PWD/$pywin")
 tmpbat=$(mktemp /tmp/vercheck_XXXX.bat)
 printf '@echo off\r\n"%s" --version > %s\\verout.txt 2>&1\r\n' "$winpy_abs" "$winout" > "$tmpbat"
@@ -72,26 +71,9 @@ winbat=$(wslpath -w "$tmpbat")
 cmd.exe /c "$winbat" >/dev/null 2>&1
 rm -f "$tmpbat"
 pyver=$(tr -d '\r' < "$out/verout.txt" 2>/dev/null || echo "")
-if ! echo "$pyver" | grep -q "Python 3.12"; then
+if ! echo "$pyver" | grep -qE '^Python 3\.12\.'; then
     echo "ERROR: .venv-win Python is not 3.12.x (CI requires python-version 3.12)." >&2
     echo "Found: $pyver" >&2
-    echo "Recreate with: py -3.12 -m venv .venv-win" >&2
-    status=CONFIG_ERROR
-    rc=2
-    exit 2
-fi
-
-# Verify .venv-win uses non-free-threaded Python matching CI
-winpy_abs=$(wslpath -w "$PWD/$pywin")
-tmpbat=$(mktemp /tmp/gilcheck_XXXX.bat)
-printf '@echo off\r\n"%s" -c "import sys; print(getattr(sys, chr(95)+chr(95)+chr(105)+chr(115)+chr(95)+chr(103)+chr(105)+chr(108)+chr(95)+chr(101)+chr(110)+chr(97)+chr(98)+chr(108)+chr(101)+chr(100), lambda: True)())" > %s\\gilout.txt 2>&1\r\n' "$winpy_abs" "$winout" > "$tmpbat"
-winbat=$(wslpath -w "$tmpbat")
-cmd.exe /c "$winbat" >/dev/null 2>&1
-rm -f "$tmpbat"
-gil_check=$(tr -d '\r' < "$out/gilout.txt" 2>/dev/null || echo "")
-if [ "$gil_check" != "True" ]; then
-    echo "ERROR: .venv-win Python is free-threaded (GIL disabled) or version mismatch." >&2
-    echo "Expected non-free-threaded Python 3.12 (CI version). Got: $gil_check" >&2
     echo "Recreate with: py -3.12 -m venv .venv-win" >&2
     status=CONFIG_ERROR
     rc=2
@@ -105,14 +87,13 @@ status=PASSED
 for f in windows_tests/*.py; do
     [ -f "$f" ] || continue
     echo "=== Running $f ===" | tee -a "$out/console.log"
-    tmplog="$out/$(basename "$f").log"
     tmpbat=$(mktemp /tmp/runfile_XXXX.bat)
-    printf '@echo off\r\n"%s" -X faulthandler -m pytest %s -rs -v --basetemp=%s/basetemp > %s 2>&1\r\n' "$winpy_abs" "$f" "$winout" "$winout/$(basename "$f").log" > "$tmpbat"
+    printf '@echo off\r\n"%s" -X faulthandler -m pytest %s -rs -v --basetemp=%s/basetemp > %s/%s.log 2>&1\r\n' "$winpy_abs" "$f" "$winout" "$winout" "$(basename "$f")" > "$tmpbat"
     winbat=$(wslpath -w "$tmpbat")
     timeout 300 cmd.exe /c "cd /d $winrepo && $winbat" >/dev/null 2>&1
     file_rc=$?
-    # append per-file log to console.log
     cat "$out/$(basename "$f").log" >> "$out/console.log" 2>/dev/null
+    cat "$out/$(basename "$f").log" 2>/dev/null
     echo "exit=$file_rc for $f" | tee -a "$out/console.log"
 
     if grep -qi "Fatal Python error\|Windows fatal exception" "$out/$(basename "$f").log" 2>/dev/null; then
@@ -123,6 +104,8 @@ for f in windows_tests/*.py; do
         continue
     fi
     if [ "$file_rc" -eq 124 ]; then
+        # timeout: kill child python process tree
+        cmd.exe /c "taskkill /T /F /IM python.exe" >/dev/null 2>&1 || true
         echo "CRASHED: timeout in $f" | tee -a "$out/console.log"
         promote_status "CRASHED"
         rc=124
@@ -132,6 +115,7 @@ for f in windows_tests/*.py; do
         promote_status "FAILED"
         rc=$file_rc
     fi
+    rm -f "$tmpbat"
 done
 
 # Run tests/ (root test suite, excluding live tests)
@@ -142,6 +126,7 @@ winbat2=$(wslpath -w "$tmpbat2")
 timeout 600 cmd.exe /c "cd /d $winrepo && $winbat2" >/dev/null 2>&1
 file_rc=$?
 cat "$out/tests_console.log" >> "$out/console.log" 2>/dev/null
+cat "$out/tests_console.log" 2>/dev/null
 echo "exit=$file_rc for tests/" | tee -a "$out/console.log"
 
 if grep -qi "Fatal Python error\|Windows fatal exception" "$out/tests_console.log" 2>/dev/null; then
@@ -150,35 +135,37 @@ if grep -qi "Fatal Python error\|Windows fatal exception" "$out/tests_console.lo
     promote_status "CRASHED"
     rc=1
 elif [ "$file_rc" -eq 124 ]; then
+    cmd.exe /c "taskkill /T /F /IM python.exe" >/dev/null 2>&1 || true
     promote_status "CRASHED"
     rc=124
 elif [ "$file_rc" -ne 0 ] && [ "$file_rc" -ne 5 ]; then
     promote_status "FAILED"
     rc=$file_rc
 fi
+rm -f "$tmpbat2"
 
 # Parse junit.xml with Windows venv python
 if [ -f "$out/junit.xml" ]; then
-    tmpbat3=$(mktemp /tmp/parsexml_XXXX.bat)
-    printf '@echo off\r\n"%s" -c "import xml.etree.ElementTree as ET; t=ET.parse(chr(39)+chr(39).join([chr(39),chr(39)]).replace(chr(39)+chr(39),chr(39)+%s+chr(39))) if False else None" 2>nul\r\n' "$winpy_abs" > "$tmpbat3"
-    # Simpler: write a temp Python script
-    rm -f "$tmpbat3"
     tmp_py=$(mktemp /tmp/parsexml_XXXX.py)
     cat > "$tmp_py" <<'PYEOF'
 import xml.etree.ElementTree as ET, sys
 try:
     t = ET.parse(sys.argv[1])
     r = t.getroot()
-    print(r.get("errors", "MISSING"))
-except Exception as e:
+    total = 0
+    for ts in r.iter("testsuite"):
+        total += int(ts.get("errors", "0"))
+    print(total)
+except Exception:
     print("MISSING")
 PYEOF
-    winpy_abs=$(wslpath -w "$PWD/$pywin")
     winpy_script=$(wslpath -w "$tmp_py")
     winjunit=$(wslpath -w "$out/junit.xml")
-    cmd.exe /c "\"$winpy_abs\" \"$winpy_script\" \"$winjunit\"" > "$out/errout.txt" 2>&1
-    rm -f "$tmp_py"
-    errors=$(tr -d '\r' < "$out/errout.txt" 2>/dev/null | tail -1 || echo "")
+    tmpbat3=$(mktemp /tmp/parsexml_XXXX.bat)
+    printf '@echo off\r\n"%s" "%s" "%s" > %s/errout.txt 2>&1\r\n' "$winpy_abs" "$winpy_script" "$winjunit" "$winout" > "$tmpbat3"
+    winbat3=$(wslpath -w "$tmpbat3")
+    cmd.exe /c "$winbat3" >/dev/null 2>&1
+    rm -f "$tmpbat3" "$tmp_py"
     errors=$(tr -d '\r' < "$out/errout.txt" 2>/dev/null | tail -1 || echo "")
     if [ "$errors" = "MISSING" ] || [ -z "$errors" ]; then
         echo "ERRORS=UNVERIFIED (junit.xml parse failed)" | tee -a "$out/console.log"
