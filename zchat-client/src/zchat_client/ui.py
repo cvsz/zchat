@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import queue
 import sys
 import time
@@ -197,7 +198,9 @@ TEXT = {
 
 def _application_icon_path() -> Path:
     if getattr(sys, "frozen", False):
-        bundle_root = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+        bundle_root = Path(
+            getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent)
+        )
     else:
         bundle_root = Path(__file__).resolve().parents[2]
     return bundle_root / "app.ico"
@@ -418,7 +421,9 @@ class AgentChatWindow:
 
         self.token_label = ttk.Label(self.connection)
         self.token_label.grid(row=1, column=0, sticky=tk.W, padx=(0, 8))
-        self.token_entry = ttk.Entry(self.connection, textvariable=self.agent_token, show="*")
+        self.token_entry = ttk.Entry(
+            self.connection, textvariable=self.agent_token, show="*"
+        )
         self.token_entry.grid(row=1, column=1, sticky=tk.EW, pady=3)
 
         self.connect_button = ttk.Button(
@@ -430,20 +435,34 @@ class AgentChatWindow:
 
         status_row = ttk.Frame(container)
         status_row.pack(fill=tk.X, pady=(8, 8))
-        ttk.Label(status_row, textvariable=self.status, style="Status.TLabel").pack(side=tk.LEFT)
+        ttk.Label(status_row, textvariable=self.status, style="Status.TLabel").pack(
+            side=tk.LEFT
+        )
         ttk.Label(status_row, textvariable=self.assignment).pack(side=tk.RIGHT)
 
-        self.membership_frame = ttk.Frame(container, style="Membership.TFrame", padding=(10, 7))
+        self.membership_frame = ttk.Frame(
+            container, style="Membership.TFrame", padding=(10, 7)
+        )
         self.membership_frame.pack(fill=tk.X, pady=(0, 8))
         self.membership_frame.columnconfigure(0, weight=1)
-        self.membership_title = ttk.Label(self.membership_frame, style="MembershipTitle.TLabel")
+        self.membership_title = ttk.Label(
+            self.membership_frame, style="MembershipTitle.TLabel"
+        )
         self.membership_title.grid(row=0, column=0, sticky=tk.W)
         self.membership_badge = ttk.Label(self.membership_frame)
         self.membership_badge.grid(row=0, column=1, sticky=tk.E)
-        self.membership_detail = ttk.Label(self.membership_frame, style="MembershipDetail.TLabel")
-        self.membership_detail.grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=(4, 0))
-        self.membership_disclaimer = ttk.Label(self.membership_frame, style="MembershipHint.TLabel")
-        self.membership_disclaimer.grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=(2, 0))
+        self.membership_detail = ttk.Label(
+            self.membership_frame, style="MembershipDetail.TLabel"
+        )
+        self.membership_detail.grid(
+            row=1, column=0, columnspan=2, sticky=tk.W, pady=(4, 0)
+        )
+        self.membership_disclaimer = ttk.Label(
+            self.membership_frame, style="MembershipHint.TLabel"
+        )
+        self.membership_disclaimer.grid(
+            row=2, column=0, columnspan=2, sticky=tk.W, pady=(2, 0)
+        )
 
         self.transcript_frame = ttk.LabelFrame(container, padding=6)
         self.transcript_frame.pack(fill=tk.BOTH, expand=True)
@@ -518,8 +537,12 @@ class AgentChatWindow:
             borderwidth=1,
             relief=tk.SOLID,
         )
-        self.context_menu.add_command(label="Cut", command=lambda: self._context_action("cut"))
-        self.context_menu.add_command(label="Copy", command=lambda: self._context_action("copy"))
+        self.context_menu.add_command(
+            label="Cut", command=lambda: self._context_action("cut")
+        )
+        self.context_menu.add_command(
+            label="Copy", command=lambda: self._context_action("copy")
+        )
         self.context_menu.add_command(
             label="Paste",
             command=lambda: self._context_action("paste"),
@@ -564,7 +587,9 @@ class AgentChatWindow:
         self.server_label.configure(text=self._text("server_url"))
         self.token_label.configure(text=self._text("agent_token"))
         self.connect_button.configure(
-            text=self._text("disconnect" if self.worker and self.worker.is_alive else "connect")
+            text=self._text(
+                "disconnect" if self.worker and self.worker.is_alive else "connect"
+            )
         )
         self.message_label.configure(text=self._text("message"))
         self.send_button.configure(text=self._text("send"))
@@ -591,8 +616,12 @@ class AgentChatWindow:
     def _set_membership(self, data: dict[str, Any] | None = None) -> None:
         data = data or {}
         self._membership_tier = data.get("subscription_tier", "unknown")
-        self._membership_source = data.get("subscription_source", "baseline_not_recorded")
-        self._membership_evidence_source = data.get("subscription_evidence_source", "unknown")
+        self._membership_source = data.get(
+            "subscription_source", "baseline_not_recorded"
+        )
+        self._membership_evidence_source = data.get(
+            "subscription_evidence_source", "unknown"
+        )
         self._membership_expires_at = data.get("subscription_expires_at")
         self._render_membership()
 
@@ -617,7 +646,9 @@ class AgentChatWindow:
             "baseline_not_recorded": "record_baseline_not_recorded",
             "baseline_unverified": "record_baseline_unverified",
         }
-        tier = self._membership_tier if self._membership_tier in tier_keys else "unknown"
+        tier = (
+            self._membership_tier if self._membership_tier in tier_keys else "unknown"
+        )
         evidence = (
             self._membership_evidence_source
             if self._membership_evidence_source in evidence_keys
@@ -817,7 +848,9 @@ class AgentChatWindow:
                     diagnostic=diagnostic,
                 )
             else:
-                error_type = data.get("error_type") or self._error_type(data.get("message"))
+                error_type = data.get("error_type") or self._error_type(
+                    data.get("message")
+                )
                 message = self._text("session_stopped", error_type=error_type)
             self._set_status("error", message=message)
             self._append_entry(self._text("speaker_status"), message)
@@ -1014,7 +1047,9 @@ class AgentChatWindow:
         if self.context_target is not None:
             self._perform_edit_action(self.context_target, action)
 
-    def _place_cursor_for_context(self, widget: tk.Widget, event: tk.Event[Any]) -> None:
+    def _place_cursor_for_context(
+        self, widget: tk.Widget, event: tk.Event[Any]
+    ) -> None:
         selection = self._selection(widget)
         try:
             if self._widget_class(widget) == "Text":
@@ -1054,13 +1089,17 @@ class AgentChatWindow:
         masked = self._is_masked(widget)
         self.context_menu.entryconfigure(
             0,
-            state=tk.NORMAL if selection is not None and editable and not masked else tk.DISABLED,
+            state=tk.NORMAL
+            if selection is not None and editable and not masked
+            else tk.DISABLED,
         )
         self.context_menu.entryconfigure(
             1,
             state=tk.NORMAL if selection is not None and not masked else tk.DISABLED,
         )
-        self.context_menu.entryconfigure(2, state=tk.NORMAL if editable else tk.DISABLED)
+        self.context_menu.entryconfigure(
+            2, state=tk.NORMAL if editable else tk.DISABLED
+        )
         self.context_menu.entryconfigure(4, state=tk.NORMAL)
         try:
             self.context_menu.tk_popup(event.x_root, event.y_root)
@@ -1087,6 +1126,7 @@ SHELL_TEXT = {
         "nav_monitor": "Process Monitor",
         "nav_private_chat": "Private Chat",
         "nav_status": "Status Changer",
+        "nav_keep_log": "Keep Log",
     },
     "th": {
         "title": "ZChat Client",
@@ -1094,6 +1134,7 @@ SHELL_TEXT = {
         "nav_monitor": "Process Monitor",
         "nav_private_chat": "แชตส่วนตัว",
         "nav_status": "เปลี่ยนสถานะ",
+        "nav_keep_log": "บันทึก Keep",
     },
 }
 
@@ -1105,7 +1146,7 @@ class UnifiedClientWindow:
     feature executables are not launched by the unified client.
     """
 
-    PAGES = ("agent", "monitor", "private_chat", "status")
+    PAGES = ("agent", "monitor", "private_chat", "status", "keep_log")
 
     def __init__(
         self,
@@ -1146,7 +1187,9 @@ class UnifiedClientWindow:
         agent_host = ttk.Frame(self.container)
         self.agent_page = AgentChatWindow(agent_host, language=self.language)
         self.pages["agent"] = agent_host
-        self.monitor_page = ProcessMonitorPage(self.container, get_language=self.language.get)
+        self.monitor_page = ProcessMonitorPage(
+            self.container, get_language=self.language.get
+        )
         self.pages["monitor"] = self.monitor_page
         # The standalone manager configures its host's background directly.
         self.private_host = tk.Frame(self.container, background=PALETTE["background"])
@@ -1154,6 +1197,10 @@ class UnifiedClientWindow:
         # The shared Status Changer applies a Tk frame background directly.
         self.status_host = tk.Frame(self.container, background=PALETTE["background"])
         self.pages["status"] = self.status_host
+        # Keep Log page: friend list status and kept log.
+        self.keep_log_host = tk.Frame(self.container, background=PALETTE["background"])
+        self.pages["keep_log"] = self.keep_log_host
+        self._build_keep_log_page(self.keep_log_host)
 
         self.language.trace_add("write", lambda *_: self._apply_shell_language())
         self._current: str | None = None
@@ -1177,7 +1224,129 @@ class UnifiedClientWindow:
         self.nav_buttons["monitor"].configure(text=table["nav_monitor"])
         self.nav_buttons["private_chat"].configure(text=table["nav_private_chat"])
         self.nav_buttons["status"].configure(text=table["nav_status"])
+        self.nav_buttons["keep_log"].configure(text=table["nav_keep_log"])
         self.monitor_page.apply_language()
+
+    def _build_keep_log_page(self, host: tk.Frame) -> None:
+        host.pack_propagate(False)
+        title = tk.Label(
+            host,
+            text="Keep Log",
+            background=PALETTE["background"],
+            foreground=PALETTE["text"],
+            font=("Segoe UI", 12, "bold"),
+        )
+        title.pack(anchor=tk.W, padx=8, pady=(8, 4))
+        body = tk.Frame(host, background=PALETTE["background"])
+        body.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
+
+        form = tk.Frame(body, background=PALETTE["background"])
+        form.pack(fill=tk.X, pady=(0, 8))
+        tk.Label(
+            form,
+            text="Friend",
+            background=PALETTE["background"],
+            foreground=PALETTE["text"],
+        ).grid(row=0, column=0, sticky=tk.W, padx=(0, 6))
+        self.keep_log_friend_entry = tk.Entry(form, width=24)
+        self.keep_log_friend_entry.grid(row=0, column=1, sticky=tk.W, padx=(0, 12))
+        tk.Label(
+            form,
+            text="Status",
+            background=PALETTE["background"],
+            foreground=PALETTE["text"],
+        ).grid(row=0, column=2, sticky=tk.W, padx=(0, 6))
+        self.keep_log_status_entry = tk.Entry(form, width=24)
+        self.keep_log_status_entry.grid(row=0, column=3, sticky=tk.W, padx=(0, 12))
+        keep_button = tk.Button(form, text="Keep Log", command=self._keep_log_entry)
+        keep_button.grid(row=0, column=4, sticky=tk.W, padx=(0, 6))
+        discovery_button = tk.Button(
+            form, text="Discovery", command=self._discovery_entry
+        )
+        discovery_button.grid(row=0, column=5, sticky=tk.W)
+
+        friend_label = tk.Label(
+            body,
+            text="Friend list status",
+            background=PALETTE["background"],
+            foreground=PALETTE["text"],
+        )
+        friend_label.pack(anchor=tk.W)
+        self.keep_log_friends = tk.Listbox(body, height=8)
+        self.keep_log_friends.pack(fill=tk.X, pady=(2, 8))
+
+        log_label = tk.Label(
+            body,
+            text="Kept log",
+            background=PALETTE["background"],
+            foreground=PALETTE["text"],
+        )
+        log_label.pack(anchor=tk.W)
+        self.keep_log_text = tk.Text(body, height=10, state=tk.DISABLED)
+        self.keep_log_text.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
+        self._keep_log_path = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / ".zchat")) / "ZChat" / "keep_log.txt"
+        self._load_keep_log()
+
+    def _load_keep_log(self) -> None:
+        try:
+            if self._keep_log_path.exists():
+                try:
+                    content = self._keep_log_path.read_text(encoding="utf-8")
+                except UnicodeDecodeError:
+                    stamp = datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%z")
+                    quarantined = self._keep_log_path.with_name(
+                        f"keep_log.corrupt-{stamp}"
+                    )
+                    try:
+                        shutil.move(str(self._keep_log_path), str(quarantined))
+                    except OSError:
+                        pass
+                    messagebox.showwarning(
+                        "Keep Log",
+                        "keep_log.txt contained invalid UTF-8 and was quarantined. "
+                        "A new log will be started.",
+                    )
+                    return
+                self.keep_log_text.configure(state=tk.NORMAL)
+                self.keep_log_text.insert(tk.END, content)
+                self.keep_log_text.see(tk.END)
+                self.keep_log_text.configure(state=tk.DISABLED)
+        except OSError:
+            pass
+
+    def _append_keep_log_file(self, entry: str) -> bool:
+        try:
+            self._keep_log_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._keep_log_path.open("a", encoding="utf-8") as f:
+                f.write(entry + "\n")
+        except OSError as exc:
+            messagebox.showerror("Keep Log", f"Could not save log: {exc}")
+            return False
+        return True
+
+    def _keep_log_entry(self) -> None:
+        friend = self.keep_log_friend_entry.get().strip()
+        status = self.keep_log_status_entry.get().strip()
+        if not friend or not status:
+            return
+        timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+        entry = f"[{timestamp}] {friend}: {status}"
+        if not self._append_keep_log_file(entry):
+            return
+        self.keep_log_friends.insert(tk.END, f"{friend} - {status}")
+        self.keep_log_text.configure(state=tk.NORMAL)
+        self.keep_log_text.insert(tk.END, entry + "\n")
+        self.keep_log_text.see(tk.END)
+        self.keep_log_text.configure(state=tk.DISABLED)
+        self.keep_log_friend_entry.delete(0, tk.END)
+        self.keep_log_status_entry.delete(0, tk.END)
+
+    def _discovery_entry(self) -> None:
+        """Do not confuse a typed friend name with a verified Camfrog observation."""
+        messagebox.showwarning(
+            "Discovery unavailable",
+            "Real Camfrog friend-list observation is not implemented. No status has been verified.",
+        )
 
     def show_page(self, name: str) -> None:
         """Display one page; unknown names fail closed on the current page."""
