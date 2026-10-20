@@ -21,6 +21,8 @@ class EvidenceTransport:
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        if timeout <= 0 or max_retries < 0:
+            raise ValueError("timeout must be positive and max_retries non-negative")
         self.max_retries = max_retries
 
     def submit(
@@ -32,7 +34,10 @@ class EvidenceTransport:
         attempt = 0
         last: TransportResult | None = None
         while attempt <= self.max_retries:
-            last = sender(self.base_url + path, payload, self.timeout)
+            try:
+                last = sender(self.base_url + path, payload, self.timeout)
+            except (OSError, TimeoutError, ConnectionError) as exc:
+                last = TransportResult(ok=False, error=type(exc).__name__)
             if last.ok:
                 return last
             attempt += 1
