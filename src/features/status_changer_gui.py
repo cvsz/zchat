@@ -89,6 +89,7 @@ def _unverified_status_test_submit_enabled():
     """Enable the opt-in local test route without changing strict capability claims."""
     return os.environ.get(UNVERIFIED_STATUS_TEST_ENV, "").strip() == "1"
 
+
 # Standalone executables can pin runtime state to their own directory. Status
 # workers use ZCFATO_DATA_DIR, which takes precedence over the GUI app directory.
 if os.environ.get("ZCFATO_DATA_DIR"):
@@ -108,6 +109,7 @@ def _application_icon_path() -> Path:
     else:
         candidates.append(_source_base() / "app.ico")
     return next((path for path in candidates if path.is_file()), candidates[0])
+
 
 # Nickname regex: Unicode word chars + space . - (Camfrog allows Thai in nicknames).
 # LINE_RE nick capture is permissive; validation happens via NICK_RE.
@@ -194,7 +196,10 @@ S = {
         "control not found: {spec} (matches={n})",
         "ไม่พบ control: {spec} (พบ {n} รายการ)",
     ),
-    "status_set": ("status submission dispatched (provider outcome unverified): {text}", "ส่งคำสั่ง status แล้ว (ยังไม่ยืนยันผลจาก Camfrog): {text}"),
+    "status_set": (
+        "status submission dispatched (provider outcome unverified): {text}",
+        "ส่งคำสั่ง status แล้ว (ยังไม่ยืนยันผลจาก Camfrog): {text}",
+    ),
     "bg_status_client_confirmed": (
         "Camfrog client shows the status (external state unverified): {text}",
         "หน้าต่าง Camfrog แสดงสถานะนี้แล้ว (ยังไม่ยืนยันสถานะภายนอก): {text}",
@@ -1481,8 +1486,16 @@ class UserActivityGuard:
     Windows only: elsewhere `user_idle_ms()` is None and the guard never blocks.
     """
 
-    def __init__(self, idle_ms=None, poll=0.25, max_wait=120.0, tick=None,
-                 last_input=None, sleep=None, clock=None):
+    def __init__(
+        self,
+        idle_ms=None,
+        poll=0.25,
+        max_wait=120.0,
+        tick=None,
+        last_input=None,
+        sleep=None,
+        clock=None,
+    ):
         if idle_ms is None:
             try:
                 idle_ms = int(os.environ.get("ZCHAT_USER_IDLE_MS", "2000"))
@@ -1546,7 +1559,7 @@ class UserActivityGuard:
             if not self._is_own(last):
                 self._user_tick = last
             if self._user_tick is None:
-                return 10 ** 9  # only our own input seen so far
+                return 10**9  # only our own input seen so far
             return (self._tick() - self._user_tick) & 0xFFFFFFFF
         except Exception:
             return None
@@ -1561,7 +1574,9 @@ class UserActivityGuard:
             idle = self.user_idle_ms()
             if idle is None:
                 if os.name == "nt":
-                    log.error("Cannot verify Windows user activity; refusing desktop input injection")
+                    log.error(
+                        "Cannot verify Windows user activity; refusing desktop input injection"
+                    )
                     return False
                 return True
             if idle >= self.idle_ms:
@@ -1569,7 +1584,9 @@ class UserActivityGuard:
             if self._clock() >= deadline:
                 return False
             if not noted:
-                log.info("User is active; deferring input injection until the desktop is idle")
+                log.info(
+                    "User is active; deferring input injection until the desktop is idle"
+                )
                 noted = True
             self._sleep(self.poll)
 
@@ -1595,7 +1612,9 @@ def _injects_global_input(bound) -> bool:
         return True
     if bound.get("apply_btn") is not None:
         return True
-    if bound.get("background_enter_target") == "combo" or not bound.get("require_fg", True):
+    if bound.get("background_enter_target") == "combo" or not bound.get(
+        "require_fg", True
+    ):
         return False
     return True
 
@@ -1603,6 +1622,7 @@ def _injects_global_input(bound) -> bool:
 def commit(*args, **kwargs) -> bool:
     """Gate `_commit_impl` so input-injecting sends never run while the user is active."""
     import inspect
+
     bound = inspect.signature(_commit_impl).bind(*args, **kwargs)
     bound.apply_defaults()
     if not _injects_global_input(bound.arguments):
@@ -1611,6 +1631,8 @@ def commit(*args, **kwargs) -> bool:
         log.error("Deferred: user stayed active; not taking over mouse/keyboard")
         return False
     return USER_GUARD.run(_commit_impl, *args, **kwargs)
+
+
 # --- end user-activity guard ---
 
 
@@ -1644,11 +1666,15 @@ def _commit_impl(
     user32 = ctypes.windll.user32
     foreground = user32.GetForegroundWindow()
     window_is_foreground = foreground == getattr(win, "handle", None)
-    if apply_btn is None and not window_is_foreground and (
-        background_if_not_foreground
-        or not require_fg
-        or background_enter_target == "combo"
-        or execution_mode == "best_effort_background"
+    if (
+        apply_btn is None
+        and not window_is_foreground
+        and (
+            background_if_not_foreground
+            or not require_fg
+            or background_enter_target == "combo"
+            or execution_mode == "best_effort_background"
+        )
     ):
         log.error(
             "Refusing targeted background status submit: Camfrog can activate "
@@ -2155,7 +2181,9 @@ def wait_for_worker_start_gate():
     while not gate.exists() and time.monotonic() < deadline:
         time.sleep(0.05)
     if not gate.exists():
-        log.error("Worker start authorization was not received; exiting before status work.")
+        log.error(
+            "Worker start authorization was not received; exiting before status work."
+        )
         return False
     try:
         gate.unlink()
@@ -2192,7 +2220,10 @@ def _wait_for_worker_registration(cfg, process, log_path, emit):
         if process.poll() is not None:
             if launcher_exit_at is None:
                 launcher_exit_at = time.monotonic()
-            elif time.monotonic() - launcher_exit_at >= WORKER_LAUNCHER_EXIT_GRACE_SECONDS:
+            elif (
+                time.monotonic() - launcher_exit_at
+                >= WORKER_LAUNCHER_EXIT_GRACE_SECONDS
+            ):
                 break
         time.sleep(0.1)
 
@@ -3365,11 +3396,13 @@ def _strict_status_start_blocked(cfg, emit=print):
         supported = False
     if supported:
         return False
-    emit(t(
-        "bg_status_failed",
-        state="BACKGROUND_UNSUPPORTED",
-        code="STRICT_SUBMIT_UNVERIFIED",
-    ))
+    emit(
+        t(
+            "bg_status_failed",
+            state="BACKGROUND_UNSUPPORTED",
+            code="STRICT_SUBMIT_UNVERIFIED",
+        )
+    )
     return True
 
 
@@ -4244,8 +4277,7 @@ def cli_main(argv=None, force_strict_background=False):
         if (
             force_strict_background
             and APP_PROFILE == "status"
-            and cfg.get("status", {}).get("execution_mode")
-            != "best_effort_background"
+            and cfg.get("status", {}).get("execution_mode") != "best_effort_background"
             and not _unverified_status_test_submit_enabled()
         ):
             # Preserve the explicit best-effort choice made in the Status
@@ -5262,7 +5294,9 @@ def cmd_start(cfg, args):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     registered = read_pid(cfg)
     if registered and pid_alive(registered):
-        print(f"Existing worker PID {registered} is alive but could not be verified; refusing another start.")
+        print(
+            f"Existing worker PID {registered} is alive but could not be verified; refusing another start."
+        )
         return 1
     pid_path(cfg).unlink(missing_ok=True)
     start_gate = worker_start_gate_path(cfg)
@@ -5361,7 +5395,9 @@ def cmd_start_worker(cfg, args, report=None):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     registered = read_pid(cfg)
     if registered and pid_alive(registered):
-        emit(f"Existing worker PID {registered} is alive but could not be verified; refusing another start.")
+        emit(
+            f"Existing worker PID {registered} is alive but could not be verified; refusing another start."
+        )
         return 1
     pid_path(cfg).unlink(missing_ok=True)
     start_gate = worker_start_gate_path(cfg)
@@ -5848,8 +5884,13 @@ def build_app():
             self.scroll_frames = tk.BooleanVar(
                 value=bool(self.config["status"]["marquee"].get("scroll", False))
             )
-            initial_submit_mode = self.config["status"].get("execution_mode", "strict_background")
-            if initial_submit_mode not in ("strict_background", "best_effort_background"):
+            initial_submit_mode = self.config["status"].get(
+                "execution_mode", "strict_background"
+            )
+            if initial_submit_mode not in (
+                "strict_background",
+                "best_effort_background",
+            ):
                 initial_submit_mode = "strict_background"
             self.execution_mode = tk.StringVar(value=initial_submit_mode)
             self.live_send = tk.BooleanVar(value=not self.config.get("dry_run", True))
@@ -5922,11 +5963,13 @@ def build_app():
                 self.config_path = self.config_paths[mode]
                 self.config = load_cfg(self.config_path)
                 self.live_send.set(not self.config.get("dry_run", True))
-                submit_mode = self.config["status"].get("execution_mode", "strict_background")
+                submit_mode = self.config["status"].get(
+                    "execution_mode", "strict_background"
+                )
                 self.execution_mode.set(
-                    submit_mode if submit_mode in (
-                        "strict_background", "best_effort_background"
-                    ) else "strict_background"
+                    submit_mode
+                    if submit_mode in ("strict_background", "best_effort_background")
+                    else "strict_background"
                 )
                 status = self.config["status"]
                 if mode == "random":
@@ -6258,7 +6301,10 @@ def build_app():
                 style="Hint.TLabel",
             ).pack(side="left", padx=(8, 3))
             ttk.Combobox(
-                options, textvariable=self.execution_mode, state="readonly", width=24,
+                options,
+                textvariable=self.execution_mode,
+                state="readonly",
+                width=24,
                 values=("strict_background", "best_effort_background"),
             ).pack(side="left")
             self.execution_mode.trace_add("write", self.schedule_save)
@@ -6268,7 +6314,8 @@ def build_app():
                     "Best-effort uses combo-post; Camfrog may flash or take focus. Strict currently refuses.",
                     "Best-effort ใช้ combo-post; Camfrog อาจกระพริบหรือแย่งโฟกัส ส่วน Strict ยังปฏิเสธการส่ง",
                 ),
-                style="Hint.TLabel", wraplength=420,
+                style="Hint.TLabel",
+                wraplength=420,
             ).pack(fill="x", pady=(0, 5))
             self._build_actions(outer)
             ttk.Label(
@@ -6880,7 +6927,9 @@ def build_app():
                     except Exception as exc:
                         failures.append(f"{mode}: {type(exc).__name__}: {exc}")
                 if failures:
-                    raise RuntimeError("Control discovery failed (" + "; ".join(failures) + ")")
+                    raise RuntimeError(
+                        "Control discovery failed (" + "; ".join(failures) + ")"
+                    )
                 self.config = load_cfg(self.config_path)
                 return 0
 
