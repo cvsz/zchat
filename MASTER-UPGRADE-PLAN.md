@@ -159,4 +159,9 @@ PYTHON=$(pwd)/venv/bin/python make ci   # must exit 0
 ```
 
 > [!IMPORTANT]
-> After `make ci` passes clean, create PR → reviewer approval (policedbc) → merge (cvsz).
+> After `make ci` passes clean, create PR → reviewer approval → merge (cvsz).
+>
+> Note: Approving through a second GitHub account controlled by the same person is **not**
+> independent review. True independence requires a different individual. If only one
+> person is available, label the gate as "self-review (not independent)" and do not
+> claim the independent-review gate is satisfied.
