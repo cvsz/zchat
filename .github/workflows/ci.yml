@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with: { python-version: "${{ matrix.python-version }}" }
-      - uses: actions/cache@0057852b8a8c7e9a7402f59b99f63c3a68e57969 # v4.3.0
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: pip-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('requirements*.txt', 'zchat-client/requirements*.txt', 'control-server/pyproject.toml') }}
@@ -56,7 +56,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with: { python-version: "3.12" }
-      - uses: actions/cache@0057852b8a8c7e9a7402f59b99f63c3a68e57969 # v4.3.0
+      - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: pip-cs-${{ runner.os }}-${{ hashFiles('control-server/pyproject.toml') }}
