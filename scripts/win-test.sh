@@ -103,7 +103,10 @@ for f in windows_tests/*.py; do
         continue
     fi
     if [ "$file_rc" -eq 124 ]; then
-        cmd.exe /c "taskkill /T /F /PID $cmd_pid" >/dev/null 2>&1 || true
+        pids=$(powershell.exe -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { \$_.CommandLine -like '*$winout*' } | ForEach-Object { \$_.ProcessId }" 2>/dev/null | tr -d '\r' | grep -E '^[0-9]+$' || true)
+        for pid in $pids; do
+            cmd.exe /c "taskkill /T /F /PID $pid" >/dev/null 2>&1 || true
+        done
         echo "CRASHED: timeout in $f" | tee -a "$out/console.log"
         promote_status "CRASHED"
         rc=124
@@ -132,6 +135,10 @@ if grep -qi "Fatal Python error\|Windows fatal exception" "$out/tests_console.lo
     promote_status "CRASHED"
     rc=1
 elif [ "$file_rc" -eq 124 ]; then
+    pids=$(powershell.exe -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { \$_.CommandLine -like '*$winout*' } | ForEach-Object { \$_.ProcessId }" 2>/dev/null | tr -d '\r' | grep -E '^[0-9]+$' || true)
+    for pid in $pids; do
+        cmd.exe /c "taskkill /T /F /PID $pid" >/dev/null 2>&1 || true
+    done
     promote_status "CRASHED"
     rc=124
 elif [ "$file_rc" -ne 0 ] && [ "$file_rc" -ne 5 ]; then
