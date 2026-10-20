@@ -88,11 +88,10 @@ for f in windows_tests/*.py; do
     [ -f "$f" ] || continue
     echo "=== Running $f ===" | tee -a "$out/console.log"
     tmpbat=$(mktemp /tmp/runfile_XXXX.bat)
-    printf '@echo off\r\n"%s" -X faulthandler -m pytest %s -rs -v --basetemp=%s/basetemp > %s/%s.log 2>&1\r\n' "$winpy_abs" "$f" "$winout" "$winout" "$(basename "$f")" > "$tmpbat"
+    printf '@echo off\r\n"%s" -X faulthandler -m pytest %s -rs -v --basetemp=%s/basetemp 2>&1\r\n' "$winpy_abs" "$f" "$winout" > "$tmpbat"
     winbat=$(wslpath -w "$tmpbat")
-    timeout 300 cmd.exe /c "cd /d $winrepo && $winbat" 2>&1 | tee -a "$out/console.log"
+    timeout 300 cmd.exe /c "cd /d $winrepo && $winbat" 2>&1 | tee "$out/$(basename "$f").log" | tee -a "$out/console.log"
     file_rc=${PIPESTATUS[0]}
-    cat "$out/$(basename "$f").log" 2>/dev/null | tee -a "$out/console.log" >/dev/null
     echo "exit=$file_rc for $f" | tee -a "$out/console.log"
 
     if grep -qi "Fatal Python error\|Windows fatal exception" "$out/$(basename "$f").log" 2>/dev/null; then
@@ -122,11 +121,10 @@ done
 # Run tests/ (root test suite, excluding live tests)
 echo "=== Running tests/ (excluding live) ===" | tee -a "$out/console.log"
 tmpbat2=$(mktemp /tmp/runtests_XXXX.bat)
-printf '@echo off\r\n"%s" -X faulthandler -m pytest tests -rs -v -m "not live" --basetemp=%s/basetemp --junitxml=%s/junit.xml --log-file=%s/pytest.log --log-file-level=DEBUG > %s/tests_console.log 2>&1\r\n' "$winpy_abs" "$winout" "$winout" "$winout" "$winout" > "$tmpbat2"
+    printf '@echo off\r\n"%s" -X faulthandler -m pytest tests -rs -v -m "not live" --basetemp=%s/basetemp --junitxml=%s/junit.xml --log-file=%s/pytest.log --log-file-level=DEBUG 2>&1\r\n' "$winpy_abs" "$winout" "$winout" "$winout" > "$tmpbat2"
 winbat2=$(wslpath -w "$tmpbat2")
-timeout 600 cmd.exe /c "cd /d $winrepo && $winbat2" 2>&1 | tee -a "$out/console.log"
+    timeout 600 cmd.exe /c "cd /d $winrepo && $winbat2" 2>&1 | tee "$out/tests_console.log" | tee -a "$out/console.log"
 file_rc=${PIPESTATUS[0]}
-cat "$out/tests_console.log" >> "$out/console.log" 2>/dev/null
 echo "exit=$file_rc for tests/" | tee -a "$out/console.log"
 
 if grep -qi "Fatal Python error\|Windows fatal exception" "$out/tests_console.log" 2>/dev/null; then
