@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
 
 def create_run_dir(base: Path, run_id: str) -> Path:
-    run_dir = base / run_id
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", run_id):
+        raise ValueError("Invalid evidence run ID")
+    root = base.resolve()
+    run_dir = (root / run_id).resolve()
+    if run_dir.parent != root:
+        raise ValueError("Evidence run ID escapes root")
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "primary").mkdir(exist_ok=True)
     (run_dir / "secondary" / "screenshots").mkdir(parents=True, exist_ok=True)
