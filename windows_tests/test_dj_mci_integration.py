@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import camfrog_music_gui as c
 
 
+@pytest.mark.live
 def test_dj_windows_mci_reads_wav_duration_or_reports_missing_output_device(
     tmp_path, caplog
 ):
