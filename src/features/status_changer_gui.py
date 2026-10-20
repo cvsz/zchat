@@ -5092,7 +5092,7 @@ def clean_worker_log_at_noon(now=None, handlers=None):
     return tuple(cleaned)
 
 
-def write_activity_log(mode, message):
+def write_activity_log(mode, message, **details):
     """Append a credential-free GUI event to the combined app activity log."""
     try:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -5101,7 +5101,17 @@ def write_activity_log(mode, message):
         safe_message = " ".join(
             str(message).replace("\r", " ").replace("\n", " ").split()
         )
-        line = f"{stamp} | {safe_mode} | {safe_message}\n"
+        detail_parts = []
+        for key, value in details.items():
+            safe_value = " ".join(
+                str(value).replace("\r", " ").replace("\n", " ").split()
+            )
+            detail_parts.append(f"{key}={safe_value}")
+        detail_text = " ".join(detail_parts)
+        if detail_text:
+            line = f"{stamp} | {safe_mode} | {safe_message} | {detail_text}\n"
+        else:
+            line = f"{stamp} | {safe_mode} | {safe_message}\n"
         with _ACTIVITY_LOG_LOCK:
             with (DATA_DIR / "status_activity.log").open(
                 "a", encoding="utf-8"

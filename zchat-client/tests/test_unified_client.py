@@ -58,7 +58,7 @@ def test_process_monitor_language_toggle(root) -> None:
 
 def test_shell_hosts_agent_and_monitor_pages(root) -> None:
     shell = UnifiedClientWindow(root)
-    assert set(shell.pages) == {"agent", "monitor", "private_chat", "status"}
+    assert set(shell.pages) == {"agent", "monitor", "private_chat", "status", "keep_log"}
     assert shell._current == "agent"
     assert isinstance(shell.agent_page, AgentChatWindow)
     assert isinstance(shell.monitor_page, ProcessMonitorPage)
