@@ -73,3 +73,10 @@ Add a child AGENTS.md only when a subtree has durable rules that differ from thi
 When applying this template to an established repository, follow [docs/repository-rollout.md](docs/repository-rollout.md). Audit the target first and port only missing compatible controls. Do not overwrite repository-specific AGENTS rules, CI matrices, release workflows, infrastructure ownership, or operational evidence merely to match this template.
 
 For repository administration, `scripts/github_admin.py` requires an authenticated GitHub identity with Administration permission. Treat successful read-back verification—not script presence—as evidence that the controls are effective.
+
+## Windows test evidence (NEW)
+
+- Results not run on Windows must be reported as `NOT RUN`, never as `PASSED` or `UNVERIFIED` to close work.
+- Every Windows test run must attach the log folder path under `reports/windows-runs/<timestamp>/` containing `console.log`, `junit.xml`, `pytest.log`, `exit.txt`.
+- Use `scripts/win-test.sh` for local WSL-to-Windows runs; use `.github/workflows/windows-tests.yml` for CI.
+- The verification package and `windows_tests/` require Windows 11 + real Camfrog for full E2E. Linux-only results are `BLOCKED`, not `PASSED`.

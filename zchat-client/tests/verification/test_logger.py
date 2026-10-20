@@ -19,6 +19,11 @@ def test_logger_redacts():
 
 def test_logger_redacts_observer_pii(tmp_path):
     logger = VerificationLogger(tmp_path / "evidence.jsonl")
-    record = logger.log("observation", target_account="person", expected_status="private status", display_name="nickname")
+    record = logger.log(
+        "observation",
+        target_account="person",
+        expected_status="private status",
+        display_name="nickname",
+    )
     for key in ("target_account", "expected_status", "display_name"):
         assert record[key] == "[REDACTED]"
