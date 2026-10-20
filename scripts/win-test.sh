@@ -90,26 +90,9 @@ for f in windows_tests/*.py; do
     tmpbat=$(mktemp /tmp/runfile_XXXX.bat)
     printf '@echo off\r\n"%s" -X faulthandler -m pytest %s -rs -v --basetemp=%s/basetemp > %s/%s.log 2>&1\r\n' "$winpy_abs" "$f" "$winout" "$winout" "$(basename "$f")" > "$tmpbat"
     winbat=$(wslpath -w "$tmpbat")
-    # Run via cmd.exe, capture PID of the process tree root
-    cmd.exe /c "cd /d $winrepo && start /b /wait $winbat" >/dev/null 2>&1 &
-    cmd_pid=$!
-    # Wait up to 300s
-    waited=0
-    while kill -0 $cmd_pid 2>/dev/null && [ $waited -lt 300 ]; do
-        sleep 1
-        waited=$((waited + 1))
-    done
-    if kill -0 $cmd_pid 2>/dev/null; then
-        # Timeout: kill the entire process tree via taskkill on the cmd.exe PID
-        taskkill /T /F /PID $cmd_pid >/dev/null 2>&1 || true
-        cmd.exe /c "taskkill /T /F /IM python.exe /FI \"WINDOWTITLE eq pytest*\"" >/dev/null 2>&1 || true
-        file_rc=124
-    else
-        wait $cmd_pid
-        file_rc=$?
-    fi
-    cat "$out/$(basename "$f").log" >> "$out/console.log" 2>/dev/null
-    cat "$out/$(basename "$f").log" 2>/dev/null
+    timeout 300 cmd.exe /c "cd /d $winrepo && $winbat" 2>&1 | tee -a "$out/console.log"
+    file_rc=${PIPESTATUS[0]}
+    cat "$out/$(basename "$f").log" 2>/dev/null | tee -a "$out/console.log" >/dev/null
     echo "exit=$file_rc for $f" | tee -a "$out/console.log"
 
     if grep -qi "Fatal Python error\|Windows fatal exception" "$out/$(basename "$f").log" 2>/dev/null; then
@@ -120,8 +103,7 @@ for f in windows_tests/*.py; do
         continue
     fi
     if [ "$file_rc" -eq 124 ]; then
-        # timeout: kill child python process tree
-        cmd.exe /c "taskkill /T /F /IM python.exe" >/dev/null 2>&1 || true
+        cmd.exe /c "taskkill /T /F /PID $cmd_pid" >/dev/null 2>&1 || true
         echo "CRASHED: timeout in $f" | tee -a "$out/console.log"
         promote_status "CRASHED"
         rc=124
@@ -139,23 +121,9 @@ echo "=== Running tests/ (excluding live) ===" | tee -a "$out/console.log"
 tmpbat2=$(mktemp /tmp/runtests_XXXX.bat)
 printf '@echo off\r\n"%s" -X faulthandler -m pytest tests -rs -v -m "not live" --basetemp=%s/basetemp --junitxml=%s/junit.xml --log-file=%s/pytest.log --log-file-level=DEBUG > %s/tests_console.log 2>&1\r\n' "$winpy_abs" "$winout" "$winout" "$winout" "$winout" > "$tmpbat2"
 winbat2=$(wslpath -w "$tmpbat2")
-cmd.exe /c "cd /d $winrepo && start /b /wait $winbat2" >/dev/null 2>&1 &
-cmd_pid=$!
-waited=0
-while kill -0 $cmd_pid 2>/dev/null && [ $waited -lt 600 ]; do
-    sleep 1
-    waited=$((waited + 1))
-done
-if kill -0 $cmd_pid 2>/dev/null; then
-    taskkill /T /F /PID $cmd_pid >/dev/null 2>&1 || true
-    cmd.exe /c "taskkill /T /F /IM python.exe /FI \"WINDOWTITLE eq pytest*\"" >/dev/null 2>&1 || true
-    file_rc=124
-else
-    wait $cmd_pid
-    file_rc=$?
-fi
+timeout 600 cmd.exe /c "cd /d $winrepo && $winbat2" 2>&1 | tee -a "$out/console.log"
+file_rc=${PIPESTATUS[0]}
 cat "$out/tests_console.log" >> "$out/console.log" 2>/dev/null
-cat "$out/tests_console.log" 2>/dev/null
 echo "exit=$file_rc for tests/" | tee -a "$out/console.log"
 
 if grep -qi "Fatal Python error\|Windows fatal exception" "$out/tests_console.log" 2>/dev/null; then
@@ -164,7 +132,6 @@ if grep -qi "Fatal Python error\|Windows fatal exception" "$out/tests_console.lo
     promote_status "CRASHED"
     rc=1
 elif [ "$file_rc" -eq 124 ]; then
-    cmd.exe /c "taskkill /T /F /IM python.exe" >/dev/null 2>&1 || true
     promote_status "CRASHED"
     rc=124
 elif [ "$file_rc" -ne 0 ] && [ "$file_rc" -ne 5 ]; then
