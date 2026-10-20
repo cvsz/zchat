@@ -1591,12 +1591,12 @@ def test_best_effort_mode_refuses_unisolated_combo_submit(name, monkeypatch, cap
         lambda _ctrl, target: events.append(target),
     )
 
-    assert mod.commit(
+    assert not mod.commit(
         win, ctrl, "test", False, require_fg=True, restore=True,
         execution_mode="best_effort_background",
     )
-    assert events == ["combo"]
-    assert writes == ["test"]
+    assert events == []
+    assert writes == []
 
 
 @pytest.mark.parametrize(
