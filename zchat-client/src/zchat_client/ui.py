@@ -1283,7 +1283,7 @@ class UnifiedClientWindow:
         log_label.pack(anchor=tk.W)
         self.keep_log_text = tk.Text(body, height=10, state=tk.DISABLED)
         self.keep_log_text.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
-        self._keep_log_path = Path("keep_log.txt")
+        self._keep_log_path = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / ".zchat")) / "ZChat" / "keep_log.txt"
         self._load_keep_log()
 
     def _load_keep_log(self) -> None:
@@ -1297,42 +1297,39 @@ class UnifiedClientWindow:
         except OSError:
             pass
 
-    def _append_keep_log_file(self, entry: str) -> None:
+    def _append_keep_log_file(self, entry: str) -> bool:
         try:
+            self._keep_log_path.parent.mkdir(parents=True, exist_ok=True)
             with self._keep_log_path.open("a", encoding="utf-8") as f:
                 f.write(entry + "\n")
-        except OSError:
-            pass
+        except OSError as exc:
+            messagebox.showerror("Keep Log", f"Could not save log: {exc}")
+            return False
+        return True
 
     def _keep_log_entry(self) -> None:
         friend = self.keep_log_friend_entry.get().strip()
         status = self.keep_log_status_entry.get().strip()
         if not friend or not status:
             return
-        timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
         entry = f"[{timestamp}] {friend}: {status}"
+        if not self._append_keep_log_file(entry):
+            return
         self.keep_log_friends.insert(tk.END, f"{friend} - {status}")
         self.keep_log_text.configure(state=tk.NORMAL)
         self.keep_log_text.insert(tk.END, entry + "\n")
         self.keep_log_text.see(tk.END)
         self.keep_log_text.configure(state=tk.DISABLED)
-        self._append_keep_log_file(entry)
         self.keep_log_friend_entry.delete(0, tk.END)
         self.keep_log_status_entry.delete(0, tk.END)
 
     def _discovery_entry(self) -> None:
-        friend = self.keep_log_friend_entry.get().strip()
-        if not friend:
-            return
-        timestamp = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
-        entry = f"[{timestamp}] Discovery: {friend}"
-        self.keep_log_friends.insert(tk.END, f"Discovery: {friend}")
-        self.keep_log_text.configure(state=tk.NORMAL)
-        self.keep_log_text.insert(tk.END, entry + "\n")
-        self.keep_log_text.see(tk.END)
-        self.keep_log_text.configure(state=tk.DISABLED)
-        self._append_keep_log_file(entry)
-        self.keep_log_friend_entry.delete(0, tk.END)
+        """Do not confuse a typed friend name with a verified Camfrog observation."""
+        messagebox.showwarning(
+            "Discovery unavailable",
+            "Real Camfrog friend-list observation is not implemented. No status has been verified.",
+        )
 
     def show_page(self, name: str) -> None:
         """Display one page; unknown names fail closed on the current page."""
