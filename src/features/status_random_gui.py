@@ -1312,6 +1312,7 @@ def _commit_impl(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply
         background_if_not_foreground
         or not require_fg
         or background_enter_target == "combo"
+        or execution_mode == "best_effort_background"
     ):
         log.error(
             "Refusing targeted background status submit: Camfrog can activate "
