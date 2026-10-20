@@ -7,6 +7,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+- Keep Log tab in zchat-client with persistent `keep_log.txt` and Discovery button (never implies observation).
+- Second-account verification foundation: config, structured JSONL logger, state machine, read-only observer skeleton, evidence bundle with SHA-256, transport with retry/backoff, Unicode comparison, screenshot interface, integration/report/sync modules.
+- Nested AGENTS.md for control-server/ and zchat-client/; corrected AGENTS.md Purpose to describe the real product.
+
+### Changed
+- AGENTS.md Purpose now describes ZChat instead of a generic template.
+
 ## [2.19.3] - 2026-10-19
 
 ### Fixed
