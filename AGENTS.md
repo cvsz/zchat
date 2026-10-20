@@ -1,7 +1,7 @@
 # AGENTS.md — Repository Agent Contract
 
 ## Purpose
-This repository is a reusable GitHub project template. Changes must remain generic, secure by default, easy to customize, and safe to inherit into a newly generated repository.
+This repository is ZChat, a Windows-only suite of Python desktop apps that automate the Camfrog client through UI Automation (status changer, random and marquee status, IM auto-reply, room control, music), plus a loopback-only local control server and a separate Tk agent client. Changes must be secure by default, fail closed on ambiguous safety or measurement inputs, and never weaken CI, branch protection, or security scanning.
 
 ## Operating rules
 - Read README.md, CONTRIBUTING.md, SECURITY.md, ROADMAP.md, and the closest AGENTS.md before editing.
