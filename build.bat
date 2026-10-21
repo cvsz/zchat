@@ -108,6 +108,8 @@ echo === PYTHON COMPILE CHECK ===
     src\features\name_color_changer_gui.py ^
     src\features\icon_changer_entry.py ^
     src\features\icon_changer_gui.py ^
+    src\features\name_changer_entry.py ^
+    src\features\name_changer_gui.py ^
     tools\web_status.py
 
 if errorlevel 1 goto :fail
@@ -192,6 +194,8 @@ if exist "dist\name-color-changer\name-color-changer.exe" del /q "dist\name-colo
 if exist "dist\name-color-changer.exe" del /q "dist\name-color-changer.exe"
 if exist "dist\icon-changer\icon-changer.exe" del /q "dist\icon-changer\icon-changer.exe"
 if exist "dist\icon-changer.exe" del /q "dist\icon-changer.exe"
+if exist "dist\name-changer\name-changer.exe" del /q "dist\name-changer\name-changer.exe"
+if exist "dist\name-changer.exe" del /q "dist\name-changer.exe"
 if exist "dist\camfrog-auto.exe" del /q "dist\camfrog-auto.exe"
 if exist "dist\camfrog-auto-gui.exe" del /q "dist\camfrog-auto-gui.exe"
 if exist "dist\zcfato.exe" del /q "dist\zcfato.exe"
@@ -337,6 +341,17 @@ echo === BUILD STANDALONE ICON CHANGER ===
     src\features\icon_changer_entry.py
 if errorlevel 1 goto :fail
 
+echo.
+echo === BUILD STANDALONE NAME CHANGER ===
+
+"%VENV_PY%" -m PyInstaller ^
+    --noconfirm --clean --onefile --windowed ^
+    --distpath dist\name-changer --workpath build\name-changer ^
+    --name name-changer %ICONARG% ^
+    --paths src\camfrog --paths src\features ^
+    src\features\name_changer_entry.py
+if errorlevel 1 goto :fail
+
 
 echo === BUILD MUSIC DJ ===
 
@@ -351,7 +366,7 @@ echo === BUILD MUSIC DJ ===
 if errorlevel 1 goto :fail
 
 
-for %%D in (room-control chat-im-private status-random status-marquee status-changer im-autoreply music-dj web-status name-color-changer icon-changer) do (
+for %%D in (room-control chat-im-private status-random status-marquee status-changer im-autoreply music-dj web-status name-color-changer icon-changer name-changer) do (
     copy /y "app.ico" "dist\%%D\app.ico" >nul
     if errorlevel 1 goto :fail
 )
@@ -382,6 +397,7 @@ if not exist "dist\im-autoreply\im-autoreply.exe" goto :fail
 if not exist "dist\web-status\web-status.exe" goto :fail
 if not exist "dist\name-color-changer\name-color-changer.exe" goto :fail
 if not exist "dist\icon-changer\icon-changer.exe" goto :fail
+if not exist "dist\name-changer\name-changer.exe" goto :fail
 if not exist "dist\music-dj\music-dj.exe" goto :fail
 if not exist "dist\SHA256SUMS.txt" goto :fail
 if not exist "%FEATURE_NAME%-windows.zip" goto :fail
@@ -399,6 +415,7 @@ echo dist\music-dj\music-dj.exe
 echo dist\web-status\web-status.exe
 echo dist\name-color-changer\name-color-changer.exe
 echo dist\icon-changer\icon-changer.exe
+echo dist\name-changer\name-changer.exe
 echo dist\SHA256SUMS.txt
 echo %FEATURE_NAME%-windows.zip
 

@@ -15,6 +15,7 @@ $names = @(
     'web-status.exe',
     'name-color-changer.exe',
     'icon-changer.exe',
+    'name-changer.exe',
     'zchat-client.exe'
 )
 

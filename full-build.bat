@@ -109,6 +109,10 @@ if not exist dist\icon-changer\icon-changer.exe (
     echo ERROR: dist\icon-changer\icon-changer.exe not found
     exit /b 1
 )
+if not exist dist\name-changer\name-changer.exe (
+    echo ERROR: dist\name-changer\name-changer.exe not found
+    exit /b 1
+)
 if not exist dist\music-dj\music-dj.exe (
     echo ERROR: dist\music-dj\music-dj.exe not found
     exit /b 1
@@ -189,6 +193,7 @@ echo   dist\im-autoreply\im-autoreply.exe
 echo   dist\web-status\web-status.exe
 echo   dist\name-color-changer\name-color-changer.exe
 echo   dist\icon-changer\icon-changer.exe
+echo   dist\name-changer\name-changer.exe
 echo   dist\music-dj\music-dj.exe
 echo   dist\status-changer\status-changer.exe
 echo   dist\zchat-client\zchat-client.exe

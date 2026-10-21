@@ -43,6 +43,7 @@ FEATURE_EXES = {
     "web-status.exe": DIST / "web-status" / "web-status.exe",
     "name-color-changer.exe": DIST / "name-color-changer" / "name-color-changer.exe",
     "icon-changer.exe": DIST / "icon-changer" / "icon-changer.exe",
+    "name-changer.exe": DIST / "name-changer" / "name-changer.exe",
 }
 OTHER_ASSETS = {
     "zchat-client.exe": DIST / "zchat-client" / "zchat-client.exe",
