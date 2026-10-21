@@ -35,6 +35,9 @@ FEATURE_EXECUTABLES = (
     "status-random/status-random.exe",
     "status-changer/status-changer.exe",
     "web-status/web-status.exe",
+    "name-color-changer/name-color-changer.exe",
+    "icon-changer/icon-changer.exe",
+    "name-changer/name-changer.exe",
 )
 COMPANION_EXECUTABLES = frozenset(
     {
