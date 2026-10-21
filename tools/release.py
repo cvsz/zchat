@@ -41,6 +41,8 @@ FEATURE_EXES = {
     "im-autoreply.exe": DIST / "im-autoreply" / "im-autoreply.exe",
     "music-dj.exe": DIST / "music-dj" / "music-dj.exe",
     "web-status.exe": DIST / "web-status" / "web-status.exe",
+    "name-color-changer.exe": DIST / "name-color-changer" / "name-color-changer.exe",
+    "icon-changer.exe": DIST / "icon-changer" / "icon-changer.exe",
 }
 OTHER_ASSETS = {
     "zchat-client.exe": DIST / "zchat-client" / "zchat-client.exe",
