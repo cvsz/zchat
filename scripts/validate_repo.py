@@ -44,7 +44,9 @@ REQUIRED_PATHS = (
 EXCLUDED_DIRS = {
     ".git",
     ".venv",
+    ".venv-lin",
     ".venv-runtime",
+    ".venv-win",
     "venv",
     "build",
     "dist",
@@ -53,6 +55,7 @@ EXCLUDED_DIRS = {
     "__pycache__",
     "node_modules",
     "camfrog-client",
+    "line",
 }
 
 LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
