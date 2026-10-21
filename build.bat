@@ -104,6 +104,12 @@ echo === PYTHON COMPILE CHECK ===
     src\camfrog\camfrog_tray.py ^
     src\camfrog\clipboard_support.py ^
     src\features\web_status_entry.py ^
+    src\features\name_color_changer_entry.py ^
+    src\features\name_color_changer_gui.py ^
+    src\features\icon_changer_entry.py ^
+    src\features\icon_changer_gui.py ^
+    src\features\name_changer_entry.py ^
+    src\features\name_changer_gui.py ^
     tools\web_status.py
 
 if errorlevel 1 goto :fail
@@ -184,6 +190,12 @@ if exist "dist\im-autoreply\im-autoreply.exe" del /q "dist\im-autoreply\im-autor
 if exist "dist\music-dj\music-dj.exe" del /q "dist\music-dj\music-dj.exe"
 if exist "dist\web-status\web-status.exe" del /q "dist\web-status\web-status.exe"
 if exist "dist\web-status.exe" del /q "dist\web-status.exe"
+if exist "dist\name-color-changer\name-color-changer.exe" del /q "dist\name-color-changer\name-color-changer.exe"
+if exist "dist\name-color-changer.exe" del /q "dist\name-color-changer.exe"
+if exist "dist\icon-changer\icon-changer.exe" del /q "dist\icon-changer\icon-changer.exe"
+if exist "dist\icon-changer.exe" del /q "dist\icon-changer.exe"
+if exist "dist\name-changer\name-changer.exe" del /q "dist\name-changer\name-changer.exe"
+if exist "dist\name-changer.exe" del /q "dist\name-changer.exe"
 if exist "dist\camfrog-auto.exe" del /q "dist\camfrog-auto.exe"
 if exist "dist\camfrog-auto-gui.exe" del /q "dist\camfrog-auto-gui.exe"
 if exist "dist\zcfato.exe" del /q "dist\zcfato.exe"
@@ -307,6 +319,39 @@ echo === BUILD WEB STATUS UPDATER (GUI + CONSOLE PROTOTYPE) ===
     src\features\web_status_entry.py
 if errorlevel 1 goto :fail
 
+echo.
+echo === BUILD STANDALONE NAME COLOR CHANGER ===
+
+"%VENV_PY%" -m PyInstaller ^
+    --noconfirm --clean --onefile --windowed ^
+    --distpath dist\name-color-changer --workpath build\name-color-changer ^
+    --name name-color-changer %ICONARG% ^
+    --paths src\camfrog --paths src\features ^
+    src\features\name_color_changer_entry.py
+if errorlevel 1 goto :fail
+
+echo.
+echo === BUILD STANDALONE ICON CHANGER ===
+
+"%VENV_PY%" -m PyInstaller ^
+    --noconfirm --clean --onefile --windowed ^
+    --distpath dist\icon-changer --workpath build\icon-changer ^
+    --name icon-changer %ICONARG% ^
+    --paths src\camfrog --paths src\features ^
+    src\features\icon_changer_entry.py
+if errorlevel 1 goto :fail
+
+echo.
+echo === BUILD STANDALONE NAME CHANGER ===
+
+"%VENV_PY%" -m PyInstaller ^
+    --noconfirm --clean --onefile --windowed ^
+    --distpath dist\name-changer --workpath build\name-changer ^
+    --name name-changer %ICONARG% ^
+    --paths src\camfrog --paths src\features ^
+    src\features\name_changer_entry.py
+if errorlevel 1 goto :fail
+
 
 echo === BUILD MUSIC DJ ===
 
@@ -321,7 +366,7 @@ echo === BUILD MUSIC DJ ===
 if errorlevel 1 goto :fail
 
 
-for %%D in (room-control chat-im-private status-random status-marquee status-changer im-autoreply music-dj web-status) do (
+for %%D in (room-control chat-im-private status-random status-marquee status-changer im-autoreply music-dj web-status name-color-changer icon-changer name-changer) do (
     copy /y "app.ico" "dist\%%D\app.ico" >nul
     if errorlevel 1 goto :fail
 )
@@ -350,6 +395,9 @@ if not exist "dist\status-marquee\status-marquee.exe" goto :fail
 if not exist "dist\status-changer\status-changer.exe" goto :fail
 if not exist "dist\im-autoreply\im-autoreply.exe" goto :fail
 if not exist "dist\web-status\web-status.exe" goto :fail
+if not exist "dist\name-color-changer\name-color-changer.exe" goto :fail
+if not exist "dist\icon-changer\icon-changer.exe" goto :fail
+if not exist "dist\name-changer\name-changer.exe" goto :fail
 if not exist "dist\music-dj\music-dj.exe" goto :fail
 if not exist "dist\SHA256SUMS.txt" goto :fail
 if not exist "%FEATURE_NAME%-windows.zip" goto :fail
@@ -365,6 +413,9 @@ echo dist\status-changer\status-changer.exe
 echo dist\im-autoreply\im-autoreply.exe
 echo dist\music-dj\music-dj.exe
 echo dist\web-status\web-status.exe
+echo dist\name-color-changer\name-color-changer.exe
+echo dist\icon-changer\icon-changer.exe
+echo dist\name-changer\name-changer.exe
 echo dist\SHA256SUMS.txt
 echo %FEATURE_NAME%-windows.zip
 
