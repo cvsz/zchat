@@ -54,6 +54,8 @@ def test_name_changer_clipboard_controller(monkeypatch):
     from tests.test_gui_theme_clipboard import FakeEntry, FakeMenu, FakeRoot
 
     monkeypatch.setattr(tkinter, "Menu", FakeMenu)
+    monkeypatch.setattr(ncg, "set_clipboard_text", lambda root, value: root.clipboard_append(value))
+    monkeypatch.setattr(ncg, "get_clipboard_text", lambda root: root.clipboard_get())
     entry = FakeEntry()
     root = FakeRoot(entry)
     controller = ncg.ClipboardController(root)
