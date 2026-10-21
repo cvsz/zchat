@@ -230,3 +230,25 @@ def test_standalone_icon_alternator_redacts_credentials_and_personal_data():
     assert "[email redacted]" in redacted
     assert "[stripe-key redacted]" in redacted
     assert "[redacted]" in redacted
+
+def test_icon_changer_clipboard_controller(monkeypatch):
+    from types import SimpleNamespace
+    import tkinter
+    from tests.test_gui_theme_clipboard import FakeEntry, FakeMenu, FakeRoot
+
+    monkeypatch.setattr(tkinter, "Menu", FakeMenu)
+    entry = FakeEntry()
+    root = FakeRoot(entry)
+    controller = icg.ClipboardController(root)
+    controller.install(root)
+
+    assert "<Control-KeyPress>" in entry.bindings
+    assert "<Control-c>" in entry.bindings
+    assert "<Control-v>" in entry.bindings
+    assert "<Control-x>" in entry.bindings
+    assert "<Control-a>" in entry.bindings
+
+    assert controller.handle_control_key(SimpleNamespace(
+        widget=entry, keysym="??", char="ษ", keycode=88)) == "break"
+    assert root.clipboard == "bcd"
+    assert entry.value == "aef"
