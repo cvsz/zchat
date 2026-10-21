@@ -97,6 +97,29 @@ Status: login flow mapped; the status-update endpoint was captured from a logged
 - **Plugins** lists the installed plugins returned by Camfrog (the standard catalog uses IDs 1–9 and 11–16) with activation switches. Change switches and press **Apply changes** to submit them after confirmation; the app reloads the catalog so you can review Camfrog's returned states. Select a plugin card to load its current settings form. The form maps Camfrog's text fields, text areas, checkboxes, radio groups, single and multiple selections, and file uploads to editable controls. Saving asks for confirmation, submits the form, then reloads it so you can review the values Camfrog returned. Known plugin names, field labels, and choices follow the TH/EN language setting; submitted option values remain unchanged, and free-text messages stay as entered. Shared formatting supports font, size, color, bold, italic, underline, and strikeout.
 - **Local vMix control** reads inputs from the vMix API on this PC. **Preview input** updates Preview; **Cut to output** sends the selected input directly to vMix output after a confirmation. This does not configure Camfrog's camera. Install the vMix virtual-camera device and select it manually in Camfrog, then verify it in a controlled call. The controls are limited to loopback addresses; they do not control a remote vMix host.
 
+## 11. Standalone Name and Flair Changers
+
+Three dedicated standalone executables provide profile and room user-list personalization:
+
+### A. Name Color Changer (`name-color-changer.exe`)
+- Alternates nickname flair colors (Color A <-> Color B) directly via `profiles.camfrog.com/ajax/post_flair.php`.
+- Defaults to safe Dry-Run mode; live execution requires explicit confirmation.
+- Rate-limiting protection: strictly respects HTTP 429 and `Retry-After` headers, stopping immediately upon backoff signals.
+- Automatic restoration: automatically reverts the account back to its initial color ID upon completion or stop/interruption.
+- Accepts session cookie directly or via environment variable `WEBAUTH_USER`.
+
+### B. Room Icon Changer (`icon-changer.exe`)
+- Alternates room user-list flair icons (Icon A <-> Icon B) via `profiles.camfrog.com`.
+- Inspects available flair icons dynamically from `settings.php` external data.
+- Built-in fail-closed session checks, rate limiting, and auto-restoration of initial room icon upon termination.
+
+### C. Name Changer with Thai Support (`name-changer.exe`)
+- Dedicated manual and sequential display-name / nickname switcher.
+- Full native support for Thai script (ภาษาไทย), Thai tone marks/vowels, and UTF-8 encoding using high-legibility UI typography (`Tahoma`).
+- Features **Next ▶**, **◀ Prev**, and direct **Apply** custom name switching controls.
+- Editable **Preset Pool** manager with one-click Thai preset reset (`ผู้ใช้ camfrog`, `สายคามฟร็อก`, `เบอร์คามฟร็อก`, `ดีเจเสียงใส`, `คนึงนิจ`, `มังกรทอง`).
+- CLI interface supports `--set-name <name>`, `--names <name1> <name2>`, and `--cycle`.
+
 | Plugin | Settings exposed by Camfrog |
 |---|---|
 | 1. 8 ball | Bot name and response message |
