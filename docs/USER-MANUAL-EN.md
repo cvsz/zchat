@@ -105,16 +105,17 @@ Three dedicated standalone executables provide profile and room user-list person
 - Alternates nickname flair colors (Color A <-> Color B) directly via `profiles.camfrog.com/ajax/post_flair.php`.
 - Defaults to safe Dry-Run mode; live execution requires explicit confirmation.
 - Rate-limiting protection: strictly respects HTTP 429 and `Retry-After` headers, stopping immediately upon backoff signals.
-- Automatic restoration: automatically reverts the account back to its initial color ID upon completion or stop/interruption.
+- Initial color restoration: attempts to restore the initial color ID upon completion of configured cycles or normal halt. Note: Immediate GUI termination or forced process kills may bypass restoration.
 - Accepts session cookie directly or via environment variable `WEBAUTH_USER`.
 
 ### B. Room Icon Changer (`icon-changer.exe`)
 - Alternates room user-list flair icons (Icon A <-> Icon B) via `profiles.camfrog.com`.
 - Inspects available flair icons dynamically from `settings.php` external data.
-- Built-in fail-closed session checks, rate limiting, and auto-restoration of initial room icon upon termination.
+- Built-in fail-closed session checks, rate limiting, and initial icon restoration upon completion of runs or normal halt.
 
 ### C. Name Changer with Thai Support (`name-changer.exe`)
-- Dedicated manual and sequential display-name / nickname switcher.
+- Local-only prototype GUI and CLI for manual and sequential display-name / nickname switching in-memory.
+- Note: This prototype manages the local display-name state and preset lists; it does not automate the Camfrog desktop client or mutate remote profile nickname APIs.
 - Full native support for Thai script (ภาษาไทย), Thai tone marks/vowels, and UTF-8 encoding using high-legibility UI typography (`Tahoma`).
 - Features **Next ▶**, **◀ Prev**, and direct **Apply** custom name switching controls.
 - Editable **Preset Pool** manager with one-click Thai preset reset (`ผู้ใช้ camfrog`, `สายคามฟร็อก`, `เบอร์คามฟร็อก`, `ดีเจเสียงใส`, `คนึงนิจ`, `มังกรทอง`).
