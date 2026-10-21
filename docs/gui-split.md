@@ -18,6 +18,9 @@ apps need is inlined into each of them; that duplication is deliberate — each
 | `status_changer_gui.py` (`status_changer_entry.py`) | `camfrog_auto.py`, profile `status` | Combined Random, Marquee, and Activity Log tabs | Separate mode settings and pools under `status-data/`; one selected worker mode runs at a time. Random and Marquee executables keep their own data folders. |
 | `chat_im_private_gui.py` (`chat_im_private_entry.py`) | `camfrog_auto.py` | `camfrog_private_chat_gui.py` | Renamed from `camfrog_private_chat_gui.py` |
 | `web_status_gui.py` (`web_status_entry.py`) | — | merged in place | `tools/web_status.py` logic inlined (`main` → `cli_main`); includes Bot Manager's local Music DJ controller and loopback-only vMix controls; talks to the separate `music-dj.exe` through JSON files in its data folder, without a sibling-module import. `tools/web_status.py` stays for the source CLI and its tests |
+| `name_color_changer_gui.py` (`name_color_changer_entry.py`) | — | standalone | Dedicated GUI and CLI for Camfrog nickname color alternator via `profiles.camfrog.com`; fail-closed security, rate-limiting guards, and initial color restoration on exit. Packaged as `name-color-changer.exe`. |
+| `icon_changer_gui.py` (`icon_changer_entry.py`) | — | standalone | Dedicated GUI and CLI for Camfrog room user-list icon alternator via `profiles.camfrog.com`; fail-closed security, rate-limiting guards, and initial icon restoration on exit. Packaged as `icon-changer.exe`. |
+| `name_changer_gui.py` (`name_changer_entry.py`) | — | standalone | Dedicated GUI and CLI for Camfrog display name / nickname manual and pool switching with full Thai font & Unicode script support (Tahoma). Packaged as `name-changer.exe`. |
 
 ## Engine changes forced by the inlining
 
