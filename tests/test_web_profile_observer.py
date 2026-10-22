@@ -96,7 +96,7 @@ def test_non_verifiable_cases_fail_closed(nodes, reason):
 def test_invalid_inputs():
     page = FakePage(observer.profile_url("zdevz"), [FakeNode("RUN-001")])
     for expected, selector in [("", "[data-status]"), ("X" * 257, "[data-status]"),
-                               ("good\nbad", "[data-status]"), ("good", "")]:
+                               ("good\nbad", "[data-status]"), ("good", "X" * 257)]:
         with pytest.raises(ValueError):
             observer.observe(page, "zdevz", expected, selector)
 
@@ -138,3 +138,21 @@ def test_generic_profile_selectors_are_not_status_evidence(selector):
     page = FakePage(observer.profile_url("Seaza"), [FakeNode("Seaza")])
     with pytest.raises(ValueError, match="not status evidence"):
         observer.observe(page, "Seaza", "Seaza", selector)
+
+
+def test_profile_banner_exact_text_without_hardcoded_css():
+    class ProfileContent:
+        def get_by_text(self, value, exact=False):
+            assert value == ", but every challenge brings"
+            assert exact is True
+            return FakeLocator([FakeNode(value)])
+
+    class BrowserPage:
+        url = observer.profile_url("Seaza")
+
+        def locator(self, selector):
+            assert selector == "#content-inner"
+            return ProfileContent()
+
+    result = observer.observe(BrowserPage(), "Seaza", ", but every challenge brings", "")
+    assert result["state"] == "WEB_PROFILE_MATCH"
