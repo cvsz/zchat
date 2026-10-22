@@ -9,7 +9,7 @@ import argparse
 import hashlib
 import json
 import os
-import re
+import time
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -91,14 +91,48 @@ def run(args) -> int:
                 print("Complete Account B login in Chrome, then press Enter.", file=sys.stderr)
                 input()
                 page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            page.wait_for_timeout(1000)
-            result.update(observe(page, args.nickname, args.expected, args.selector))
-            screenshot = output / f"{result['run_id']}.png"
-            page.screenshot(path=str(screenshot), full_page=False)
-            if os.name != "nt":
-                screenshot.chmod(0o600)
-            result["screenshot_sha256"] = hashlib.sha256(screenshot.read_bytes()).hexdigest()
-            result["screenshot_file"] = screenshot.name
+            previous_fingerprint = None
+            matching_samples = 0
+            log_path = output / f"{result['run_id']}.jsonl"
+            for sample_index in range(args.samples):
+                if sample_index:
+                    time.sleep(args.refresh_seconds)
+                    page.reload(wait_until="domcontentloaded", timeout=30000)
+                page.wait_for_timeout(1000)
+                sample = {
+                    "run_id": result["run_id"],
+                    "sample_index": sample_index + 1,
+                    "observed_at": datetime.now(timezone.utc).isoformat(),
+                    "nickname": args.nickname,
+                    "source": "authenticated_web_profile",
+                    "desktop_status_verified": False,
+                }
+                try:
+                    sample.update(observe(page, args.nickname, args.expected, args.selector))
+                except Exception as exc:
+                    sample.update(state="UNVERIFIED", reason="observer_error",
+                                  error_type=type(exc).__name__)
+                fingerprint = (sample["state"], sample.get("observed_text_sha256"),
+                               sample.get("reason"))
+                if sample_index == 0 or fingerprint != previous_fingerprint:
+                    screenshot = output / f"{result['run_id']}-{sample_index + 1:04d}.png"
+                    page.screenshot(path=str(screenshot), full_page=False)
+                    if os.name != "nt":
+                        screenshot.chmod(0o600)
+                    sample["screenshot_sha256"] = hashlib.sha256(
+                        screenshot.read_bytes()).hexdigest()
+                    sample["screenshot_file"] = screenshot.name
+                previous_fingerprint = fingerprint
+                matching_samples += sample["state"] == "WEB_PROFILE_MATCH"
+                with log_path.open("a", encoding="utf-8") as log_file:
+                    log_file.write(json.dumps(sample, ensure_ascii=False) + "\\n")
+                if os.name != "nt":
+                    log_path.chmod(0o600)
+                print(json.dumps(sample, ensure_ascii=False), flush=True)
+                result.update(sample)
+            result["samples"] = args.samples
+            result["matching_samples"] = matching_samples
+            result["sample_log"] = log_path.name
         finally:
             context.close()
     evidence = output / f"{result['run_id']}.json"
@@ -106,12 +140,12 @@ def run(args) -> int:
     if os.name != "nt":
         evidence.chmod(0o600)
     print(json.dumps(result, ensure_ascii=False))
-    return 0 if result["state"] == "WEB_PROFILE_MATCH" else 2
+    return 0 if result["matching_samples"] == args.samples else 2
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--nickname", required=True)
+    parser.add_argument("--nickname", default="Seaza")
     parser.add_argument("--expected", required=True)
     parser.add_argument("--selector", required=True,
                         help="Unique CSS selector manually validated on Account B profile")
@@ -119,8 +153,16 @@ def main(argv=None) -> int:
                         help="Dedicated local Chrome profile; sign in interactively")
     parser.add_argument("--output", default="reports/web-profile-observer")
     parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--refresh-seconds", type=int, default=30,
+                        help="Interval between page reloads (10..300 seconds)")
+    parser.add_argument("--samples", type=int, default=10,
+                        help="Bounded number of observations (1..1000)")
     parser.add_argument("--login", action="store_true", help="Pause for interactive login")
     args = parser.parse_args(argv)
+    if not 10 <= args.refresh_seconds <= 300:
+        parser.error("--refresh-seconds must be 10..300")
+    if not 1 <= args.samples <= 1000:
+        parser.error("--samples must be 1..1000")
     try:
         return run(args)
     except (ValueError, OSError, RuntimeError, ImportError) as exc:
