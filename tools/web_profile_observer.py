@@ -45,14 +45,16 @@ def observe(page, nickname: str, expected: str, selector: str) -> dict:
         raise ValueError("Expected status must be 1..256 characters")
     if any(ord(c) < 32 for c in expected):
         raise ValueError("Expected status contains control characters")
-    if not selector or len(selector) > MAX_SELECTOR:
-        raise ValueError("A bounded, explicitly inspected CSS selector is required")
+    if not isinstance(selector, str) or len(selector) > MAX_SELECTOR:
+        raise ValueError("Status CSS selector exceeds safety limits")
     if selector.strip().lower() in {"body", "html", "#profiles-pages",
                                     ".nav-popover-username", ".nickname-info"}:
         raise ValueError("Generic profile or logged-in navigation selectors are not status evidence")
     if not allowed_url(page.url, nickname):
         return {"state": "UNVERIFIED", "reason": "unexpected_profile_url"}
-    nodes = page.locator(selector)
+    # Restrict text-based discovery to the profile content; never search the global header.
+    nodes = (page.locator(selector) if selector
+             else page.locator("#content-inner").get_by_text(expected, exact=True))
     count = nodes.count()
     if count != 1:
         return {"state": "UNVERIFIED", "reason": "selector_not_unique", "matched_nodes": count}
@@ -150,8 +152,8 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--nickname", default="Seaza")
     parser.add_argument("--expected", required=True)
-    parser.add_argument("--selector", required=True,
-                        help="Unique CSS selector manually validated on Account B profile")
+    parser.add_argument("--selector", default="",
+                        help="Optional unique Custom Status selector; default checks exact visible text in #content-inner")
     parser.add_argument("--browser-profile", required=True,
                         help="Dedicated local Chrome profile; sign in interactively")
     parser.add_argument("--output", default="reports/web-profile-observer")
