@@ -7,7 +7,7 @@ profile of **Account A** on `profiles.camfrog.com`. The observer is read-only:
 it does not export cookies, automate login, trigger a status change, or claim
 that the Camfrog Windows desktop Friend List received a change.
 
-**Important:** No validated status selector for the `/th/Seaza` page is
+**Important:** No validated CSS status selector for the `/th/Seaza` page is
 currently part of this repository. The operator must first inspect the page
 and establish that a unique visible element genuinely represents the **custom
 status**, not profile name, flair, last-seen time, or another account field.
@@ -39,7 +39,6 @@ a unique, non-sensitive status marker. On Linux run:
 python tools/web_profile_observer.py \
   --nickname Seaza \
   --expected ZCHAT-E2E-001 \
-  --selector 'REPLACE_WITH_INSPECTED_UNIQUE_STATUS_CSS_SELECTOR' \
   --browser-profile "$HOME/.local/share/zchat-observer/account-b" \
   --output "$HOME/zchat-observer-evidence" \
   --refresh-seconds 30 \
@@ -106,3 +105,36 @@ Do not use `.nav-popover-username`, `.nickname-info`, `#profiles-pages`,
 `document.body`, or the URL/title as a substitute for that field.
 If no status field exists on the page, mark this web-observer path `BLOCKED`
 and use a genuine second Camfrog client observer instead.
+
+## Screenshot-grounded Profile Banner verification
+
+A supplied screenshot of Chrome at `https://profiles.camfrog.com/th/Seaza`
+and the Camfrog desktop application side by side displays the same visible
+free-text status: `, but every challenge brings`. This is concrete evidence
+that the profile banner can expose a status string, not a guarantee that
+each status change has propagated. The saved server HTML does not contain
+that text because parts of the page render dynamically.
+
+The observer now supports a **no-selector** mode: Playwright searches for
+the exact expected text only within `#content-inner`, rejecting absent,
+hidden, or ambiguous matches. This scope is grounded in the provided HTML,
+and deliberately excludes the navigation/header and friend list.
+A matching screenshot is still categorized `WEB_PROFILE_MATCH`, not an
+independently verified Windows E2E effect.
+
+Example:
+
+```bash
+python tools/web_profile_observer.py \
+  --nickname Seaza \
+  --expected ', but every challenge brings' \
+  --browser-profile "$HOME/.local/share/zchat-observer/account-b" \
+  --output "$HOME/zchat-observer-evidence" \
+  --refresh-seconds 30 --samples 120 --login
+```
+
+During a controlled test, change Account A's status to a new unique marker
+and observe it from a separately authenticated Account B browser session.
+Require at least a before/after transition and correlate independent
+Windows-worker events and timestamps with observer samples before
+classifying an actual status change as verified.
