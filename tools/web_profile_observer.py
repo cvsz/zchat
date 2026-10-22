@@ -47,6 +47,9 @@ def observe(page, nickname: str, expected: str, selector: str) -> dict:
         raise ValueError("Expected status contains control characters")
     if not selector or len(selector) > MAX_SELECTOR:
         raise ValueError("A bounded, explicitly inspected CSS selector is required")
+    if selector.strip().lower() in {"body", "html", "#profiles-pages",
+                                    ".nav-popover-username", ".nickname-info"}:
+        raise ValueError("Generic profile or logged-in navigation selectors are not status evidence")
     if not allowed_url(page.url, nickname):
         return {"state": "UNVERIFIED", "reason": "unexpected_profile_url"}
     nodes = page.locator(selector)
