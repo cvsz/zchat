@@ -7,7 +7,7 @@ profile of **Account A** on `profiles.camfrog.com`. The observer is read-only:
 it does not export cookies, automate login, trigger a status change, or claim
 that the Camfrog Windows desktop Friend List received a change.
 
-**Important:** No validated status selector for the `/th/zdevz` page is
+**Important:** No validated status selector for the `/th/Seaza` page is
 currently part of this repository. The operator must first inspect the page
 and establish that a unique visible element genuinely represents the **custom
 status**, not profile name, flair, last-seen time, or another account field.
@@ -30,32 +30,33 @@ and uses a dedicated persistent Chrome profile. It must not attach to the
 operator's normal browsing profile, ingest copied PHPSESSID values, or commit
 session cookies.
 
-## One-shot observation
+## Periodic browser-refresh observation
 
 On Windows, log into Camfrog as **Account A**, start Status Changer and select
 a unique, non-sensitive status marker. On Linux run:
 
 ```bash
 python tools/web_profile_observer.py \
-  --nickname zdevz \
+  --nickname Seaza \
   --expected ZCHAT-E2E-001 \
   --selector 'REPLACE_WITH_INSPECTED_UNIQUE_STATUS_CSS_SELECTOR' \
   --browser-profile "$HOME/.local/share/zchat-observer/account-b" \
   --output "$HOME/zchat-observer-evidence" \
+  --refresh-seconds 30 \
+  --samples 20 \
   --login
 ```
 
 The script opens the allowlisted Camfrog profile, pauses for an interactive
-Account B login, then reopens the target page and checks exactly one visible
+Account B login, then reloads the target page every 30 seconds for 20 observations and checks exactly one visible
 element against the expected string. Replace the selector **only after**
 inspecting the authenticated DOM and confirming it maps to Custom Status.
 No selector was invented for the Camfrog web page.
 
-The script records a random `run_id`, UTC observation time, a local viewport
-screenshot, and SHA-256 digests. Screenshots can contain personal profile
+The script records a random `run_id`, per-refresh UTC observation times, a JSONL sample log, a local viewport screenshot on the first observation and whenever the observed result changes, and SHA-256 digests. Sampling is bounded by `--samples` (1..1000) and `--refresh-seconds` (10..300). Screenshots can contain personal profile
 details: keep evidence local, limit filesystem access and redact before
 sharing. JSON evidence does not contain cookie material or the observed text.
-Exit 0 means **WEB_PROFILE_MATCH**, not full Windows end-to-end acceptance.
+Exit 0 means that **all samples matched the web-profile element**, not full Windows end-to-end acceptance.
 Exit 2 means mismatch, uncertainty, or execution error.
 
 ### Verification matrix
