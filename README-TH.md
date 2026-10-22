@@ -19,6 +19,9 @@
 | `im-autoreply\im-autoreply.exe` | ตอบ IM ส่วนตัวอย่างเดียว ไม่ตอบในห้อง ไม่เปลี่ยนสถานะ |
 | `music-dj\music-dj.exe` | ZeaZDev room ดีเจเพลงในห้อง: รับคำสั่ง `!request` / `!randommusic` / `!queue` / `!current` / `!skip` / `!help` จากแชท เก็บคิวและลิงก์ค้นหาเพลงที่สุ่มได้ลง `youtube_random_music.json` และเล่นเสียงในเครื่องหรือวิดีโอ YouTube ที่ player มาตรฐานมองเห็นได้ `!current` แสดงผู้ขอ เวลาเล่น และเพลงถัดไป ในแท็บ Music มี Windows TTS อ่านข้อความหรือสรุปคิว โดยต่อเอาต์พุตเสียงเข้าไมโครโฟน Camfrog ปิดการเปลี่ยนสถานะและการตอบ IM ส่วนตัว |
 | `web-status\web-status.exe` | รุ่นทดลองแบบ GUI + console: เปลี่ยนสถานะผ่าน profiles.camfrog.com (ค่าเริ่มต้นโหมดทดลอง; GUI ตรวจสอบ session `PHPSESSID` จากเบราว์เซอร์ก่อนเริ่มเปลี่ยนสถานะจริง) ไม่ใส่ argument เปิด GUI ใส่ argument ใช้ CLI ใน GUI มีช่องข้อความบรรทัดเดียว 10 ช่อง บันทึกใน `webtext.db`; ปุ่ม **Start** วนเฉพาะบรรทัดที่ไม่ว่างทุก N วินาที |
+| `name-color-changer\name-color-changer.exe` | สลับสีชื่อ Flair (Color A <-> Color B) ผ่าน API `profiles.camfrog.com` มี GUI และ CLI พร้อมระบบ fail-closed ป้องกัน rate limit 429 ตรวจสอบ session และคืนค่าสีเริ่มต้นเมื่อทำงานครบรอบ |
+| `icon-changer\icon-changer.exe` | สลับไอคอนหน้าชื่อใน Room User List (Icon A <-> Icon B) ผ่าน API `profiles.camfrog.com` มี GUI และ CLI พร้อมการป้องกัน rate limit และคืนค่าไอคอนเริ่มต้นเมื่อทำงานครบรอบ |
+| `name-changer\name-changer.exe` | ตัวต้นแบบสลับชื่อและจัดการชุดรายชื่อในหน่วยความจำ (Local Prototype) รองรับภาษาไทยสมบูรณ์แบบ (ฟอนต์ Tahoma / UTF-8) สลับชื่อก่อนหน้า-ถัดไป และจัดการ Preset Pool (ยังไม่เชื่อมต่อ client/profile อัตโนมัติ) |
 
 หน้า **Bot Manager** ของ Web Status ควบคุมคิวใน `music-dj.exe` แยกตัวผ่านไฟล์ในเครื่อง และอ่าน/ควบคุม vMix บนเครื่องเดียวกันได้ Music DJ รับ URL หรือ ID YouTube เข้าคิว เปิด player มาตรฐานที่มองเห็นได้ และเลื่อนคิวตาม event เล่น/จบเพลง ดูขอบเขตและรายการตรวจรับ Windows ที่ [`docs/zBOT-Youtube-MUSIC-DJ.md`](docs/zBOT-Youtube-MUSIC-DJ.md)
 

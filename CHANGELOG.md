@@ -7,6 +7,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+- Added standalone `name-color-changer.exe` application with dedicated GUI and CLI for alternating Camfrog nickname flair colors via `profiles.camfrog.com` with fail-closed security guards, HTTP 429 rate limit backoff halts, Netscape cookie export & raw cookie parsing, CSRF extraction, and best-effort restoration of initial flair color upon completed runs.
+- Added standalone `icon-changer.exe` application with dedicated GUI and CLI for alternating room user-list flair icons via `profiles.camfrog.com` with dynamic external data parsing and best-effort initial icon restoration upon completed runs.
+- Added standalone `name-changer.exe` application providing a local-only prototype GUI and CLI for manual and sequential display-name / nickname switching in-memory with full Thai script (ภาษาไทย, Tahoma typography, UTF-8) and English support, custom name application, and preset pool management (without live profile/client automation).
+- Extended build and packaging infrastructure (`build.bat`, `full-build.bat`, `tools/package.py`, `tools/release.py`, `tools/end_dist_processes.ps1`) to compile, verify, and package all three new executables independently.
+- Added comprehensive unit test suites for all three standalone changers (`tests/test_name_color_changer.py`, `tests/test_icon_changer.py`, `tests/test_name_changer.py`).
+- Updated English and Thai user manuals (`docs/USER-MANUAL-EN.md`, `docs/USER-MANUAL-TH.md`, `README-EN.md`, `README-TH.md`, `docs/gui-split.md`) documenting usage, local prototype boundaries, and capabilities of the standalone apps.
+
 ## [2.19.3] - 2026-10-19
 
 ### Fixed
