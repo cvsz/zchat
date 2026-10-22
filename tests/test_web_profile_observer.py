@@ -129,3 +129,12 @@ def test_invalid_polling_parameters_fail_before_browser(monkeypatch, tmp_path, i
             "--refresh-seconds", str(interval), "--samples", str(samples),
         ])
     assert exc.value.code == 2
+
+
+@pytest.mark.parametrize("selector", [
+    "body", "html", "#profiles-pages", ".nav-popover-username", ".nickname-info",
+])
+def test_generic_profile_selectors_are_not_status_evidence(selector):
+    page = FakePage(observer.profile_url("Seaza"), [FakeNode("Seaza")])
+    with pytest.raises(ValueError, match="not status evidence"):
+        observer.observe(page, "Seaza", "Seaza", selector)
