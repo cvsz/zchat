@@ -75,3 +75,11 @@ Add a child AGENTS.md only when a subtree has durable rules that differ from thi
 For shared ZEAZ governance updates, audit the ZChat runtime first and import only compatible controls. Do not overwrite ZChat-specific safety rules, CI matrices, release workflows, infrastructure ownership, or operational evidence merely to match a generic template.
 
 For repository administration, `scripts/github_admin.py` requires an authenticated GitHub identity with Administration permission. Treat successful read-back verification—not script presence—as evidence that the controls are effective.
+
+## Windows test evidence
+
+- Results not run on Windows must be reported as `NOT RUN`, never as `PASSED` or `UNVERIFIED` to close work.
+- Every Windows test run must attach the log folder path under `reports/windows-runs/<timestamp>/` containing `console.log`, `junit.xml`, `pytest.log`, `exit.txt`.
+- A `BLOCKED` result requires the exact failing import or call (error text), not just "Windows-only".
+- Use `scripts/win-test.sh` for local WSL-to-Windows runs; use `.github/workflows/windows-tests.yml` for CI.
+- The verification package and `windows_tests/` require Windows 11 + real Camfrog for full E2E. Linux-only results are `BLOCKED`, not `PASSED`.

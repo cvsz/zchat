@@ -38,6 +38,7 @@ def _require_live_client():
         pytest.skip(f"No verified live Camfrog client: {exc}")
 
 
+@pytest.mark.live
 def test_live_camfrog_process_discovery_and_authenticode():
     if sys.platform != "win32":
         pytest.fail("This integration test must run on Windows.")
@@ -57,6 +58,7 @@ def test_live_camfrog_process_discovery_and_authenticode():
     assert proc.is_agent_launched is False, "Discovered live process was not launched by agent."
 
 
+@pytest.mark.live
 def test_live_camfrog_window_classification():
     if sys.platform != "win32":
         pytest.fail("This integration test must run on Windows.")
@@ -75,6 +77,7 @@ def test_live_camfrog_window_classification():
         assert revalidate_window_identity(w, att.identity) is True, "Window identity must revalidate successfully."
 
 
+@pytest.mark.live
 def test_live_camfrog_ownership_restrictions():
     if sys.platform != "win32":
         pytest.fail("This integration test must run on Windows.")
@@ -90,6 +93,7 @@ def test_live_camfrog_ownership_restrictions():
     assert revalidate_process_identity(att.identity) is True, "Camfrog process must remain alive."
 
 
+@pytest.mark.live
 def test_live_camfrog_runtime_state_and_evidence_boundaries():
     if sys.platform != "win32":
         pytest.fail("This integration test must run on Windows.")
@@ -115,6 +119,7 @@ def test_live_camfrog_runtime_state_and_evidence_boundaries():
         ), "A negative room-membership result must identify the UI evidence that supports it."
 
 
+@pytest.mark.live
 def test_live_camfrog_diagnostics_sanitized_and_privacy():
     if sys.platform != "win32":
         pytest.fail("This integration test must run on Windows.")
