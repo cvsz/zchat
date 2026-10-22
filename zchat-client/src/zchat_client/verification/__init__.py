@@ -17,13 +17,28 @@ from .sync import sync_keep_log
 from .transport import EvidenceTransport, TransportResult
 
 __all__ = [
-    "__version__",
+    "EvidenceTransport",
+    "FriendListObserver",
+    "NullScreenshotCapture",
+    "Observation",
+    "ScreenshotCapture",
+    "TransportResult",
     "VerificationConfig",
-    "load_config",
     "VerificationLogger",
     "VerificationResult",
+    "VerificationRun",
     "VerificationState",
     "VerificationStateMachine",
+    "__version__",
+    "create_run_dir",
+    "load_config",
+    "normalize_text",
+    "record_request",
+    "sync_keep_log",
+    "texts_equal",
+    "write_checksums",
+    "write_manifest",
+    "write_report",
 ]
 
 __version__ = "0.1.0"
