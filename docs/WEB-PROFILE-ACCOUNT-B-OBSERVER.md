@@ -86,3 +86,23 @@ python -m pytest -q tests/test_web_profile_observer.py
 Release gate: run GitHub CI, inspect status selector and browser behavior
 against the *current* site, perform real two-account acceptance, validate
 evidence privacy, and obtain independent review before merge or deployment.
+
+## Source HTML inspection (2026-10-22)
+
+An operator-provided HTML document for `https://profiles.camfrog.com/th/Seaza`
+contains `var nick = 'Seaza'`, authenticated navigation markup, and an empty
+`<div id="profiles-pages"></div>` Vue mount point. The saved server HTML
+**does not contain a Custom Status field or a validated status CSS selector**.
+It includes a page-level CSRF token; never commit that token or reuse it as
+browser authentication evidence. The displayed header name may identify the
+logged-in account, not the inspected subject, so it cannot prove Account B
+identity or Account A status.
+
+The page imports dynamic JavaScript and can populate the mount point after
+load. The next acceptance step is to inspect a **post-render Chrome DOM** while
+logged in as Account B, record a unique selector for the actual Custom Status
+field, and verify that it changes after Windows Account A changes its status.
+Do not use `.nav-popover-username`, `.nickname-info`, `#profiles-pages`,
+`document.body`, or the URL/title as a substitute for that field.
+If no status field exists on the page, mark this web-observer path `BLOCKED`
+and use a genuine second Camfrog client observer instead.
