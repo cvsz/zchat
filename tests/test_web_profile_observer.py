@@ -99,3 +99,33 @@ def test_invalid_inputs():
                                ("good\nbad", "[data-status]"), ("good", "")]:
         with pytest.raises(ValueError):
             observer.observe(page, "zdevz", expected, selector)
+
+
+def test_default_target_and_refresh_options(monkeypatch, tmp_path):
+    seen = {}
+
+    def fake_run(args):
+        seen["nickname"] = args.nickname
+        seen["refresh_seconds"] = args.refresh_seconds
+        seen["samples"] = args.samples
+        return 0
+
+    monkeypatch.setattr(observer, "run", fake_run)
+    assert observer.main([
+        "--expected", "RUN-001", "--selector", "[data-status]",
+        "--browser-profile", str(tmp_path / "account-b"),
+    ]) == 0
+    assert seen == {"nickname": "Seaza", "refresh_seconds": 30, "samples": 10}
+
+
+@pytest.mark.parametrize("interval,samples", [(0, 3), (9, 3), (301, 3),
+                                               (30, 0), (30, 1001)])
+def test_invalid_polling_parameters_fail_before_browser(monkeypatch, tmp_path, interval, samples):
+    monkeypatch.setattr(observer, "run", lambda _args: pytest.fail("browser must not launch"))
+    with pytest.raises(SystemExit) as exc:
+        observer.main([
+            "--expected", "RUN-001", "--selector", "[data-status]",
+            "--browser-profile", str(tmp_path / "account-b"),
+            "--refresh-seconds", str(interval), "--samples", str(samples),
+        ])
+    assert exc.value.code == 2
