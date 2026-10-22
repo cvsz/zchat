@@ -71,6 +71,11 @@ def observe(page, nickname: str, expected: str, selector: str) -> dict:
             "expected_text_sha256": hashlib.sha256(expected.encode("utf-8")).hexdigest()}
 
 
+def screenshot_allowed(page_url: str, nickname: str, state: str) -> bool:
+    """Capture only a verified profile location and observable status state."""
+    return state in {"WEB_PROFILE_MATCH", "WEB_PROFILE_MISMATCH"} and allowed_url(page_url, nickname)
+
+
 def run(args) -> int:
     from playwright.sync_api import sync_playwright
 
@@ -119,7 +124,9 @@ def run(args) -> int:
                                   error_type=type(exc).__name__)
                 fingerprint = (sample["state"], sample.get("observed_text_sha256"),
                                sample.get("reason"))
-                if sample_index == 0 or fingerprint != previous_fingerprint:
+                if (sample_index == 0 or fingerprint != previous_fingerprint) and screenshot_allowed(
+                    page.url, args.nickname, sample["state"]
+                ):
                     screenshot = output / f"{result['run_id']}-{sample_index + 1:04d}.png"
                     page.screenshot(path=str(screenshot), full_page=False)
                     if os.name != "nt":

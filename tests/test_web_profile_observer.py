@@ -156,3 +156,23 @@ def test_profile_banner_exact_text_without_hardcoded_css():
 
     result = observer.observe(BrowserPage(), "Seaza", ", but every challenge brings", "")
     assert result["state"] == "WEB_PROFILE_MATCH"
+
+
+@pytest.mark.parametrize("state,expected", [
+    ("WEB_PROFILE_MATCH", True),
+    ("WEB_PROFILE_MISMATCH", True),
+    ("UNVERIFIED", False),
+    ("observer_error", False),
+])
+def test_screenshot_requires_observable_status(state, expected):
+    assert observer.screenshot_allowed(observer.profile_url("zdevz"), "zdevz", state) is expected
+
+
+@pytest.mark.parametrize("url", [
+    "https://evil.test/th/zdevz",
+    "https://profiles.camfrog.com.evil.test/th/zdevz",
+    "https://profiles.camfrog.com/login",
+    "http://profiles.camfrog.com/th/zdevz",
+])
+def test_screenshot_rejects_redirected_or_untrusted_pages(url):
+    assert not observer.screenshot_allowed(url, "zdevz", "WEB_PROFILE_MATCH")
