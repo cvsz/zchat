@@ -47,6 +47,7 @@ EXCLUDED_DIRS = {
     ".venv-lin",
     ".venv-runtime",
     ".venv-win",
+    ".venv-observer",
     "venv",
     "build",
     "dist",
