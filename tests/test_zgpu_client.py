@@ -115,6 +115,10 @@ def test_zgpu_health_check():
         assert "Unreachable" in h_fail["error"]
 
 
+from conftest import has_display
+
+
+@pytest.mark.skipif(not has_display(), reason="needs tkinter + display")
 def test_zgpu_tester_gui_headless(monkeypatch):
     import tkinter
     from src.features.zgpu_tester_gui import ZGPUTesterApp
