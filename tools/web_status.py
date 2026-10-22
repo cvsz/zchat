@@ -71,6 +71,16 @@ LOGIN_PAGE_URL = "https://www.camfrog.com/th/login.php"
 WEB_UPDATE_URL = "https://profiles.camfrog.com/ajax/update_status.php"
 HOME_URL = "https://profiles.camfrog.com/home.php"
 
+# Captured from profiles.camfrog.com settings and profile JS
+SETTINGS_URL = "https://profiles.camfrog.com/th/settings.php"
+COLOR_UPDATE_URL = "https://profiles.camfrog.com/th/ajax/update_flair_color.php"
+
+COLOR_ALTERNATE_INTERVAL_MIN = 10.0
+COLOR_ALTERNATE_INTERVAL_DEFAULT = 30.0
+COLOR_ALTERNATE_CYCLES_DEFAULT = 4
+DEFAULT_COLOR_A = 1
+DEFAULT_COLOR_B = 3555
+
 EXIT_OK = 0
 EXIT_USAGE = 2
 EXIT_BLOCKED = 3
@@ -174,6 +184,419 @@ def extract_profile_identity(html):
     """Return the signed-in provider identity exposed by the profile page."""
     return _profile_extract_identity(html)
 
+
+def redact_sensitive(text, secrets=()):
+    """Redact csrf, cookies, PHPSESSID, emails, and sensitive keys from output."""
+    res = str(text)
+    for s in sorted((str(x) for x in secrets if x), key=len, reverse=True):
+        if len(s) <= 3:
+            res = re.sub(r"(?<!\w){0}(?!\w)".format(re.escape(s)), "[redacted]", res)
+        else:
+            res = res.replace(s, "[redacted]")
+    # Sensitive URL parameters or form keys
+    res = re.sub(
+        r"(?i)(\b(?:csrf(?:[_-]?token)?|phpsessid|session[_-]?id|token|password|passwd)\b"
+        r"[\"']?\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;&}\]]+)",
+        r"\1[redacted]", res)
+    # Headers
+    res = re.sub(
+        r"(?im)(\b(?:cookie|set-cookie|authorization)\s*:\s*)[^\r\n]*",
+        r"\1[redacted]", res)
+    # Emails
+    res = re.sub(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b",
+                 "[email redacted]", res)
+    # Stripe keys
+    res = re.sub(r"\b[rsp]k_(?:live|test)_[a-zA-Z0-9]{20,}\b",
+                 "[stripe-key redacted]", res)
+    return res
+
+
+def extract_external_data(html):
+    """Parse var external_data object literal with balanced braces. Fails closed."""
+    if not html:
+        return None
+    m = re.search(r"var\s+external_data\s*=", html)
+    if not m:
+        return None
+    # Match the function body containing return {
+    ret_m = re.search(r"return\s*\{", html[m.end():])
+    if not ret_m:
+        return None
+    start = m.end() + ret_m.end() - 1  # position of '{'
+    depth = 0
+    in_string = False
+    quote_char = ""
+    escape = False
+    for i in range(start, len(html)):
+        char = html[i]
+        if escape:
+            escape = False
+            continue
+        if char == "\\":
+            escape = True
+            continue
+        if in_string:
+            if char == quote_char:
+                in_string = False
+            continue
+        if char in ('"', "'"):
+            in_string = True
+            quote_char = char
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                raw_json = html[start:i + 1]
+                try:
+                    parsed = json.loads(raw_json)
+                    return parsed if isinstance(parsed, dict) else None
+                except (ValueError, TypeError):
+                    return None
+    return None
+
+
+def fetch_settings(opener, timeout):
+    """Fetch settings.php for nickname colors and CSRF."""
+    request = urllib.request.Request(
+        SETTINGS_URL,
+        headers=dict(BROWSER_HEADERS, Referer=HOME_URL),
+    )
+    with opener.open(request, timeout=timeout) as response:
+        body = response.read().decode("utf-8", "replace").strip()
+        status_code = getattr(response, "status", None)
+        if status_code is None and hasattr(response, "getcode"):
+            status_code = response.getcode()
+        return body, status_code
+
+
+def parse_settings_nickname_colors(data):
+    """Extract (current_color_hex, allowed_colors_dict) from external_data.
+
+    Returns (current_hex, {color_id: color_hex}) or raises ValueError if invalid.
+    """
+    if not isinstance(data, dict):
+        raise ValueError("external_data is not an object")
+    if data.get("type") != "settings":
+        raise ValueError("external_data type is not settings")
+    settings = data.get("settings")
+    if not isinstance(settings, dict):
+        raise ValueError("missing settings in external_data")
+    nickname = settings.get("nickname")
+    if not isinstance(nickname, dict):
+        raise ValueError("missing settings.nickname in external_data")
+    colors_list = nickname.get("colors")
+    if not isinstance(colors_list, list):
+        raise ValueError("missing settings.nickname.colors list")
+    allowed = {}
+    for entry in colors_list:
+        if isinstance(entry, dict) and "id" in entry and "color" in entry:
+            try:
+                c_id = int(entry["id"])
+                c_hex = str(entry["color"]).strip().lower()
+                allowed[c_id] = c_hex
+            except (ValueError, TypeError):
+                continue
+    if not allowed:
+        raise ValueError("no valid colors found in settings.nickname.colors")
+    current_hex = str(data.get("nickname_color") or "").strip().lower()
+    return current_hex, allowed
+
+
+def post_flair_color(opener, color_id, csrf, timeout):
+    """POST to update_flair_color.php with form fields csrf and color_id."""
+    data = urllib.parse.urlencode({"csrf": csrf, "color_id": str(color_id)}).encode("utf-8")
+    request = urllib.request.Request(
+        COLOR_UPDATE_URL,
+        data=data,
+        headers=dict(BROWSER_HEADERS, Referer=SETTINGS_URL),
+    )
+    with opener.open(request, timeout=timeout) as response:
+        body = response.read().decode("utf-8", "replace").strip()
+        headers = getattr(response, "headers", None)
+        status_code = getattr(response, "status", None)
+        if status_code is None and hasattr(response, "getcode"):
+            status_code = response.getcode()
+        retry_after = headers.get("Retry-After") if headers is not None else None
+        return body, status_code, retry_after
+
+
+def verify_active_session(opener, expected_login, timeout):
+    """Check logged-in session on profile page. Returns (ok, identity, csrf, error_msg)."""
+    try:
+        html = fetch_profile(opener, expected_login, timeout)
+    except Exception as exc:
+        if isinstance(exc, urllib.error.HTTPError) and exc.code == 429:
+            retry_after = exc.headers.get("Retry-After") if exc.headers else None
+            ra_msg = " (Retry-After: {0})".format(retry_after) if retry_after else ""
+            return False, None, None, "session check rate limited (HTTP 429){0}.".format(ra_msg)
+        return False, None, None, "session check failed: {0}: {1}".format(
+            type(exc).__name__, exc)
+    verdict, _ = summarize_session(html)
+    if verdict != "signed-in":
+        return False, None, None, "session is not signed in."
+    identity = extract_profile_identity(html)
+    if not identity:
+        return False, None, None, "profile page did not provide a verifiable account identity."
+    if expected_login and identity["nickname"].casefold() != str(expected_login).strip().casefold():
+        return False, None, None, "authenticated Camfrog account does not match expected login."
+    csrf = extract_csrf(html)
+    if not csrf:
+        return False, None, None, "no CSRF token found on profile page."
+    return True, identity, csrf, ""
+
+
+def update_nickname_color_once(opener, color_id, expected_color_hex, timeout):
+    """Execute one live color change with full verification and fail-closed stopping.
+
+    Returns (success, verified, message, stop_error).
+    stop_error is True if alternation MUST stop immediately.
+    """
+    try:
+        settings_html, s_code = fetch_settings(opener, timeout)
+    except Exception as exc:
+        if isinstance(exc, urllib.error.HTTPError) and exc.code == 429:
+            retry_after = exc.headers.get("Retry-After") if exc.headers else None
+            ra_msg = " (Retry-After: {0})".format(retry_after) if retry_after else ""
+            return False, False, "HTTP 429 rate limit on settings fetch{0}".format(ra_msg), True
+        return False, False, "settings fetch failed: {0}".format(type(exc).__name__), True
+
+    if s_code != 200:
+        return False, False, "settings fetch returned HTTP {0}".format(s_code), True
+
+    verdict, _ = summarize_session(settings_html)
+    if verdict == "logged-out":
+        return False, False, "session is logged out on settings page", True
+
+    ext_data = extract_external_data(settings_html)
+    if not ext_data:
+        return False, False, "missing or malformed external_data in settings", True
+
+    try:
+        _curr_hex, allowed_colors = parse_settings_nickname_colors(ext_data)
+    except ValueError as exc:
+        return False, False, "failed to parse settings nickname colors: {0}".format(exc), True
+
+    if color_id not in allowed_colors:
+        return False, False, "color_id {0} is not in allowed nickname colors".format(color_id), True
+
+    csrf = extract_csrf(settings_html)
+    if not csrf and isinstance(ext_data.get("csrf"), str):
+        csrf = ext_data["csrf"]
+    if not csrf:
+        return False, False, "no CSRF token found on settings page", True
+
+    try:
+        reply_body, status_code, retry_after = post_flair_color(opener, color_id, csrf, timeout)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429:
+            ra = exc.headers.get("Retry-After") if exc.headers else None
+            ra_msg = " (Retry-After: {0})".format(ra) if ra else ""
+            return False, False, "HTTP 429 rate limited on color update{0}".format(ra_msg), True
+        return False, False, "color update HTTP error {0}".format(exc.code), True
+    except Exception as exc:
+        return False, False, "color update transport error: {0}".format(type(exc).__name__), True
+
+    if status_code == 429:
+        ra_msg = " (Retry-After: {0})".format(retry_after) if retry_after else ""
+        return False, False, "HTTP 429 rate limited on color update{0}".format(ra_msg), True
+
+    if status_code != 200:
+        return False, False, "color update returned HTTP {0}".format(status_code), True
+
+    try:
+        resp_data = json.loads(reply_body)
+    except (ValueError, TypeError):
+        return False, False, "unexpected non-JSON response from color update", True
+
+    if not isinstance(resp_data, dict):
+        return False, False, "unexpected response shape from color update", True
+
+    if resp_data.get("redirect"):
+        return False, False, "session problem: server returned redirect", True
+
+    if resp_data.get("error"):
+        return False, False, "server returned error: {0}".format(resp_data.get("response", True)), True
+
+    # Server acknowledged (HTTP 200)
+    # Verification step: re-read settings.php to verify external_data.nickname_color matches
+    try:
+        verify_html, v_code = fetch_settings(opener, timeout)
+    except Exception:
+        return True, False, "server acknowledged (HTTP 200), but re-read failed: UNVERIFIED", False
+
+    if v_code != 200:
+        return True, False, "server acknowledged (HTTP 200), re-read HTTP {0}: UNVERIFIED".format(v_code), False
+
+    verify_data = extract_external_data(verify_html)
+    if not verify_data:
+        return True, False, "server acknowledged (HTTP 200), re-read missing external_data: UNVERIFIED", False
+
+    try:
+        new_hex, _ = parse_settings_nickname_colors(verify_data)
+    except ValueError:
+        return True, False, "server acknowledged (HTTP 200), re-read parse error: UNVERIFIED", False
+
+    if new_hex.lower() == expected_color_hex.lower():
+        return True, True, "server acknowledged (HTTP 200); color changed to {0}".format(expected_color_hex), False
+    else:
+        return True, False, "server acknowledged (HTTP 200), current color {0} != requested {1}: UNVERIFIED".format(
+            new_hex, expected_color_hex), False
+
+
+def parse_color_alternate_interval(raw):
+    """Clamped interval for nickname color alternator: minimum 10.0s."""
+    try:
+        val = float(str(raw).strip())
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise ValueError("invalid interval: {0!r}".format(raw)) from exc
+    if not math.isfinite(val):
+        raise ValueError("invalid interval: {0!r}".format(raw))
+    return max(COLOR_ALTERNATE_INTERVAL_MIN, val)
+
+
+def run_color_alternator(opener, expected_login, color_a=DEFAULT_COLOR_A,
+                         color_b=DEFAULT_COLOR_B, interval=COLOR_ALTERNATE_INTERVAL_DEFAULT,
+                         max_cycles=COLOR_ALTERNATE_CYCLES_DEFAULT, confirm=False,
+                         timeout=TIMEOUT_DEFAULT, time_module=None, print_fn=print):
+    """Execute color alternator loop (A <-> B).
+
+    Default is dry-run: prints preview and exits 0 without network changes.
+    Live mode requires confirm=True and verified logged-in session.
+    Restores original color on exit.
+    """
+    safe_print = lambda msg, sec=(): print_fn(redact_sensitive(msg, secrets=sec))  # noqa: E731
+    clamped_interval = max(COLOR_ALTERNATE_INTERVAL_MIN, float(interval))
+
+    if not confirm:
+        safe_print("[DRY-RUN] Color alternator preview:")
+        safe_print("  Target account: {0}".format(expected_login or "none"))
+        safe_print("  Color A: id {0}, Color B: id {1}".format(color_a, color_b))
+        safe_print("  Interval: {0}s (min {1}s), Max cycles: {2}".format(
+            clamped_interval, COLOR_ALTERNATE_INTERVAL_MIN, max_cycles))
+        safe_print("  Would fetch {0} for allowed colors and CSRF (token redacted)".format(SETTINGS_URL))
+        safe_print("  Would POST to {0} with color_id and csrf".format(COLOR_UPDATE_URL))
+        safe_print("  Dry-run active; no requests sent. Pass --confirm for live execution.")
+        return EXIT_OK
+
+    if not opener:
+        safe_print("Live color alternator requires a valid session (e.g. --cookies-file or WEBAUTH_USER).")
+        return EXIT_USAGE
+
+    # Gate on verified active session
+    ok_sess, identity, _sess_csrf, sess_err = verify_active_session(opener, expected_login, timeout)
+    if not ok_sess:
+        safe_print("Session verification failed: {0}".format(sess_err))
+        return EXIT_BLOCKED
+
+    # Fetch settings to get initial state and allowed colors
+    try:
+        settings_html, s_code = fetch_settings(opener, timeout)
+    except Exception as exc:
+        if isinstance(exc, urllib.error.HTTPError) and exc.code == 429:
+            ra = exc.headers.get("Retry-After") if exc.headers else None
+            ra_msg = " (Retry-After: {0})".format(ra) if ra else ""
+            safe_print("Initial settings fetch rate limited (HTTP 429){0}".format(ra_msg))
+            return EXIT_BLOCKED
+        safe_print("Initial settings fetch failed: {0}".format(type(exc).__name__))
+        return EXIT_BLOCKED
+
+    if s_code != 200:
+        safe_print("Initial settings fetch returned HTTP {0}".format(s_code))
+        return EXIT_BLOCKED
+
+    ext_data = extract_external_data(settings_html)
+    if not ext_data:
+        safe_print("Failed closed: missing external_data in settings.php")
+        return EXIT_BLOCKED
+
+    try:
+        initial_color_hex, allowed_colors = parse_settings_nickname_colors(ext_data)
+    except ValueError as exc:
+        safe_print("Failed closed: invalid nickname colors structure: {0}".format(exc))
+        return EXIT_BLOCKED
+
+    # Validate color A and B are in allowed_colors
+    if color_a not in allowed_colors:
+        safe_print("Refusing color A: id {0} is not in allowed colors: {1}".format(
+            color_a, sorted(allowed_colors.keys())))
+        return EXIT_USAGE
+    if color_b not in allowed_colors:
+        safe_print("Refusing color B: id {0} is not in allowed colors: {1}".format(
+            color_b, sorted(allowed_colors.keys())))
+        return EXIT_USAGE
+
+    # Find starting color id that matches initial_color_hex if possible
+    initial_color_id = None
+    for cid, chex in allowed_colors.items():
+        if chex.lower() == initial_color_hex.lower():
+            initial_color_id = cid
+            break
+
+    safe_print("Live color alternator started for {0} (initial color: {1}, id: {2})".format(
+        identity["nickname"], initial_color_hex, initial_color_id))
+    safe_print("Allowed colors: {0}".format(
+        ", ".join("{0}: {1}".format(cid, chex) for cid, chex in sorted(allowed_colors.items()))))
+
+    # Alternation order: alternate between A and B
+    targets = [(color_a, allowed_colors[color_a]), (color_b, allowed_colors[color_b])]
+    # Determine first target: if currently A, start with B; otherwise start with A
+    curr_target_idx = 1 if (initial_color_id == color_a) else 0
+
+    import time as _real_time
+    t_mod = time_module or _real_time
+
+    cycle = 0
+    exit_code = EXIT_OK
+    interrupted = False
+
+    try:
+        while cycle < max_cycles:
+            target_id, target_hex = targets[curr_target_idx]
+            safe_print("[Cycle {0}/{1}] Alternating to color_id {2} ({3})...".format(
+                cycle + 1, max_cycles, target_id, target_hex))
+
+            _ack, verified, msg, stop_err = update_nickname_color_once(
+                opener, target_id, target_hex, timeout)
+            safe_print("  Result: {0}".format(msg))
+
+            if stop_err:
+                safe_print("STOPPING IMMEDIATELY: failure or unexpected response encountered.")
+                exit_code = EXIT_BLOCKED
+                break
+
+            curr_target_idx = 1 - curr_target_idx
+            cycle += 1
+
+            if cycle < max_cycles:
+                t_mod.sleep(clamped_interval)
+
+    except KeyboardInterrupt:
+        safe_print("\nColor alternation interrupted by user.")
+        interrupted = True
+    except Exception as exc:
+        safe_print("Unexpected error in alternation loop: {0}".format(type(exc).__name__))
+        exit_code = EXIT_BLOCKED
+
+    # Restore original color on exit
+    if initial_color_id is not None:
+        safe_print("Restoring initial color (id {0}, {1})...".format(
+            initial_color_id, initial_color_hex))
+        _r_ack, r_verified, r_msg, _r_err = update_nickname_color_once(
+            opener, initial_color_id, initial_color_hex, timeout)
+        if r_verified:
+            safe_print("Restoration succeeded: color changed to {0}".format(initial_color_hex))
+        else:
+            safe_print("Restoration {0}: {1}".format(
+                "UNVERIFIED" if _r_ack else "FAILED", r_msg))
+    else:
+        safe_print("Initial color id unknown; skipping restoration.")
+
+    if interrupted:
+        return EXIT_USAGE
+    return exit_code
+
 CAPTURE_STEPS = """\
 To capture the real status-update endpoint:
 1. Log in at https://profiles.camfrog.com/ in your browser.
@@ -229,6 +652,18 @@ def build_parser():
     parser.add_argument("--timeout", type=float, default=TIMEOUT_DEFAULT)
     parser.add_argument("--how-to-capture", action="store_true",
                         help="print how to capture the update endpoint and exit")
+    parser.add_argument("--alternate-colors", action="store_true",
+                        help="alternate nickname color between color A and B (CLI color alternator)")
+    parser.add_argument("--color-a", type=int, default=DEFAULT_COLOR_A,
+                        help="color id for color A (default: 1)")
+    parser.add_argument("--color-b", type=int, default=DEFAULT_COLOR_B,
+                        help="color id for color B (default: 3555)")
+    parser.add_argument("--interval", type=float, default=COLOR_ALTERNATE_INTERVAL_DEFAULT,
+                        help="alternation interval in seconds (default: 30, min: 10)")
+    parser.add_argument("--max-cycles", type=int, default=COLOR_ALTERNATE_CYCLES_DEFAULT,
+                        help="maximum number of color switches (default: 4)")
+    parser.add_argument("--confirm", action="store_true",
+                        help="explicit live consent for color alternation (default is dry-run)")
     return parser
 
 
@@ -728,6 +1163,34 @@ def main(argv=None):
         return EXIT_OK
     if not args.login:
         args.login = (os.environ.get("CAMFROG_USER") or "").strip()
+
+    if args.alternate_colors:
+        # Nickname color alternator workflow
+        opener = None
+        if args.cookies_file or args.chrome or os.environ.get("WEBAUTH_USER"):
+            try:
+                if args.chrome:
+                    jar = import_chrome_jar()
+                elif args.cookies_file:
+                    jar = load_cookie_jar(args.cookies_file)
+                else:
+                    env_cookie = environment_cookie("WEBAUTH_USER", "PHPSESSID")
+                    jar = cookie_from_paste(env_cookie)
+                opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+            except (OSError, ValueError) as exc:
+                print(str(exc))
+                return EXIT_USAGE
+        return run_color_alternator(
+            opener,
+            args.login,
+            color_a=args.color_a,
+            color_b=args.color_b,
+            interval=args.interval,
+            max_cycles=args.max_cycles,
+            confirm=args.confirm,
+            timeout=args.timeout,
+        )
+
     if not args.login or not args.status:
         build_parser().error("--login and --status are required "
                              "(or set CAMFROG_USER in .env)")
