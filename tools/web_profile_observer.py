@@ -125,7 +125,7 @@ def run(args) -> int:
                 previous_fingerprint = fingerprint
                 matching_samples += sample["state"] == "WEB_PROFILE_MATCH"
                 with log_path.open("a", encoding="utf-8") as log_file:
-                    log_file.write(json.dumps(sample, ensure_ascii=False) + "\\n")
+                    log_file.write(json.dumps(sample, ensure_ascii=False) + "\n")
                 if os.name != "nt":
                     log_path.chmod(0o600)
                 print(json.dumps(sample, ensure_ascii=False), flush=True)
