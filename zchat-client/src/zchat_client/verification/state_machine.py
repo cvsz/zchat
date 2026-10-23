@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class VerificationResult(str, Enum):
+class VerificationResult(StrEnum):
     PASS = "PASS"
     FAIL = "FAIL"
     TIMEOUT = "TIMEOUT"
@@ -13,7 +13,7 @@ class VerificationResult(str, Enum):
     INCONCLUSIVE = "INCONCLUSIVE"
 
 
-class VerificationState(str, Enum):
+class VerificationState(StrEnum):
     IDLE = "IDLE"
     STARTED = "STARTED"
     OBSERVING = "OBSERVING"

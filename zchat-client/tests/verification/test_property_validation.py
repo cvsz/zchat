@@ -1,4 +1,3 @@
-import os
 import tempfile
 from pathlib import Path
 
@@ -10,7 +9,7 @@ def test_boolean_parsing_rejects_unknown_spellings():
     for bad in ("maybe", "2", "onion", "", "yes please"):
         try:
             load_config({"ZCHAT_VERIFICATION_ENABLED": bad})
-            assert False, f"accepted {bad!r}"
+            raise AssertionError(f"accepted {bad!r}")
         except ValueError:
             pass
 
@@ -21,7 +20,7 @@ def test_run_id_path_containment_property():
         for bad in ("../x", "a/b", "a\\b", "", ".", "..", "a\x00b"):
             try:
                 create_run_dir(base, bad)
-                assert False, f"accepted {bad!r}"
+                raise AssertionError(f"accepted {bad!r}")
             except ValueError:
                 pass
         # valid

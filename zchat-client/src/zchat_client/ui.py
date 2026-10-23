@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import os
-import shutil
 import queue
+import shutil
 import sys
 import time
 import tkinter as tk

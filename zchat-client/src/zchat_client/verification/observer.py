@@ -7,8 +7,8 @@ control is INCONCLUSIVE, never proof of a successful provider-side mutation.
 from __future__ import annotations
 
 import platform
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from .comparison import normalize_text
 

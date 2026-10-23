@@ -1,5 +1,4 @@
 import pytest
-
 from zchat_client.verification.state_machine import (
     VerificationResult,
     VerificationStateMachine,

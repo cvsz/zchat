@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +17,7 @@ class VerificationLogger:
     def log(self, event: str, **fields: Any) -> dict[str, Any]:
         record = {
             "schema_version": "1.0",
-            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "timestamp_utc": datetime.now(UTC).isoformat(),
             "event": event,
             **fields,
         }

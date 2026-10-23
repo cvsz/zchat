@@ -1,5 +1,4 @@
 import pytest
-
 from zchat_client.verification.config import load_config
 
 
