@@ -185,10 +185,14 @@ def extract_profile_identity(html):
     return _profile_extract_identity(html)
 
 
-def redact_sensitive(text, secrets=()):
-    """Redact csrf, cookies, PHPSESSID, emails, and sensitive keys from output."""
+def redact_sensitive(text, redaction_terms=()):
+    """Redact csrf, cookies, PHPSESSID, emails, and sensitive keys from output.
+
+    ``redaction_terms`` are plaintext values used only as search patterns; they
+    are never composed into the returned text.
+    """
     res = str(text)
-    for s in sorted((str(x) for x in secrets if x), key=len, reverse=True):
+    for s in sorted((str(x) for x in redaction_terms if x), key=len, reverse=True):
         if len(s) <= 3:
             res = re.sub(r"(?<!\w){0}(?!\w)".format(re.escape(s)), "[redacted]", res)
         else:
@@ -466,7 +470,7 @@ def run_color_alternator(opener, expected_login, color_a=DEFAULT_COLOR_A,
     Live mode requires confirm=True and verified logged-in session.
     Restores original color on exit.
     """
-    safe_print = lambda msg, sec=(): print_fn(redact_sensitive(msg, secrets=sec))  # noqa: E731
+    safe_print = lambda msg, sec=(): print_fn(redact_sensitive(msg, redaction_terms=sec))  # noqa: E731
     clamped_interval = max(COLOR_ALTERNATE_INTERVAL_MIN, float(interval))
 
     if not confirm:
