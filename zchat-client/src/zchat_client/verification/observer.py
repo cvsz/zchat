@@ -140,9 +140,7 @@ class FriendListObserver:
                             status_value,
                             row_text or None,
                             "high" if status_value is not None else "low",
-                            "uia_status_field"
-                            if status_value is not None
-                            else "uia_identity_only",
+                            "uia_status_field" if status_value is not None else "uia_identity_only",
                             account_identity=target,
                             process_identity=_process_identity(process),
                             error_reason=None

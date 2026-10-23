@@ -104,23 +104,17 @@ def test_is_verified_camfrog_process_name_only():
 
 
 def test_is_verified_camfrog_process_camfrog_path():
-    proc = SimpleNamespace(
-        name=lambda: "camfrog.exe", exe=lambda: "C:\\\\Camfrog\\\\camfrog.exe"
-    )
+    proc = SimpleNamespace(name=lambda: "camfrog.exe", exe=lambda: "C:\\\\Camfrog\\\\camfrog.exe")
     assert _is_verified_camfrog_process(proc) is True
 
 
 def test_is_verified_camfrog_process_wrong_name():
-    proc = SimpleNamespace(
-        name=lambda: "notcamfrog.exe", exe=lambda: "C:\\\\notcamfrog\\\\foo.exe"
-    )
+    proc = SimpleNamespace(name=lambda: "notcamfrog.exe", exe=lambda: "C:\\\\notcamfrog\\\\foo.exe")
     assert _is_verified_camfrog_process(proc) is False
 
 
 def test_is_verified_camfrog_process_non_camfrog_exe_path():
-    proc = SimpleNamespace(
-        name=lambda: "camfrog.exe", exe=lambda: "C:\\\\OtherApp\\\\foo.exe"
-    )
+    proc = SimpleNamespace(name=lambda: "camfrog.exe", exe=lambda: "C:\\\\OtherApp\\\\foo.exe")
     assert _is_verified_camfrog_process(proc) is False
 
 
@@ -172,9 +166,7 @@ def test_read_control_value_pattern_raises_returns_none():
 
 
 def test_discover_row_status_single_candidate_returns_value():
-    ctrl = SimpleNamespace(
-        get_value_pattern=lambda: SimpleNamespace(Value="Custom status")
-    )
+    ctrl = SimpleNamespace(get_value_pattern=lambda: SimpleNamespace(Value="Custom status"))
     row = SimpleNamespace(descendants=lambda: [ctrl])
     assert _discover_row_status(row) == "Custom status"
 
@@ -193,7 +185,5 @@ def test_discover_row_status_multiple_candidates_returns_none():
 
 
 def test_discover_row_status_descendants_raises_returns_none():
-    row = SimpleNamespace(
-        descendants=lambda: (_ for _ in ()).throw(RuntimeError("boom"))
-    )
+    row = SimpleNamespace(descendants=lambda: (_ for _ in ()).throw(RuntimeError("boom")))
     assert _discover_row_status(row) is None
