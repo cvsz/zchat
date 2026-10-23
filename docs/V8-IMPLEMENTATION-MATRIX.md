@@ -1,4 +1,4 @@
-# ZChat V8 Implementation Matrix (source-backed, exact head 9702a19)
+# ZChat V8 Implementation Matrix (source-backed, final head 7b1d0e4946096cde03cee498c6b54ced2a6f85b2)
 
 Evidence states follow AGENTS.md: VERIFIED / PARTIALLY VERIFIED / UNVERIFIED / BLOCKED / NOT APPLICABLE.
 Unit/CI-green is never conflated with external-provider execution. "Native Camfrog E2E" means a real
@@ -8,7 +8,8 @@ two-account Windows+Linux acceptance run with reconciled evidence at one exact h
 
 | Area | State | Evidence |
 | --- | --- | --- |
-| Open PRs | NOT APPLICABLE | `gh pr list --state open` is empty as of this run (all of #50/#51/#57/#61/#69/#79 resolved with review evidence). |
+| Open PRs | NOT APPLICABLE | `gh pr list --state open` is empty; #50/#51/#57/#61/#69/#79/#80/#81 all resolved with review evidence. |
+| Open CodeQL alerts | NOT APPLICABLE | 0 open as of final state (both PR #81 remediation queries cleared locally via CodeQL CLI 2.27.3 over a fresh database and via the default-branch analysis run). |
 | Stale branches | PARTIALLY VERIFIED | Many `origin/*` branches predate current main; none hold unique merged-in-review content after the #61 supersede mapping. Deletion is an owner decision, not enforced here. |
 | Governance | VERIFIED | AGENTS.md/CLAUDE.md/GEMINI.md converge on the same hard rules (fail-closed, NOT RUN evidence, no synthetics). |
 
@@ -66,3 +67,4 @@ observer bundle; the tools refuse to fabricate an EXTERNAL_EFFECT_VERIFIED state
 Command evidence recorded in the PR body after execution.
 
 - Windows native suite and native Camfrog acceptance: NOT RUN here (CI runners cover the packaged smoke/runtime fixtures).
+- Final CI state (PR #81 head c662dc9): all required checks passed (build-windows x2, test x2, control-server x2, windows-tests, CodeQL, dependency-review, Analyze GitHub Actions); 0 open CodeQL alerts.
