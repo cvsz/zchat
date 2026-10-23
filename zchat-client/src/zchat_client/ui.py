@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import queue
+import shutil
 import sys
 import time
 import tkinter as tk
@@ -1087,6 +1088,7 @@ SHELL_TEXT = {
         "nav_monitor": "Process Monitor",
         "nav_private_chat": "Private Chat",
         "nav_status": "Status Changer",
+        "nav_keep_log": "Keep Log",
     },
     "th": {
         "title": "ZChat Client",
@@ -1094,6 +1096,7 @@ SHELL_TEXT = {
         "nav_monitor": "Process Monitor",
         "nav_private_chat": "แชตส่วนตัว",
         "nav_status": "เปลี่ยนสถานะ",
+        "nav_keep_log": "บันทึก Keep",
     },
 }
 
@@ -1105,7 +1108,7 @@ class UnifiedClientWindow:
     feature executables are not launched by the unified client.
     """
 
-    PAGES = ("agent", "monitor", "private_chat", "status")
+    PAGES = ("agent", "monitor", "private_chat", "status", "keep_log")
 
     def __init__(
         self,
@@ -1154,6 +1157,10 @@ class UnifiedClientWindow:
         # The shared Status Changer applies a Tk frame background directly.
         self.status_host = tk.Frame(self.container, background=PALETTE["background"])
         self.pages["status"] = self.status_host
+        # Keep Log page: friend list status and kept log.
+        self.keep_log_host = tk.Frame(self.container, background=PALETTE["background"])
+        self.pages["keep_log"] = self.keep_log_host
+        self._build_keep_log_page(self.keep_log_host)
 
         self.language.trace_add("write", lambda *_: self._apply_shell_language())
         self._current: str | None = None
@@ -1177,7 +1184,129 @@ class UnifiedClientWindow:
         self.nav_buttons["monitor"].configure(text=table["nav_monitor"])
         self.nav_buttons["private_chat"].configure(text=table["nav_private_chat"])
         self.nav_buttons["status"].configure(text=table["nav_status"])
+        self.nav_buttons["keep_log"].configure(text=table["nav_keep_log"])
         self.monitor_page.apply_language()
+
+    def _build_keep_log_page(self, host: tk.Frame) -> None:
+        host.pack_propagate(False)
+        title = tk.Label(
+            host,
+            text="Keep Log",
+            background=PALETTE["background"],
+            foreground=PALETTE["text"],
+            font=("Segoe UI", 12, "bold"),
+        )
+        title.pack(anchor=tk.W, padx=8, pady=(8, 4))
+        body = tk.Frame(host, background=PALETTE["background"])
+        body.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
+
+        form = tk.Frame(body, background=PALETTE["background"])
+        form.pack(fill=tk.X, pady=(0, 8))
+        tk.Label(
+            form,
+            text="Friend",
+            background=PALETTE["background"],
+            foreground=PALETTE["text"],
+        ).grid(row=0, column=0, sticky=tk.W, padx=(0, 6))
+        self.keep_log_friend_entry = tk.Entry(form, width=24)
+        self.keep_log_friend_entry.grid(row=0, column=1, sticky=tk.W, padx=(0, 12))
+        tk.Label(
+            form,
+            text="Status",
+            background=PALETTE["background"],
+            foreground=PALETTE["text"],
+        ).grid(row=0, column=2, sticky=tk.W, padx=(0, 6))
+        self.keep_log_status_entry = tk.Entry(form, width=24)
+        self.keep_log_status_entry.grid(row=0, column=3, sticky=tk.W, padx=(0, 12))
+        keep_button = tk.Button(form, text="Keep Log", command=self._keep_log_entry)
+        keep_button.grid(row=0, column=4, sticky=tk.W, padx=(0, 6))
+        discovery_button = tk.Button(form, text="Discovery", command=self._discovery_entry)
+        discovery_button.grid(row=0, column=5, sticky=tk.W)
+
+        friend_label = tk.Label(
+            body,
+            text="Friend list status",
+            background=PALETTE["background"],
+            foreground=PALETTE["text"],
+        )
+        friend_label.pack(anchor=tk.W)
+        self.keep_log_friends = tk.Listbox(body, height=8)
+        self.keep_log_friends.pack(fill=tk.X, pady=(2, 8))
+
+        log_label = tk.Label(
+            body,
+            text="Kept log",
+            background=PALETTE["background"],
+            foreground=PALETTE["text"],
+        )
+        log_label.pack(anchor=tk.W)
+        self.keep_log_text = tk.Text(body, height=10, state=tk.DISABLED)
+        self.keep_log_text.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
+        self._keep_log_path = (
+            Path(os.environ.get("LOCALAPPDATA") or (Path.home() / ".zchat"))
+            / "ZChat"
+            / "keep_log.txt"
+        )
+        self._load_keep_log()
+
+    def _load_keep_log(self) -> None:
+        try:
+            if self._keep_log_path.exists():
+                try:
+                    content = self._keep_log_path.read_text(encoding="utf-8")
+                except UnicodeDecodeError:
+                    stamp = datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%z")
+                    quarantined = self._keep_log_path.with_name(f"keep_log.corrupt-{stamp}")
+                    try:
+                        shutil.move(str(self._keep_log_path), str(quarantined))
+                    except OSError:
+                        pass
+                    messagebox.showwarning(
+                        "Keep Log",
+                        "keep_log.txt contained invalid UTF-8 and was quarantined. "
+                        "A new log will be started.",
+                    )
+                    return
+                self.keep_log_text.configure(state=tk.NORMAL)
+                self.keep_log_text.insert(tk.END, content)
+                self.keep_log_text.see(tk.END)
+                self.keep_log_text.configure(state=tk.DISABLED)
+        except OSError:
+            pass
+
+    def _append_keep_log_file(self, entry: str) -> bool:
+        try:
+            self._keep_log_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._keep_log_path.open("a", encoding="utf-8") as f:
+                f.write(entry + "\n")
+        except OSError as exc:
+            messagebox.showerror("Keep Log", f"Could not save log: {exc}")
+            return False
+        return True
+
+    def _keep_log_entry(self) -> None:
+        friend = self.keep_log_friend_entry.get().strip()
+        status = self.keep_log_status_entry.get().strip()
+        if not friend or not status:
+            return
+        timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+        entry = f"[{timestamp}] {friend}: {status}"
+        if not self._append_keep_log_file(entry):
+            return
+        self.keep_log_friends.insert(tk.END, f"{friend} - {status}")
+        self.keep_log_text.configure(state=tk.NORMAL)
+        self.keep_log_text.insert(tk.END, entry + "\n")
+        self.keep_log_text.see(tk.END)
+        self.keep_log_text.configure(state=tk.DISABLED)
+        self.keep_log_friend_entry.delete(0, tk.END)
+        self.keep_log_status_entry.delete(0, tk.END)
+
+    def _discovery_entry(self) -> None:
+        """Do not confuse a typed friend name with a verified Camfrog observation."""
+        messagebox.showwarning(
+            "Discovery unavailable",
+            "Real Camfrog friend-list observation is not implemented. No status has been verified.",
+        )
 
     def show_page(self, name: str) -> None:
         """Display one page; unknown names fail closed on the current page."""
