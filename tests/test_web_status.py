@@ -459,10 +459,11 @@ def test_live_update_reports_wrong_password(monkeypatch):
 
 
 def test_env_enc_is_gitignored():
-    import subprocess
+    import subprocess, os
     root = Path(__file__).resolve().parents[1]
-    rc = subprocess.run(["git", "-C", str(root), "check-ignore", ".env.enc"],
-                        capture_output=True)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    rc = subprocess.run(["git", "-c", "safe.directory=*", "-C", str(root), "check-ignore", ".env.enc"],
+                        capture_output=True, env=env)
     assert rc.returncode == 0, ".env.enc must be git-ignored"
 
 

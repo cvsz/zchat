@@ -14,6 +14,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Extended build and packaging infrastructure (`build.bat`, `full-build.bat`, `tools/package.py`, `tools/release.py`, `tools/end_dist_processes.ps1`) to compile, verify, and package all three new executables independently.
 - Added comprehensive unit test suites for all three standalone changers (`tests/test_name_color_changer.py`, `tests/test_icon_changer.py`, `tests/test_name_changer.py`).
 - Updated English and Thai user manuals (`docs/USER-MANUAL-EN.md`, `docs/USER-MANUAL-TH.md`, `README-EN.md`, `README-TH.md`, `docs/gui-split.md`) documenting usage, local prototype boundaries, and capabilities of the standalone apps.
+- Added the zGPU RPC client (`src/camfrog/zgpu_client.py`) and the local zGPU LLM Acceleration Studio Tk panel (`src/features/zgpu_tester_gui.py`): JSON-RPC generation and health checks against an operator-configured zGPU endpoint with timeout clamping, API-key header handling, and fail-closed structured errors. The panel is local tooling and is not one of the packaged executables.
+- Added `GEMINI.md` operating instructions mirroring the repository agent contract for Gemini CLI sessions.
+- Added regression tests for the zGPU client endpoint, structured responses, RPC errors, network failures, and the test panel; standalone changer GUI tests now mock the win32 clipboard for cross-platform runs.
+
+### Fixed
+- Enabled clipboard shortcuts and right-click context menus (cut/copy/paste/select-all) in the standalone Name Changer, Name Color Changer, and Room Icon Changer GUIs via the shared `ClipboardController`.
+- The `.env.enc` gitignore guard no longer picks up caller `GIT_*` environment variables and forces `safe.directory=*`, so repository-version checks run reliably in restricted environments.
+- Repository markdown-link validation now also excludes `.venv-observer/`, and pytest suppresses third-party `SyntaxWarning` noise from bundled vendor modules.
+- Corrected the English and Thai app tables to merge the duplicated `status-changer` row and align the packaged-app count with `build.bat`.
 
 ## [2.19.3] - 2026-10-19
 
