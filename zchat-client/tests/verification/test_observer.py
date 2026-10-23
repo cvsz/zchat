@@ -311,17 +311,19 @@ def test_discover_row_status_control_value_raises_skipped():
     row = SimpleNamespace(descendants=lambda: [bad_ctrl, good_ctrl])
     assert _discover_row_status(row) == "Good status"
 
+
 # ---------- Real pywinauto UIAWrapper metadata contract ----------
 
 
 def _uia_wrapper_status_control(
-    *, name="Custom status text", automation_id="statusValue",
-    enabled=True, visible=True,
+    *,
+    name="Custom status text",
+    automation_id="statusValue",
+    enabled=True,
+    visible=True,
 ):
     return SimpleNamespace(
-        element_info=SimpleNamespace(
-            control_type="Text", name=name, automation_id=automation_id
-        ),
+        element_info=SimpleNamespace(control_type="Text", name=name, automation_id=automation_id),
         is_enabled=lambda: enabled,
         is_visible=lambda: visible,
         get_value=lambda: "Hello from the status field",
@@ -342,9 +344,7 @@ def test_is_custom_status_control_real_uia_wrapper_inactive(enabled, visible):
 
 
 def test_is_custom_status_control_real_uia_wrapper_decoy_rejected():
-    control = _uia_wrapper_status_control(
-        name="Profile flair", automation_id="statusTooltip"
-    )
+    control = _uia_wrapper_status_control(name="Profile flair", automation_id="statusTooltip")
     assert _is_custom_status_control(control) is False
 
 
