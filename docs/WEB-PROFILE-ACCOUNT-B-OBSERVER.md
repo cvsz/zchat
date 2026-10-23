@@ -138,3 +138,25 @@ and observe it from a separately authenticated Account B browser session.
 Require at least a before/after transition and correlate independent
 Windows-worker events and timestamps with observer samples before
 classifying an actual status change as verified.
+
+## Evidence bundle schema
+
+Each run writes into `--output` (directory mode `0700` on POSIX; files `0600`):
+
+| File | Content |
+| --- | --- |
+| `<run_id>.jsonl` | One JSON object per sample: `run_id`, `sample_index`, UTC `observed_at`, `nickname` (Account A), `source`, `state`, `reason`, `observed_text_sha256`, `expected_text_sha256`, `screenshot_file`, `screenshot_sha256`, `error_type` (on failure), plus the optional linkage fields below. No rendered text is stored. |
+| `<run_id>.png` | Viewport screenshot on the first sample and on each fingerprint transition. |
+| `<run_id>.json` | Run-level observation record (same fields as the last sample). |
+| `summary.json` | Reconciled stage chain for the run: state counts, first/last observed hashes, `transition_detected`, `web_profile_observed`, and an explicit `stage_chain` in which `COMMAND_ACCEPTED`/`WORKER_EXECUTED` are `EXTERNAL_NOT_OBSERVED_BY_THIS_TOOL` and `EXTERNAL_EFFECT_VERIFIED` is always `false` from this tool. |
+| `manifest.json` | SHA-256 and size for every evidence file in the directory (manifest excludes itself), with the run id and generation time. |
+
+Optional linkage flags (never auto-captured):
+
+- `--command-id <string>`: stamps the Windows-side request id this run corroborates
+  into every sample, in `summary.json` and in the run-level record.
+- `--account-b-reference <string>`: operator-supplied opaque Account B identity
+  reference for the bundle. The tool never reads or stores browser session identity.
+
+A full two-account acceptance procedure with exact commands, the stop check, and
+reviewer duties is in [`docs/TWO-ACCOUNT-ACCEPTANCE-RUNBOOK.md`](TWO-ACCOUNT-ACCEPTANCE-RUNBOOK.md).
