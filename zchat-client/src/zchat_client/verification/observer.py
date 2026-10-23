@@ -159,9 +159,7 @@ class FriendListObserver:
                             status_value,
                             row_text or None,
                             "high" if status_value is not None else "low",
-                            "uia_status_field"
-                            if status_value is not None
-                            else "uia_identity_only",
+                            "uia_status_field" if status_value is not None else "uia_identity_only",
                             account_identity=target,
                             process_identity=_process_identity(process),
                             error_reason=None
@@ -296,9 +294,7 @@ def _is_custom_status_control(control: Any) -> bool:
     except Exception:  # noqa: BLE001 - fail-closed: untrusted control object.
         aid = ""
     combined = f"{aid} {name}".casefold()
-    return "status" in combined and not any(
-        hint in combined for hint in _NON_STATUS_NAME_HINTS
-    )
+    return "status" in combined and not any(hint in combined for hint in _NON_STATUS_NAME_HINTS)
 
 
 def _discover_row_status(row_item: Any) -> str | None:

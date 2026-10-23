@@ -64,13 +64,11 @@ def load_config(env: dict[str, str] | None = None) -> VerificationConfig:
         run_timeout_seconds=timeout,
         poll_interval_seconds=poll,
         evidence_enabled=_bool("ZCHAT_EVIDENCE_ENABLED", True),
-        evidence_dir=source.get("ZCHAT_EVIDENCE_DIR", "./evidence").strip()
-        or "./evidence",
+        evidence_dir=source.get("ZCHAT_EVIDENCE_DIR", "./evidence").strip() or "./evidence",
         evidence_retention_days=retention,
         evidence_screenshots=_bool("ZCHAT_EVIDENCE_SCREENSHOTS", True),
         evidence_redact_pii=_bool("ZCHAT_EVIDENCE_REDACT_PII", True),
-        observer_host=source.get("ZCHAT_OBSERVER_HOST", "127.0.0.1").strip()
-        or "127.0.0.1",
+        observer_host=source.get("ZCHAT_OBSERVER_HOST", "127.0.0.1").strip() or "127.0.0.1",
         observer_port=port,
         observer_tls_enabled=_bool("ZCHAT_OBSERVER_TLS_ENABLED", True),
     )

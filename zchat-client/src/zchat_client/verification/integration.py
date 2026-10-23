@@ -16,9 +16,7 @@ class VerificationRun:
     started_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
-def record_request(
-    logger: VerificationLogger, run: VerificationRun, module: str
-) -> None:
+def record_request(logger: VerificationLogger, run: VerificationRun, module: str) -> None:
     logger.log(
         "status_change_requested",
         verification_run_id=run.run_id,

@@ -32,6 +32,4 @@ def test_invalid_boolean_fails_closed(key):
 
 
 def test_explicit_false_boolean_is_accepted():
-    assert (
-        load_config({"ZCHAT_EVIDENCE_REDACT_PII": "false"}).evidence_redact_pii is False
-    )
+    assert load_config({"ZCHAT_EVIDENCE_REDACT_PII": "false"}).evidence_redact_pii is False
