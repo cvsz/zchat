@@ -293,6 +293,7 @@ def _is_custom_status_control(control: Any) -> bool:
     combined = f"{aid} {name}".casefold()
     return "status" in combined and not any(hint in combined for hint in _NON_STATUS_NAME_HINTS)
 
+
 def _discover_row_status(row_item: Any) -> str | None:
     """Inspect UIA children of a friend-list row for the Custom Status field.
 
