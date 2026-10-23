@@ -200,16 +200,23 @@ _WEB_STATUS_LOG_LOCK = threading.Lock()
 _GUI_CALLBACK_MARKER = object()
 
 
-def _sanitize_web_status_detail(value, secrets=()):
-    """Bound diagnostics and remove cookie, token, and caller-known secret values."""
+def _sanitize_web_status_detail(value, redaction_terms=()):
+    """Bound diagnostics and remove cookie, token, and caller-known secret values.
+
+    ``redaction_terms`` holds the plaintext values that must never appear in a
+    stored line. The values are search patterns for the redaction passes only:
+    they are never composed into the returned detail, and the fail-closed check
+    below discards the entire detail if any term would still survive.
+    """
     text = str(value)
-    for secret in sorted((str(item) for item in secrets if item),
-                         key=len, reverse=True):
-        if len(secret) <= 3:
-            text = re.sub(r"(?<!\w){0}(?!\w)".format(re.escape(secret)),
+    redaction_terms = sorted((str(item) for item in redaction_terms if item),
+                             key=len, reverse=True)
+    for term in redaction_terms:
+        if len(term) <= 3:
+            text = re.sub(r"(?<!\w){0}(?!\w)".format(re.escape(term)),
                           "[redacted]", text)
         else:
-            text = text.replace(secret, "[redacted]")
+            text = text.replace(term, "[redacted]")
     text = re.sub(
         r"(?im)(\b(?:cookie|set-cookie|authorization)\s*:\s*)[^\r\n]*",
         r"\1[redacted]", text)
@@ -224,6 +231,13 @@ def _sanitize_web_status_detail(value, secrets=()):
                   "[number redacted]", text)
     text = re.sub(r"[\x00-\x1f\x7f]+", " ", text)
     text = re.sub(r"\s+", " ", text).replace("|", "/").strip()
+    # Fail closed: value splitting or whitespace folding can leave a
+    # caller-known secret partly intact; if any survives, discard the whole
+    # detail rather than store a partial leak.
+    for term in redaction_terms:
+        collapsed = " ".join(term.split())
+        if term in text or (collapsed != term and collapsed in text):
+            return "[redacted-detail]"
     if len(text) > WEB_STATUS_LOG_DETAIL_MAX_CHARS:
         text = text[:WEB_STATUS_LOG_DETAIL_MAX_CHARS - 14].rstrip() + " [truncated]"
     return text
@@ -243,10 +257,10 @@ def _web_status_response_keys(data):
     return ",".join(sorted(set(safe))[:12]) or "none"
 
 
-def _web_status_value_summary(value, secrets=()):
+def _web_status_value_summary(value, redaction_terms=()):
     if isinstance(value, str):
         return "string({0} chars): {1}".format(
-            len(value), _sanitize_web_status_detail(value, secrets=secrets))
+            len(value), _sanitize_web_status_detail(value, redaction_terms=redaction_terms))
     if isinstance(value, (bool, int, float)) or value is None:
         return "{0}: {1}".format(type(value).__name__, value)
     if isinstance(value, (dict, list, tuple)):
@@ -275,10 +289,10 @@ class _VisibleResponseText(HTMLParser):
             self.parts.append(data.strip())
 
 
-def _web_status_error_response_summary(value, secrets=()):
+def _web_status_error_response_summary(value, redaction_terms=()):
     """Summarize visible server error text while excluding markup and common PII."""
     if not isinstance(value, str):
-        return _web_status_value_summary(value, secrets=secrets)
+        return _web_status_value_summary(value, redaction_terms=redaction_terms)
     parser = _VisibleResponseText()
     try:
         parser.feed(value)
@@ -286,7 +300,7 @@ def _web_status_error_response_summary(value, secrets=()):
         visible = " ".join(parser.parts)
     except Exception:
         visible = value
-    visible = _sanitize_web_status_detail(visible, secrets=secrets)
+    visible = _sanitize_web_status_detail(visible, redaction_terms=redaction_terms)
     if len(visible) > 300:
         visible = visible[:286].rstrip() + " [truncated]"
     return "string({0} chars); visible_text={1}".format(len(value), visible or "empty")
@@ -332,7 +346,7 @@ def _session_cookie_redaction_values(cookie):
     return tuple(result)
 
 
-def _web_status_request_error(stage, exc, secrets=()):
+def _web_status_request_error(stage, exc, redaction_terms=()):
     """Describe a failed HTTP request without recording response headers or secrets."""
     if isinstance(exc, urllib.error.HTTPError):
         parts = ["{0}: HTTPError HTTP {1}".format(stage, exc.code)]
@@ -365,27 +379,28 @@ def _web_status_request_error(stage, exc, secrets=()):
                         if parsed.get("error"):
                             parts.append("server_error={0}".format(
                                 _web_status_value_summary(
-                                    parsed.get("error"), secrets=secrets)))
+                                    parsed.get("error"), redaction_terms=redaction_terms)))
                     else:
                         parts.append("response_json_type={0}".format(
                             type(parsed).__name__))
         except Exception:
             parts.append("response_body=unavailable")
-        return _sanitize_web_status_detail("; ".join(parts), secrets=secrets)
+        return _sanitize_web_status_detail("; ".join(parts), redaction_terms=redaction_terms)
     if isinstance(exc, urllib.error.URLError):
         reason = exc.reason
         description = "{0}: URLError reason={1}".format(stage, reason)
     else:
         description = "{0}: {1}: {2}".format(
             stage, type(exc).__name__, exc)
-    return _sanitize_web_status_detail(description, secrets=secrets)
+    return _sanitize_web_status_detail(description, redaction_terms=redaction_terms)
 
 
 def web_status_log_path():
     return BASE / WEB_STATUS_LOG_NAME
 
 
-def _web_status_log_entry(event, now=None, detail=None, secrets=(), language="en"):
+def _web_status_log_entry(event, now=None, detail=None, redaction_terms=(),
+                          language="en"):
     try:
         label = WEB_STATUS_LOG_EVENTS[event]
     except (KeyError, TypeError) as exc:
@@ -398,7 +413,7 @@ def _web_status_log_entry(event, now=None, detail=None, secrets=(), language="en
         if event not in WEB_STATUS_LOG_DETAIL_EVENTS:
             raise ValueError(
                 "details are only allowed for diagnostic or rotation events")
-        sanitized = _sanitize_web_status_detail(detail, secrets=secrets)
+        sanitized = _sanitize_web_status_detail(detail, redaction_terms=redaction_terms)
         if sanitized:
             entry += " | " + sanitized
     return entry
@@ -414,11 +429,12 @@ def load_web_status_log(path=None):
                 if line.strip()]
 
 
-def append_web_status_log(event, path=None, now=None, detail=None, secrets=(),
-                          language="en"):
+def append_web_status_log(event, path=None, now=None, detail=None,
+                          redaction_terms=(), language="en"):
     """Append one allowlisted event with bounded, redacted details."""
     entry = _web_status_log_entry(
-        event, now, detail=detail, secrets=secrets, language=language)
+        event, now, detail=detail, redaction_terms=redaction_terms,
+        language=language)
     log_path = Path(path) if path is not None else web_status_log_path()
     encoded = (entry + "\n").encode("utf-8")
     with _WEB_STATUS_LOG_LOCK:
@@ -1697,7 +1713,7 @@ def perform_update(opener, status, timeout, confirm=False, cancelled=None,
         raise
     except Exception as exc:
         return False, _web_status_request_error(
-            "GET /home.php", exc, secrets=(status,))
+            "GET /home.php", exc, redaction_terms=(status,))
     _raise_if_update_cancelled(cancelled)
     identity = extract_profile_identity(html)
     if identity is None:
@@ -1719,7 +1735,7 @@ def perform_update(opener, status, timeout, confirm=False, cancelled=None,
                       {"status": status, "csrf": csrf}, timeout)
     except Exception as exc:
         detail = _web_status_request_error(
-            "POST /ajax/update_status.php", exc, secrets=(status, csrf))
+            "POST /ajax/update_status.php", exc, redaction_terms=(status, csrf))
         if isinstance(exc, urllib.error.HTTPError) and 400 <= exc.code < 500:
             return False, "update refused by profile endpoint; {0}.".format(detail)
         return False, ("update outcome unknown: {0}; check the profile before "
@@ -1765,12 +1781,12 @@ def perform_update(opener, status, timeout, confirm=False, cancelled=None,
             context = "{0}; retry_after={1:g}".format(context, retry_after)
     if data.get("error"):
         response_summary = _web_status_error_response_summary(
-            data.get("response", "missing"), secrets=(status, csrf))
+            data.get("response", "missing"), redaction_terms=(status, csrf))
         return False, ("update refused by the server; response_keys={0}; "
                        "error={1}; server_response={2}; {3}.").format(
                            _web_status_response_keys(data),
                            _web_status_value_summary(
-                               data.get("error"), secrets=(status, csrf)),
+                               data.get("error"), redaction_terms=(status, csrf)),
                            response_summary, context)
     # Camfrog's profile form treats a non-empty response string as success and
     # writes it back into the status field. It does not require the literal "ok".
@@ -5847,15 +5863,15 @@ class WebStatusManager:
             parts[1] = WEB_STATUS_LOG_LABELS_EN.get(parts[1], parts[1])
         return " | ".join(parts)
 
-    def _record_activity(self, event, detail=None, secrets=()):
+    def _record_activity(self, event, detail=None, redaction_terms=()):
         try:
             entry = append_web_status_log(
-                event, detail=detail, secrets=secrets,
+                event, detail=detail, redaction_terms=redaction_terms,
                 language=getattr(self, "_language", "en"))
         except (OSError, ValueError) as exc:
             try:
                 entry = _web_status_log_entry(
-                    event, detail=detail, secrets=secrets,
+                    event, detail=detail, redaction_terms=redaction_terms,
                     language=getattr(self, "_language", "en"))
             except ValueError:
                 return
@@ -6106,7 +6122,7 @@ class WebStatusManager:
             except Exception as exc:
                 diagnostic = _web_status_request_error(
                     "cloudbot connection", exc,
-                    secrets=(login, cloudbot_token))
+                    redaction_terms=(login, cloudbot_token))
                 raise RuntimeError(diagnostic) from exc
 
         self._record_activity("browser_login_started")
@@ -6129,7 +6145,7 @@ class WebStatusManager:
             self._set_note("Stop the live rotation before starting another network task.")
             return
         failure_detail = []
-        cookie_secrets = _session_cookie_redaction_values(
+        redaction_terms = _session_cookie_redaction_values(
             getattr(self, "cookie_paste", ""))
 
         def do():
@@ -6147,7 +6163,7 @@ class WebStatusManager:
             except Exception as exc:
                 diagnostic = _web_status_request_error(
                     "session verification GET /home.php", exc,
-                    secrets=(login,) + cookie_secrets)
+                    redaction_terms=(login,) + redaction_terms)
                 failure_detail[:] = [diagnostic]
                 raise RuntimeError(diagnostic) from exc
 
@@ -6163,7 +6179,7 @@ class WebStatusManager:
                 "session_verification_failed",
                 detail=failure_detail[0] if failure_detail else
                 "session verification worker failed without diagnostic details",
-                secrets=cookie_secrets))
+                redaction_terms=redaction_terms))
 
     def login_via_browser(self):
         """One-click login: the real browser solves the CAPTCHA and the
@@ -6438,9 +6454,9 @@ class WebStatusManager:
         slot_index = index % len(pool)
         step_delay = web_status_rotation_delay(
             interval, live, marquee=marquee, frame_seconds=frame_seconds)
-        cookie_secrets = _session_cookie_redaction_values(
+        redaction_terms = _session_cookie_redaction_values(
             getattr(self, "cookie_paste", ""))
-        diagnostic_secrets = (frame, login) + cookie_secrets
+        diagnostic_redaction_terms = (frame, login) + redaction_terms
         failure_detail = []
         retry_context = []
         post_started = []
@@ -6471,7 +6487,7 @@ class WebStatusManager:
                     expected_login=login)
                 if not ok:
                     diagnostic = _sanitize_web_status_detail(
-                        message, secrets=diagnostic_secrets)
+                        message, redaction_terms=diagnostic_redaction_terms)
                     failure_detail[:] = [diagnostic]
                     if message.startswith("update outcome unknown:"):
                         unknown_outcome[:] = [True]
@@ -6485,7 +6501,7 @@ class WebStatusManager:
                 return ""
             except Exception as exc:
                 diagnostic = _web_status_request_error(
-                    "live status update", exc, secrets=diagnostic_secrets)
+                    "live status update", exc, redaction_terms=diagnostic_redaction_terms)
                 failure_detail[:] = [diagnostic]
                 retry_policy = _web_status_retry_policy(
                     diagnostic, retry_attempt)
@@ -6540,7 +6556,7 @@ class WebStatusManager:
                     "status_update_unknown" if unknown_outcome
                     else "status_update_failed",
                     detail=detail,
-                    secrets=diagnostic_secrets)
+                    redaction_terms=diagnostic_redaction_terms)
                 if unknown_outcome:
                     self._set_note(
                         "Status update outcome is unknown. Check the Camfrog "
@@ -6586,7 +6602,7 @@ class WebStatusManager:
                 self._record_activity(
                     "live_retry_scheduled",
                     detail=detail,
-                    secrets=diagnostic_secrets)
+                    redaction_terms=diagnostic_redaction_terms)
                 self._set_note(
                     "Temporary Live error; retrying in {0:g} seconds ({1}/{2})."
                     .format(

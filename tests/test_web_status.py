@@ -573,9 +573,9 @@ def test_read_cookie_rows_prefers_the_snapshot_copy(tmp_path):
 def test_import_plain_values_and_redacts_summary(tmp_path):
     jar = ws.import_chrome_jar(str(_chrome_profile(tmp_path)))
     assert len(jar) == 1
-    summary = ws.cookie_summary(jar)
-    assert ".camfrog.com" in summary
-    assert "plain" not in summary
+    # Exact equality: ".camfrog.com" as a substring could also match
+    # evilcamfrog.com, so the summary must be pinned as a whole.
+    assert ws.cookie_summary(jar) == "1 cookies for: .camfrog.com"
 
 
 def test_import_skips_foreign_and_evil_domains(tmp_path):
@@ -1135,7 +1135,7 @@ def test_color_alternator_redacts_credentials_and_personal_data():
         f"PHPSESSID=session_secret_123, email john.doe@example.com, and "
         f"stripe_key={sample_key}"
     )
-    redacted = ws.redact_sensitive(raw, secrets=["session_secret_123"])
+    redacted = ws.redact_sensitive(raw, redaction_terms=["session_secret_123"])
     assert "90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0" not in redacted
     assert "session_secret_123" not in redacted
     assert "john.doe@example.com" not in redacted
@@ -1143,4 +1143,46 @@ def test_color_alternator_redacts_credentials_and_personal_data():
     assert "[email redacted]" in redacted
     assert "[stripe-key redacted]" in redacted
     assert "[redacted]" in redacted
+
+
+# ---------- Fail-closed detail redaction (CWE-312 remediation) ----------
+
+
+def test_sanitize_wipes_detail_when_short_secret_survives_word():
+    # A short secret is only word-boundary redacted; an embedded occurrence
+    # would otherwise leak, so the whole detail must be discarded.
+    assert wsg._sanitize_web_status_detail(
+        "xxabcxx", redaction_terms=("abc",)) == "[redacted-detail]"
+
+
+def test_sanitize_keeps_boundary_short_secret_redactions():
+    out = wsg._sanitize_web_status_detail(" head abc tail ", redaction_terms=("abc",))
+    assert "abc" not in out
+    assert "[redacted]" in out
+
+
+def test_sanitize_wipes_when_whitespace_folding_hides_secret():
+    # Two spaces fold to one, so the folded form can re-match the needle;
+    # the fail-closed check catches it and discards the whole detail.
+    assert wsg._sanitize_web_status_detail(
+        "value: needle  tail dead", redaction_terms=("needle tail",),
+    ) == "[redacted-detail]"
+
+
+def test_sanitize_long_payload_truncation_unchanged_without_terms():
+    assert wsg.WEB_STATUS_LOG_DETAIL_MAX_CHARS == 1000
+    out = wsg._sanitize_web_status_detail("x" * 1040)
+    assert out == "x" * (wsg.WEB_STATUS_LOG_DETAIL_MAX_CHARS - 14) + " [truncated]"
+
+
+def test_append_log_never_stores_known_secret(tmp_path):
+    path = tmp_path / "activity.log"
+    needle = "Hunt3r22Val"
+    wsg.append_web_status_log(
+        "session_verification_failed", path=str(path),
+        detail="probe failed around {0} tail".format(needle),
+        redaction_terms=(needle,))
+    stored = path.read_text(encoding="utf-8")
+    assert needle not in stored
+    assert "[redacted]" in stored
 

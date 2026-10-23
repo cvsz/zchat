@@ -851,21 +851,21 @@ def test_stop_during_live_post_logs_result_but_schedules_no_next_update(
 
 def test_web_status_failure_log_redacts_secret_fields_and_limits_detail(tmp_path):
     path = tmp_path / "web_status.log"
-    secret_detail = (
+    mixed_detail = (
         "HTTP 403; PHPSESSID=server-cookie-value; csrf=csrf-value; "
         "status=private status text; response={\"csrf\":\"json-csrf-value\", "
         "\"authorization\":\"Bearer auth-secret-value\"}\n"
         "Set-Cookie: PHPSESSID=header-cookie-value\nretry_after=5")
 
     entry = wsg.append_web_status_log(
-        "status_update_failed", path, detail=secret_detail,
-        secrets=("server-cookie-value", "csrf-value", "private status text"))
+        "status_update_failed", path, detail=mixed_detail,
+        redaction_terms=("server-cookie-value", "csrf-value", "private status text"))
 
     assert "HTTP 403" in entry
-    for secret in ("server-cookie-value", "csrf-value", "json-csrf-value",
-                   "auth-secret-value", "private status text",
-                   "header-cookie-value"):
-        assert secret not in entry
+    for leaked_value in ("server-cookie-value", "csrf-value", "json-csrf-value",
+                         "auth-secret-value", "private status text",
+                         "header-cookie-value"):
+        assert leaked_value not in entry
     assert "[redacted]" in entry
     assert "retry_after=5" in entry
     assert "\n" not in entry
