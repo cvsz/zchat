@@ -27,3 +27,10 @@ Avoid unbounded retry/search loops and repeated unchanged scans. Prefer targeted
 ## Repository administration
 
 Use `scripts/github_admin.py` only when the task concerns GitHub repository controls. Dry-run is the default. Applying or verifying settings requires an explicit repository, branch, exact required-check names, and an authenticated admin identity; the helper has no project-specific defaults. Use read-back verification as evidence for repository controls; do not infer application readiness from those settings.
+
+## Windows test evidence
+
+- Results not run on Windows must be reported as `NOT RUN`, never as `PASSED` or `UNVERIFIED`.
+- Every Windows test run must attach the log folder under `reports/windows-runs/<timestamp>/` containing `console.log`, `junit.xml`, `pytest.log`, `exit.txt`.
+- A `BLOCKED` result requires the exact failing import or call (error text), not just "Windows-only".
+- Use `scripts/win-test.sh` for local WSL-to-Windows runs; use `.github/workflows/windows-tests.yml` for CI.
