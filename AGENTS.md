@@ -1,7 +1,7 @@
-# AGENTS.md — Repository Agent Contract
+# AGENTS.md — ZChat Repository Engineering Contract
 
 ## Purpose
-This repository is a reusable GitHub project template. Changes must remain generic, secure by default, easy to customize, and safe to inherit into a newly generated repository.
+This repository contains ZChat application code: Camfrog Windows automation, standalone GUI/CLI executables, a unified Windows client, a FastAPI/PostgreSQL control server, and integration boundaries with zWorkforce. Maintain real application behavior and security boundaries; do not treat this repository as an uninitialized template or infer readiness from scaffolding.
 
 ## Operating rules
 - Read README.md, CONTRIBUTING.md, SECURITY.md, ROADMAP.md, and the closest AGENTS.md before editing.
@@ -10,13 +10,13 @@ This repository is a reusable GitHub project template. Changes must remain gener
 - Never weaken CI, security scanning, dependency review, branch protections, or release controls merely to make a check pass.
 - Never commit credentials, tokens, private keys, production endpoints, personal data, or realistic secrets. Use documented placeholders.
 - Do not invent project-specific owners, domains, deployment providers, package registries, cloud accounts, or credentials.
-- Preserve template portability across languages and frameworks unless a file explicitly declares a narrower scope.
+- Preserve standalone-executable isolation, control-server tenant/account scoping, and Windows foreground/background safety; do not make a simulated Camfrog action appear externally successful.
 - Reuse existing workflows and documents instead of creating overlapping alternatives.
 - Pin permissions for GitHub Actions to least privilege and prefer maintained first-party/verified actions.
 - Treat external input, generated artifacts, pull requests from forks, and dependency metadata as untrusted.
 
-## Template placeholders
-Use obvious placeholders such as `PROJECT_NAME`, `OWNER`, `example.com`, and `REPLACE_ME`. Any generated repository must be able to find and replace placeholders without exposing secrets.
+## Configuration and sensitive data
+Use obviously fictitious placeholders in examples. Treat Camfrog credentials, session cookies, account identity, machine identifiers, live chat contents, and evidence bundles as sensitive. Never log or commit them. Require explicit authorization and fail closed before external mutations.
 
 ## Review skill
 
@@ -24,16 +24,18 @@ Use obvious placeholders such as `PROJECT_NAME`, `OWNER`, `example.com`, and `RE
 - Question whether the change is necessary or can be smaller before tracing real code paths and verifying behavioral claims. Cite concrete file/line evidence and distinguish unverified claims from confirmed behavior.
 - The skill guides agent behavior; it does not itself install a slash command or replace required tests, CI, or human review.
 
-## Project initialization
+## ZChat runtime and release boundaries
 
-- For a repository created with **Use this template**, follow [docs/startup.md](docs/startup.md) and preview `scripts/bootstrap.py` before `--apply`; pass an actual GitHub user or org/team via `--codeowner` and verify write access.
-- Do not present an initialized scaffold as a running or production-ready system; bootstrap changes project identity and ownership routing only.
-- Replace Makefile and Dockerfile placeholders with actual project-specific commands and images before enabling an application delivery pipeline.
-- Never overwrite existing application code, production secrets, DNS ownership or original license attribution during initialization.
+- Separate source/unit tests, Windows packaged-executable smoke tests, native Camfrog external-effect acceptance, and production rollout evidence; none implies the next level.
+- A status field update is not a nickname or profile flair update. Require a verified provider-specific adapter and observed external state before recording success.
+- F3/F4 worker lifecycle must use validated configuration paths and supervised stop/start; do not force-kill arbitrary or unverified processes.
+- Do not synthesize second-account observer evidence, GUI screenshots, process identity, external outcomes, signatures, or successful workflow states.
+- Keep zWorkforce integration read-only or disabled for external effects until account-scoped authorization, approval binding, durable operation states, single-writer protections, and actual Windows acceptance are verified.
+- Changes to actual account/profile, room/chat, microphone, clipboard, keyboard/mouse, and desktop-focus behavior require explicit adverse-case tests and fail-closed handling.
 
 ## Change workflow
 1. Inspect the current exact branch/head and existing files.
-2. Identify the smallest missing or inconsistent template capability.
+2. Identify the smallest missing or inconsistent ZChat capability.
 3. Add tests or validation first when practical.
 4. Implement without widening scope.
 5. Run the relevant validation and security checks.
@@ -41,13 +43,13 @@ Use obvious placeholders such as `PROJECT_NAME`, `OWNER`, `example.com`, and `RE
 7. Open a pull request; do not claim merge/release readiness without exact-head evidence.
 
 ## Verification
-At minimum, verify Markdown/YAML syntax for touched files, workflow permissions/triggers, links and placeholders, absence of committed secrets, and consistency between README, templates, governance, security, and release documentation.
+At minimum, verify Markdown/YAML syntax for touched files, workflow permissions/triggers, links and placeholders, absence of committed secrets, and consistency between README, actual source behavior, governance, security, and release documentation.
 
 ## Pull requests and releases
 PRs must state scope, tests, security impact, compatibility/migration impact, documentation impact, deployment impact, and rollback. Releases require green required checks and explicit evidence; never infer production readiness from documentation alone.
 
 ## Security
-Report vulnerabilities through SECURITY.md, not public issues. Security-related templates must redirect sensitive reports accordingly. Fail closed when a security-sensitive configuration is incomplete.
+Report vulnerabilities through SECURITY.md, not public issues. Security-related documentation must redirect sensitive reports accordingly. Fail closed when a security-sensitive configuration is incomplete.
 
 ## Documentation ownership
 - `.github/`: GitHub automation, community health, ownership, issue/PR templates.
@@ -70,13 +72,14 @@ Add a child AGENTS.md only when a subtree has durable rules that differ from thi
 
 ## Existing-repository rollout
 
-When applying this template to an established repository, follow [docs/repository-rollout.md](docs/repository-rollout.md). Audit the target first and port only missing compatible controls. Do not overwrite repository-specific AGENTS rules, CI matrices, release workflows, infrastructure ownership, or operational evidence merely to match this template.
+For shared ZEAZ governance updates, audit the ZChat runtime first and import only compatible controls. Do not overwrite ZChat-specific safety rules, CI matrices, release workflows, infrastructure ownership, or operational evidence merely to match a generic template.
 
 For repository administration, `scripts/github_admin.py` requires an authenticated GitHub identity with Administration permission. Treat successful read-back verification—not script presence—as evidence that the controls are effective.
 
-## Windows test evidence (NEW)
+## Windows test evidence
 
 - Results not run on Windows must be reported as `NOT RUN`, never as `PASSED` or `UNVERIFIED` to close work.
 - Every Windows test run must attach the log folder path under `reports/windows-runs/<timestamp>/` containing `console.log`, `junit.xml`, `pytest.log`, `exit.txt`.
+- A `BLOCKED` result requires the exact failing import or call (error text), not just "Windows-only".
 - Use `scripts/win-test.sh` for local WSL-to-Windows runs; use `.github/workflows/windows-tests.yml` for CI.
 - The verification package and `windows_tests/` require Windows 11 + real Camfrog for full E2E. Linux-only results are `BLOCKED`, not `PASSED`.

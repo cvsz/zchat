@@ -96,11 +96,13 @@ def process_fixture():
                 process.wait(timeout=5)
 
 
+@pytest.mark.live
 def test_live_process_identity_revalidates(process_fixture):
     _process, identity = process_fixture
     assert revalidate_process_identity(identity) is True
 
 
+@pytest.mark.live
 def test_pid_reuse_create_time_mismatch_fails_closed(process_fixture):
     _process, identity = process_fixture
     reused = ProcessIdentity(
@@ -114,6 +116,7 @@ def test_pid_reuse_create_time_mismatch_fails_closed(process_fixture):
     assert revalidate_process_identity(reused) is False
 
 
+@pytest.mark.live
 def test_attachment_fails_after_target_process_exits(process_fixture):
     process, identity = process_fixture
     attachment = CamfrogClientAttachment(identity, discovery=None, classifier=None)
@@ -127,6 +130,7 @@ def test_attachment_fails_after_target_process_exits(process_fixture):
         attachment.get_runtime_state()
 
 
+@pytest.mark.live
 def test_terminate_refuses_a_process_not_launched_by_agent(process_fixture):
     process, identity = process_fixture
     attachment = CamfrogClientAttachment(identity, discovery=None, classifier=None)
@@ -265,11 +269,13 @@ def window_fixture():
         fixture.cleanup()
 
 
+@pytest.mark.live
 def test_live_window_and_process_revalidate(window_fixture):
     assert revalidate_process_identity(window_fixture.identity) is True
     assert revalidate_window_identity(window_fixture.window, window_fixture.identity) is True
 
 
+@pytest.mark.live
 def test_stale_hwnd_after_process_exit_fails_closed(window_fixture):
     window_fixture.process.terminate()
     window_fixture.process.wait(timeout=5)
@@ -277,6 +283,7 @@ def test_stale_hwnd_after_process_exit_fails_closed(window_fixture):
     assert revalidate_window_identity(window_fixture.window, window_fixture.identity) is False
 
 
+@pytest.mark.live
 def test_closed_window_with_live_process_fails_closed(window_fixture):
     import win32gui
 
@@ -289,6 +296,7 @@ def test_closed_window_with_live_process_fails_closed(window_fixture):
     assert revalidate_window_identity(window_fixture.window, window_fixture.identity) is False
 
 
+@pytest.mark.live
 def test_foreign_window_owner_fails_closed(window_fixture):
     other = WindowFixture()
     try:
@@ -298,6 +306,7 @@ def test_foreign_window_owner_fails_closed(window_fixture):
         other.cleanup()
 
 
+@pytest.mark.live
 def test_attachment_classifies_live_fixture_window(window_fixture):
     attachment = CamfrogClientAttachment(
         window_fixture.identity,
@@ -308,6 +317,7 @@ def test_attachment_classifies_live_fixture_window(window_fixture):
     assert any(window.hwnd == window_fixture.hwnd for window in windows)
 
 
+@pytest.mark.live
 def test_attachment_fails_when_fixture_window_is_closed(window_fixture):
     import win32gui
 

@@ -32,5 +32,6 @@ Use `scripts/github_admin.py` only when the task concerns GitHub repository cont
 
 - Results not run on Windows must be reported as `NOT RUN`, never as `PASSED` or `UNVERIFIED`.
 - Every Windows test run must attach the log folder under `reports/windows-runs/<timestamp>/` containing `console.log`, `junit.xml`, `pytest.log`, `exit.txt`.
+- A `BLOCKED` result requires the exact failing import or call (error text), not just "Windows-only".
 - Use `scripts/win-test.sh` for local WSL-to-Windows runs; use `.github/workflows/windows-tests.yml` for CI.
 - The verification package and `windows_tests/` require Windows 11 + real Camfrog for full E2E. Linux-only results are `BLOCKED`, not `PASSED`.

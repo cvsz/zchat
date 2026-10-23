@@ -12,13 +12,15 @@
 |---|---|
 | `room-control\room-control.exe` | ควบคุมห้องและตอบอัตโนมัติในห้อง ปิดการเปลี่ยนสถานะและการตอบ IM ส่วนตัว |
 | `chat-im-private\chat-im-private.exe` | แสดงและโฟกัสหน้าต่างแชทส่วนตัวที่เปิดอยู่ใน Camfrog ไม่มีการอ่านหรือส่งข้อความ |
-| `status-changer\status-changer.exe` | หน้าต่างเดียว มีแท็บ **Random**, **Marquee** และ **Activity Log** โดยแยก config, pool สิบช่อง และการตั้งค่า worker ของแต่ละโหมด |
+| `status-changer\status-changer.exe` | หน้าต่างเดียว มีแท็บ **Random**, **Marquee** และ **Activity Log** โดยแยก config, pool สิบช่อง และการตั้งค่า worker ของแต่ละโหมด เก็บข้อมูลของตัวเองใน `status-data\` |
 | `status-random\status-random.exe` | สลับสถานะแบบสุ่ม มี pool สิบช่องของตัวเองใน `random-data\` |
 | `status-marquee\status-marquee.exe` | สลับสถานะแบบเลื่อน มี pool สิบช่องของตัวเอง ตัวควบคุม Loop ใน `marquee-data\` |
-| `status-changer\status-changer.exe` | รวมโหมดสุ่มและ Marquee พร้อม Activity Log เก็บข้อมูลแยกใน `status-data\` |
 | `im-autoreply\im-autoreply.exe` | ตอบ IM ส่วนตัวอย่างเดียว ไม่ตอบในห้อง ไม่เปลี่ยนสถานะ |
 | `music-dj\music-dj.exe` | ZeaZDev room ดีเจเพลงในห้อง: รับคำสั่ง `!request` / `!randommusic` / `!queue` / `!current` / `!skip` / `!help` จากแชท เก็บคิวและลิงก์ค้นหาเพลงที่สุ่มได้ลง `youtube_random_music.json` และเล่นเสียงในเครื่องหรือวิดีโอ YouTube ที่ player มาตรฐานมองเห็นได้ `!current` แสดงผู้ขอ เวลาเล่น และเพลงถัดไป ในแท็บ Music มี Windows TTS อ่านข้อความหรือสรุปคิว โดยต่อเอาต์พุตเสียงเข้าไมโครโฟน Camfrog ปิดการเปลี่ยนสถานะและการตอบ IM ส่วนตัว |
 | `web-status\web-status.exe` | รุ่นทดลองแบบ GUI + console: เปลี่ยนสถานะผ่าน profiles.camfrog.com (ค่าเริ่มต้นโหมดทดลอง; GUI ตรวจสอบ session `PHPSESSID` จากเบราว์เซอร์ก่อนเริ่มเปลี่ยนสถานะจริง) ไม่ใส่ argument เปิด GUI ใส่ argument ใช้ CLI ใน GUI มีช่องข้อความบรรทัดเดียว 10 ช่อง บันทึกใน `webtext.db`; ปุ่ม **Start** วนเฉพาะบรรทัดที่ไม่ว่างทุก N วินาที |
+| `name-color-changer\name-color-changer.exe` | สลับสีชื่อ Flair (Color A <-> Color B) ผ่าน API `profiles.camfrog.com` มี GUI และ CLI พร้อมระบบ fail-closed ป้องกัน rate limit 429 ตรวจสอบ session และคืนค่าสีเริ่มต้นเมื่อทำงานครบรอบ |
+| `icon-changer\icon-changer.exe` | สลับไอคอนหน้าชื่อใน Room User List (Icon A <-> Icon B) ผ่าน API `profiles.camfrog.com` มี GUI และ CLI พร้อมการป้องกัน rate limit และคืนค่าไอคอนเริ่มต้นเมื่อทำงานครบรอบ |
+| `name-changer\name-changer.exe` | ตัวต้นแบบสลับชื่อและจัดการชุดรายชื่อในหน่วยความจำ (Local Prototype) รองรับภาษาไทยสมบูรณ์แบบ (ฟอนต์ Tahoma / UTF-8) สลับชื่อก่อนหน้า-ถัดไป และจัดการ Preset Pool (ยังไม่เชื่อมต่อ client/profile อัตโนมัติ) |
 
 หน้า **Bot Manager** ของ Web Status ควบคุมคิวใน `music-dj.exe` แยกตัวผ่านไฟล์ในเครื่อง และอ่าน/ควบคุม vMix บนเครื่องเดียวกันได้ Music DJ รับ URL หรือ ID YouTube เข้าคิว เปิด player มาตรฐานที่มองเห็นได้ และเลื่อนคิวตาม event เล่น/จบเพลง ดูขอบเขตและรายการตรวจรับ Windows ที่ [`docs/zBOT-Youtube-MUSIC-DJ.md`](docs/zBOT-Youtube-MUSIC-DJ.md)
 
@@ -26,7 +28,7 @@ Room Control และ IM Auto-reply ใช้ `config.json` แยกกัน 
 
 ## สร้าง exe
 
-ดับเบิลคลิก `build.bat` (ต้องมี Python 64-bit) ระบบเลือก Python 3.12 และสร้างแปดแอปแยกโฟลเดอร์ใน `dist\` โดยเก็บ config/ข้อมูลเดิมของแต่ละแอปไว้เมื่อ build ใหม่ ไม่คัดลอก config กลาง และสร้าง zip ที่มีเฉพาะ exe กับ checksums นอกจากนี้ยังเขียน `dist\SHA256SUMS.txt`
+ดับเบิลคลิก `build.bat` (ต้องมี Python 64-bit) ระบบเลือก Python 3.12 และสร้างสิบเอ็ดแอปแยกโฟลเดอร์ใน `dist\` โดยเก็บ config/ข้อมูลเดิมของแต่ละแอปไว้เมื่อ build ใหม่ ไม่คัดลอก config กลาง และสร้าง zip ที่มีเฉพาะ exe กับ checksums นอกจากนี้ยังเขียน `dist\SHA256SUMS.txt`
 
 ใช้ `full-build.bat` หรือ `full-build.ps1` เพื่อ build แอปทั้งหมดรวมแอป LINE โดยจะ publish release ก็ต่อเมื่อระบุ `--release`; PowerShell รับ `--release vX.Y.Z` เมื่อเวอร์ชันตรงกับ `APP_VERSION` เท่านั้น
 
@@ -49,7 +51,7 @@ Room Control และ IM Auto-reply ใช้ `config.json` แยกกัน 
 4. ใช้ `status-random.exe` หรือ `status-marquee.exe` สำหรับแอปแยก หรือ `status-changer.exe` สำหรับหน้ารวมพร้อม Activity Log แต่ละแอปเก็บข้อมูลของตัวเอง โหมด strict background ยังหยุดด้วย `BACKGROUND_UNSUPPORTED` โหมดเดิม `best_effort_background` ถูกปิดหลังทดสอบบน Windows พบว่า Camfrog ดึง focus ได้และทำให้คีย์บอร์ดถูกรบกวน worker จึงปฏิเสธจนกว่าจะยืนยันเส้นทางแยก desktop ได้ โหมด interactive จะรอให้ผู้ใช้หยุดใช้งาน desktop ก่อนส่ง ดู [`docs/STATUS-SUBMIT-MODES.md`](docs/STATUS-SUBMIT-MODES.md) ส่วน `web-status.exe` เป็นฟีเจอร์แยก
 5. เปิดแชทส่วนตัวใน Camfrog แล้วใช้ `chat-im-private.exe` refresh และโฟกัสหน้าต่าง แอปจะลองค้นหา selector ตอนเปิด และยังใช้ **Discover controls** เพื่อบันทึกรายการ control ลง `controls.txt` สำหรับตรวจวิเคราะห์ได้
 
-คำสั่ง `python camfrog_auto.py ...` ยังใช้เป็น CLI สำหรับพัฒนา โดยใช้ `config.json` ในเครื่องซึ่ง Git จะไม่ติดตาม สร้างได้ด้วย `python camfrog_auto.py init --config config.json` หรือคัดลอกจาก `config.example.json` ส่วน CI และ build ตรวจด้วยตัวอย่างที่ปลอดภัย CLI นี้ไม่ใช่หนึ่งในแปดแอปที่ build คำสั่งใน `extras\*.bat` เป็นทางลัด ยกเว้น `extras\gui.bat` ที่เปิด `dist\room-control\room-control.exe` ที่ build แล้ว
+คำสั่ง `python camfrog_auto.py ...` ยังใช้เป็น CLI สำหรับพัฒนา โดยใช้ `config.json` ในเครื่องซึ่ง Git จะไม่ติดตาม สร้างได้ด้วย `python camfrog_auto.py init --config config.json` หรือคัดลอกจาก `config.example.json` ส่วน CI และ build ตรวจด้วยตัวอย่างที่ปลอดภัย CLI นี้ไม่ใช่หนึ่งในสิบเอ็ดแอปที่ build คำสั่งใน `extras\*.bat` เป็นทางลัด ยกเว้น `extras\gui.bat` ที่เปิด `dist\room-control\room-control.exe` ที่ build แล้ว
 
 คำสั่ง source-only `python camfrog_presence.py probe NICKNAME` เรียก probe หนึ่งครั้งแบบมีขอบเขตและเก็บหลักฐานรูปสถานะสาธารณะของ Camfrog ลง SQLite ในเครื่อง โดยจัดสถานะเป็น `UNKNOWN` เสมอ อ่าน [`docs/CAMFROG-PRESENCE.md`](docs/CAMFROG-PRESENCE.md) ก่อนแปลผลตัวอย่าง
 

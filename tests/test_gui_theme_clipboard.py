@@ -39,6 +39,9 @@ CLIPBOARD_CONTROLLERS = (
     ("status_random_gui", "ClipboardController"),
     ("status_marquee_gui", "ClipboardController"),
     ("status_changer_gui", "ClipboardController"),
+    ("name_changer_gui", "ClipboardController"),
+    ("name_color_changer_gui", "ClipboardController"),
+    ("icon_changer_gui", "ClipboardController"),
 )
 
 
