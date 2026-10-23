@@ -65,3 +65,9 @@ docs/mock/
 
 # Pinned GUI test-app checkout; fetched only by the Windows integration tests.
 windows_tests/fixtures/_cache/
+
+# Local development virtualenvs and per-run Windows runtime evidence are never committed.
+.venv-lin/
+.venv-win/
+.venv-observer/
+reports/windows-runs/

@@ -7,6 +7,17 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+- Added the zGPU RPC client (`src/camfrog/zgpu_client.py`) and the local zGPU LLM Acceleration Studio Tk panel (`src/features/zgpu_tester_gui.py`): JSON-RPC generation and health checks against an operator-configured zGPU endpoint with timeout clamping, API-key header handling, and fail-closed structured errors. The panel is local tooling and is not one of the packaged executables.
+- Added `GEMINI.md` operating instructions mirroring the repository agent contract for Gemini CLI sessions.
+- Added regression tests for the zGPU client endpoint, structured responses, RPC errors, network failures, and the test panel; standalone changer GUI tests now mock the win32 clipboard for cross-platform runs.
+- Documented the standalone `name-color-changer`, `icon-changer`, and `name-changer` apps in the English and Thai app tables and corrected the packaged app count to eleven.
+
+### Fixed
+- Enabled clipboard shortcuts and right-click context menus (cut/copy/paste/select-all) in the standalone Name Changer, Name Color Changer, and Room Icon Changer GUIs via the shared `ClipboardController`.
+- The `.env.enc` gitignore guard no longer picks up caller `GIT_*` environment variables and forces `safe.directory=*`, so repository-version checks run reliably in restricted environments.
+- Repository markdown-link validation now also excludes `.venv-observer/`, and pytest suppresses third-party `SyntaxWarning` noise from bundled vendor modules.
+
 ## [2.19.3] - 2026-10-19
 
 ### Fixed

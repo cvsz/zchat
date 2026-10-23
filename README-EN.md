@@ -12,13 +12,15 @@ Each executable is built into its own folder and creates its own config and runt
 |---|---|
 | `room-control\room-control.exe` | Room control and room auto-reply. Status changes and private IM reply are disabled. |
 | `chat-im-private\chat-im-private.exe` | Lists and focuses private-chat windows that are already open in Camfrog. It does not read or send messages. |
-| `status-changer\status-changer.exe` | One window with **Random**, **Marquee**, and **Activity Log** tabs. Random and Marquee keep separate config files, ten-slot pools, and worker settings. |
+| `status-changer\status-changer.exe` | One window with **Random**, **Marquee**, and **Activity Log** tabs. Random and Marquee keep separate config files, ten-slot pools, and worker settings; the combined app stores its own data under `status-data\`. |
 | `status-random\status-random.exe` | Random status rotation with its own ten-slot pool under `random-data\`. |
 | `status-marquee\status-marquee.exe` | Marquee status rotation with its own ten-slot pool and Loop control under `marquee-data\`. |
-| `status-changer\status-changer.exe` | Combined Random and Marquee modes with an Activity Log, stored under its own `status-data\` folder. |
 | `im-autoreply\im-autoreply.exe` | Private IM auto-reply only. Room auto-reply and status changes are disabled. |
 | `music-dj\music-dj.exe` | ZeaZDev room music DJ: answers `!request` / `!randommusic` / `!queue` / `!current` / `!skip` / `!help`, keeps a persistent queue, saves generated music searches in `youtube_random_music.json`, and supports local audio or a visible YouTube player. `!current` reports requester, playback time, and next song. The Music tab can speak custom text or the current queue summary through Windows TTS. Status changes and private IM reply are disabled. |
 | `web-status\web-status.exe` | GUI + console prototype: update status via profiles.camfrog.com (dry-run by default; the GUI verifies a browser `PHPSESSID` session before live rotation). No args opens the GUI; any args use the CLI. The GUI has ten one-line status fields saved in `webtext.db`; **Start** rotates through the non-empty lines every N seconds. |
+| `name-color-changer\name-color-changer.exe` | Nickname color alternator over profiles.camfrog.com: no args or `--gui` opens the GUI; any args use the CLI. Dry-run by default (`--confirm` for live colors); it verifies an exported browser `PHPSESSID` session before live rotation, enforces minimum alternation intervals and cycle limits, and restores the original colors on exit. |
+| `icon-changer\icon-changer.exe` | Room icon alternator over profiles.camfrog.com: no args or `--gui` opens the GUI; any args use the CLI (`--alternate-icons --icon-a/--icon-b`). Dry-run by default (`--confirm` for live icons); the same fail-closed session verification and rate limits apply, and the initial icon is restored on exit. |
+| `name-changer\name-changer.exe` | Display-name switcher for the Camfrog client window with full Thai script and font support: configurable name lists, manual/custom switching or `--cycle`, and fail-closed name validation. No args or `--gui` opens the GUI; `--set-name` and `--names` run the CLI. |
 
 The Web Status **Bot Manager** also controls the separate `music-dj.exe` queue through local files and can read/control vMix on the same PC. Music DJ can queue YouTube videos by URL or ID in a visible standard player and advances from player events. See [`docs/zBOT-Youtube-MUSIC-DJ.md`](docs/zBOT-Youtube-MUSIC-DJ.md) for boundaries and Windows acceptance checks.
 
@@ -26,7 +28,7 @@ Room Control and IM Auto-reply use separate `config.json` files; Chat IM Private
 
 ## Build
 
-Double-click `build.bat` (needs 64-bit Python in PATH). It selects Python 3.12 first and builds the eight apps above into separate subfolders under `dist\`. It preserves each app's local config and runtime data when refreshing the binaries, copies no shared `config.json`, and creates a zip containing only the executables and checksums. It also writes `dist\SHA256SUMS.txt`.
+Double-click `build.bat` (needs 64-bit Python in PATH). It selects Python 3.12 first and builds the eleven apps above into separate subfolders under `dist\`. It preserves each app's local config and runtime data when refreshing the binaries, copies no shared `config.json`, and creates a zip containing only the executables and checksums. It also writes `dist\SHA256SUMS.txt`.
 
 Run `full-build.bat` or `full-build.ps1` to build the feature apps and LINE app. Releases are opt-in; the PowerShell script accepts `--release vX.Y.Z` only when it matches `APP_VERSION`.
 
@@ -49,7 +51,7 @@ If the error says `requirements.txt (line 1)` and mentions only pywinauto, you a
 4. Use `status-random.exe` or `status-marquee.exe` for separate status apps, or `status-changer.exe` for their combined interface and Activity Log. Each has its own data folder. Strict background submission still stops with `BACKGROUND_UNSUPPORTED`. The legacy `best_effort_background` mode was disabled after Windows testing confirmed that Camfrog can take desktop focus and interrupt keyboard input; live workers fail closed until an isolated submit route is verified. Interactive sends use desktop input and wait for user inactivity before proceeding. See [`docs/STATUS-SUBMIT-MODES.md`](docs/STATUS-SUBMIT-MODES.md). `web-status.exe` is separate.
 5. Open a private chat in Camfrog, then use `chat-im-private.exe` to refresh and focus its window. It attempts selector discovery on startup; **Discover controls** remains available to dump the control tree to `controls.txt` for diagnostics.
 
-`python camfrog_auto.py ...` remains available as a source-only developer CLI. It uses the local `config.json`, which is ignored by Git; create it with `python camfrog_auto.py init --config config.json` or copy `config.example.json`. CI and builds validate the safe example. The CLI is not one of the eight packaged apps. The `extras\*.bat` helpers are source-checkout shortcuts, except `extras\gui.bat` which launches the built `dist\room-control\room-control.exe`.
+`python camfrog_auto.py ...` remains available as a source-only developer CLI. It uses the local `config.json`, which is ignored by Git; create it with `python camfrog_auto.py init --config config.json` or copy `config.example.json`. CI and builds validate the safe example. The CLI is not one of the eleven packaged apps. The `extras\*.bat` helpers are source-checkout shortcuts, except `extras\gui.bat` which launches the built `dist\room-control\room-control.exe`.
 
 The source-only `python camfrog_presence.py probe NICKNAME` command makes one bounded probe call and stores public Camfrog status-image evidence in a local SQLite database. It always classifies presence as `UNKNOWN`; see [`docs/CAMFROG-PRESENCE.md`](docs/CAMFROG-PRESENCE.md) before interpreting samples.
 
