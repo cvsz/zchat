@@ -117,18 +117,14 @@ def test_read_control_value_via_element_get_current_pattern():
 
 
 def test_read_control_value_wrapper_raises_returns_none():
-    control = SimpleNamespace(
-        get_value=lambda: (_ for _ in ()).throw(RuntimeError("boom"))
-    )
+    control = SimpleNamespace(get_value=lambda: (_ for _ in ()).throw(RuntimeError("boom")))
     assert _read_control_value(control) is None
 
 
 def test_read_control_value_element_raises_returns_none():
     control = SimpleNamespace(
         element=SimpleNamespace(
-            GetCurrentPattern=lambda ptrn_id: (_ for _ in ()).throw(
-                RuntimeError("boom")
-            )
+            GetCurrentPattern=lambda ptrn_id: (_ for _ in ()).throw(RuntimeError("boom"))
         )
     )
     assert _read_control_value(control) is None
@@ -155,23 +151,17 @@ def test_is_verified_camfrog_process_name_only():
 
 
 def test_is_verified_camfrog_process_camfrog_path():
-    proc = SimpleNamespace(
-        name=lambda: "camfrog.exe", exe=lambda: "C:\\\\Camfrog\\\\camfrog.exe"
-    )
+    proc = SimpleNamespace(name=lambda: "camfrog.exe", exe=lambda: "C:\\\\Camfrog\\\\camfrog.exe")
     assert _is_verified_camfrog_process(proc) is True
 
 
 def test_is_verified_camfrog_process_wrong_name():
-    proc = SimpleNamespace(
-        name=lambda: "notcamfrog.exe", exe=lambda: "C:\\\\notcamfrog\\\\foo.exe"
-    )
+    proc = SimpleNamespace(name=lambda: "notcamfrog.exe", exe=lambda: "C:\\\\notcamfrog\\\\foo.exe")
     assert _is_verified_camfrog_process(proc) is False
 
 
 def test_is_verified_camfrog_process_non_camfrog_exe_path():
-    proc = SimpleNamespace(
-        name=lambda: "camfrog.exe", exe=lambda: "C:\\\\OtherApp\\\\foo.exe"
-    )
+    proc = SimpleNamespace(name=lambda: "camfrog.exe", exe=lambda: "C:\\\\OtherApp\\\\foo.exe")
     assert _is_verified_camfrog_process(proc) is False
 
 
@@ -241,10 +231,7 @@ def test_is_custom_status_control_nickname_hint_rejected():
 
 def test_is_custom_status_control_presence_hint_rejected():
     assert _is_custom_status_control(_status_control(name="Presence")) is False
-    assert (
-        _is_custom_status_control(_status_control(automation_id="presenceIcon"))
-        is False
-    )
+    assert _is_custom_status_control(_status_control(automation_id="presenceIcon")) is False
 
 
 def test_is_custom_status_control_flair_hint_rejected():
@@ -300,9 +287,7 @@ def test_discover_row_status_two_status_candidates_returns_none():
 
 
 def test_discover_row_status_descendants_raises_returns_none():
-    row = SimpleNamespace(
-        descendants=lambda: (_ for _ in ()).throw(RuntimeError("boom"))
-    )
+    row = SimpleNamespace(descendants=lambda: (_ for _ in ()).throw(RuntimeError("boom")))
     assert _discover_row_status(row) is None
 
 
