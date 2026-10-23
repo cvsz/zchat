@@ -1,4 +1,5 @@
 """Launch the Marquee Status application."""
+
 import os
 import sys
 from pathlib import Path

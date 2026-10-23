@@ -1,4 +1,5 @@
 """Feature-boundary and app-local config tests; never touch Camfrog windows."""
+
 import copy
 import sys
 from pathlib import Path
@@ -15,15 +16,22 @@ import camfrog_status_gui as status_gui  # noqa: E402
 @pytest.fixture(autouse=True)
 def isolate_app_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(ca, "BASE", tmp_path)
-    monkeypatch.setattr(private_chat, "CONFIG_PATH", tmp_path / "private-chat-config.json")
+    monkeypatch.setattr(
+        private_chat, "CONFIG_PATH", tmp_path / "private-chat-config.json"
+    )
 
 
-@pytest.mark.parametrize("profile,disabled", [
-    ("room", ("status", "autoreply_im")),
-    ("im_reply", ("status", "autoreply")),
-    ("status", ("autoreply", "autoreply_im")),
-])
-def test_profiles_disable_other_features_without_mutating_source(profile, disabled, monkeypatch):
+@pytest.mark.parametrize(
+    "profile,disabled",
+    [
+        ("room", ("status", "autoreply_im")),
+        ("im_reply", ("status", "autoreply")),
+        ("status", ("autoreply", "autoreply_im")),
+    ],
+)
+def test_profiles_disable_other_features_without_mutating_source(
+    profile, disabled, monkeypatch
+):
     source = copy.deepcopy(ca.DEFAULTS)
     for name in ("status", "autoreply", "autoreply_im"):
         source[name]["enabled"] = True
@@ -32,8 +40,10 @@ def test_profiles_disable_other_features_without_mutating_source(profile, disabl
     runtime = ca.apply_app_profile(source)
     for name in disabled:
         assert runtime[name]["enabled"] is False
-    assert all(source[name]["enabled"] is True
-               for name in ("status", "autoreply", "autoreply_im"))
+    assert all(
+        source[name]["enabled"] is True
+        for name in ("status", "autoreply", "autoreply_im")
+    )
 
     if profile in ("room", "im_reply"):
         monkeypatch.setattr(gui, "APP_PROFILE", profile)
@@ -43,17 +53,22 @@ def test_profiles_disable_other_features_without_mutating_source(profile, disabl
         assert gui_runtime[disabled_in_gui]["enabled"] is False
 
 
-@pytest.mark.parametrize("profile,command", [
-    ("room", ["status", "message"]),
-    ("room", ["im-probe"]),
-    ("room", ["test-rules", "message", "--im"]),
-    ("im_reply", ["status", "message"]),
-    ("im_reply", ["chat-probe"]),
-    ("im_reply", ["test-rules", "message"]),
-    ("status", ["chat-probe"]),
-    ("status", ["im-probe"]),
-])
-def test_cli_profile_rejects_commands_outside_feature(profile, command, monkeypatch, capsys):
+@pytest.mark.parametrize(
+    "profile,command",
+    [
+        ("room", ["status", "message"]),
+        ("room", ["im-probe"]),
+        ("room", ["test-rules", "message", "--im"]),
+        ("im_reply", ["status", "message"]),
+        ("im_reply", ["chat-probe"]),
+        ("im_reply", ["test-rules", "message"]),
+        ("status", ["chat-probe"]),
+        ("status", ["im-probe"]),
+    ],
+)
+def test_cli_profile_rejects_commands_outside_feature(
+    profile, command, monkeypatch, capsys
+):
     monkeypatch.setattr(ca, "APP_PROFILE", profile)
     assert ca.main(command) == 2
     output = capsys.readouterr().out

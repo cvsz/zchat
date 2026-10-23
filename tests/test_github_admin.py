@@ -10,7 +10,9 @@ import github_admin as admin  # noqa: E402
 
 
 def test_dry_run_does_not_require_github_authentication(monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["github_admin.py", "--repo", "OWNER/REPO", "--branch", "main"])
+    monkeypatch.setattr(
+        sys, "argv", ["github_admin.py", "--repo", "OWNER/REPO", "--branch", "main"]
+    )
 
     def unexpected_auth():
         raise AssertionError("dry-run must not require an authenticated gh CLI")
@@ -20,10 +22,13 @@ def test_dry_run_does_not_require_github_authentication(monkeypatch, capsys):
     assert "Dry-run only" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("argv", [
-    ["github_admin.py", "--repo", "OWNER/REPO", "--branch", "main", "--apply"],
-    ["github_admin.py", "--repo", "OWNER/REPO", "--branch", "main", "--verify"],
-])
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["github_admin.py", "--repo", "OWNER/REPO", "--branch", "main", "--apply"],
+        ["github_admin.py", "--repo", "OWNER/REPO", "--branch", "main", "--verify"],
+    ],
+)
 def test_mutation_and_verification_require_explicit_check_names(monkeypatch, argv):
     monkeypatch.setattr(sys, "argv", argv)
     with pytest.raises(SystemExit) as exc:
@@ -33,7 +38,10 @@ def test_mutation_and_verification_require_explicit_check_names(monkeypatch, arg
 
 def test_protection_payload_uses_only_operator_supplied_checks():
     payload = admin.protection_payload(("ci / test", "CodeQL / Analyze"))
-    assert payload["required_status_checks"]["contexts"] == ["ci / test", "CodeQL / Analyze"]
+    assert payload["required_status_checks"]["contexts"] == [
+        "ci / test",
+        "CodeQL / Analyze",
+    ]
 
 
 def test_apply_encodes_branch_slashes_and_targets_explicit_repo(monkeypatch):
@@ -42,11 +50,16 @@ def test_apply_encodes_branch_slashes_and_targets_explicit_repo(monkeypatch):
 
     admin.apply("OWNER/REPO", "release/stable", ("ci / test",))
 
-    assert calls[0][0:2] == ("PUT", "repos/OWNER/REPO/branches/release%2Fstable/protection")
+    assert calls[0][0:2] == (
+        "PUT",
+        "repos/OWNER/REPO/branches/release%2Fstable/protection",
+    )
     assert calls[0][2]["required_status_checks"]["contexts"] == ["ci / test"]
 
 
-@pytest.mark.parametrize("repo", ["", "OWNER", "OWNER/REPO/EXTRA", "OWNER/../REPO", "OWNER/REPO?x=1"])
+@pytest.mark.parametrize(
+    "repo", ["", "OWNER", "OWNER/REPO/EXTRA", "OWNER/../REPO", "OWNER/REPO?x=1"]
+)
 def test_invalid_repository_targets_are_rejected(repo):
     with pytest.raises(ValueError, match="OWNER/REPOSITORY"):
         admin.validate_target(repo, "main", ())

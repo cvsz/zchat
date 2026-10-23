@@ -1,4 +1,5 @@
 """Shared GUI palette and clipboard behavior across shipped apps."""
+
 from __future__ import annotations
 
 import importlib
@@ -115,7 +116,7 @@ class FakeEntry:
         self.selection = None
 
     def insert(self, _index, value):
-        self.value = self.value[:self.cursor] + value + self.value[self.cursor:]
+        self.value = self.value[: self.cursor] + value + self.value[self.cursor :]
         self.cursor += len(value)
 
 
@@ -143,7 +144,8 @@ class FakeRoot:
 def _load_controller(module_name, attribute):
     if module_name == "line_clipboard_support":
         spec = importlib.util.spec_from_file_location(
-            module_name, ROOT / "line" / "clipboard_support.py")
+            module_name, ROOT / "line" / "clipboard_support.py"
+        )
         module = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
         spec.loader.exec_module(module)
@@ -154,17 +156,23 @@ def _load_controller(module_name, attribute):
 
 @pytest.mark.parametrize("module_name,attribute", CLIPBOARD_CONTROLLERS)
 def test_clipboard_shortcuts_work_with_non_latin_keysyms(
-        module_name, attribute, monkeypatch):
+    module_name, attribute, monkeypatch
+):
     import tkinter
 
     module, controller_type = _load_controller(module_name, attribute)
     monkeypatch.setattr(tkinter, "Menu", FakeMenu)
     owner = importlib.import_module(controller_type.__module__)
     if hasattr(owner, "set_clipboard_text"):
-        monkeypatch.setattr(owner, "set_clipboard_text",
-                            lambda root, value: root.clipboard_append(value))
+        monkeypatch.setattr(
+            owner,
+            "set_clipboard_text",
+            lambda root, value: root.clipboard_append(value),
+        )
     if hasattr(owner, "get_clipboard_text"):
-        monkeypatch.setattr(owner, "get_clipboard_text", lambda root: root.clipboard_get())
+        monkeypatch.setattr(
+            owner, "get_clipboard_text", lambda root: root.clipboard_get()
+        )
 
     entry = FakeEntry()
     root = FakeRoot(entry)
@@ -172,8 +180,9 @@ def test_clipboard_shortcuts_work_with_non_latin_keysyms(
     controller.install(root)
 
     def key(shortcut, keycode):
-        return controller.handle_control_key(SimpleNamespace(
-            widget=entry, keysym="??", char="ษ", keycode=keycode))
+        return controller.handle_control_key(
+            SimpleNamespace(widget=entry, keysym="??", char="ษ", keycode=keycode)
+        )
 
     assert key("x", 88) == "break"
     assert root.clipboard == "bcd"
@@ -196,18 +205,27 @@ def test_all_controller_context_menus_display_one_language(monkeypatch):
     _, controller_type = _load_controller("clipboard_support", "ClipboardController")
     monkeypatch.setattr(tkinter, "Menu", FakeMenu)
     controller = controller_type(
-        FakeRoot(), translate=lambda text: text.partition("|")[1] and text.partition("|")[2])
+        FakeRoot(),
+        translate=lambda text: text.partition("|")[1] and text.partition("|")[2],
+    )
     assert controller.menu.labels == ["ตัด", "คัดลอก", "วาง", None, "เลือกทั้งหมด"]
 
 
 def test_web_status_clipboard_menu_has_localized_single_language_labels():
     import web_status_gui
 
-    required = {"clipboard_cut", "clipboard_copy", "clipboard_paste", "clipboard_select_all"}
+    required = {
+        "clipboard_cut",
+        "clipboard_copy",
+        "clipboard_paste",
+        "clipboard_select_all",
+    }
     assert required <= web_status_gui.WEB_STATUS_LANGUAGE_TEXT["en"].keys()
     assert required <= web_status_gui.WEB_STATUS_LANGUAGE_TEXT["th"].keys()
-    assert all("|" not in web_status_gui.WEB_STATUS_LANGUAGE_TEXT["th"][key]
-               for key in required)
+    assert all(
+        "|" not in web_status_gui.WEB_STATUS_LANGUAGE_TEXT["th"][key]
+        for key in required
+    )
 
 
 def test_web_status_ctrl_x_works_with_unknown_keysym(monkeypatch):
@@ -216,17 +234,22 @@ def test_web_status_ctrl_x_works_with_unknown_keysym(monkeypatch):
 
     monkeypatch.setattr(tkinter, "Menu", FakeMenu)
     copied = []
-    monkeypatch.setattr(web_status_gui, "_write_clipboard_text",
-                        lambda _root, value: copied.append(value))
+    monkeypatch.setattr(
+        web_status_gui,
+        "_write_clipboard_text",
+        lambda _root, value: copied.append(value),
+    )
     entry = FakeEntry()
     root = FakeRoot(entry)
     controller = web_status_gui.WebStatusClipboardController(
-        root, translate=lambda key: web_status_gui.WEB_STATUS_LANGUAGE_TEXT["th"][key])
+        root, translate=lambda key: web_status_gui.WEB_STATUS_LANGUAGE_TEXT["th"][key]
+    )
     controller.install(root)
     assert controller.menu.labels == ["ตัด", "คัดลอก", "วาง", None, "เลือกทั้งหมด"]
 
-    result = controller.handle_control_key(SimpleNamespace(
-        widget=entry, keysym="??", char="ษ", keycode=88))
+    result = controller.handle_control_key(
+        SimpleNamespace(widget=entry, keysym="??", char="ษ", keycode=88)
+    )
 
     assert result == "break"
     assert copied == ["bcd"]
@@ -234,10 +257,24 @@ def test_web_status_ctrl_x_works_with_unknown_keysym(monkeypatch):
 
 
 def test_all_gui_files_use_web_status_light_palette():
-    old_palette = ("#edf2f5", "#233548", "#087b83", "#d9e8f0", "#f4f7f7",
-                   "#a52834", "#138a55", "#1769c2", "#006d78", "#d72d32")
+    old_palette = (
+        "#edf2f5",
+        "#233548",
+        "#087b83",
+        "#d9e8f0",
+        "#f4f7f7",
+        "#a52834",
+        "#138a55",
+        "#1769c2",
+        "#006d78",
+        "#d72d32",
+    )
     for relative in GUI_FILES:
-        source = (ROOT / relative).read_text(encoding="utf-8").lower() if not relative.startswith("src/") else (ROOT / relative).read_text(encoding="utf-8").lower()
+        source = (
+            (ROOT / relative).read_text(encoding="utf-8").lower()
+            if not relative.startswith("src/")
+            else (ROOT / relative).read_text(encoding="utf-8").lower()
+        )
         assert "#f4f1e8" in source, relative
         assert "#8b672b" in source, relative
         for color in old_palette:
@@ -248,13 +285,18 @@ def test_all_gui_clipboard_controllers_bind_layout_independent_keys(monkeypatch)
     import tkinter
 
     monkeypatch.setattr(tkinter, "Menu", FakeMenu)
-    modules = CLIPBOARD_CONTROLLERS + (("line_clipboard_support", "ClipboardController"),)
+    modules = CLIPBOARD_CONTROLLERS + (
+        ("line_clipboard_support", "ClipboardController"),
+    )
     for module_name, attribute in modules:
         _module, controller_type = _load_controller(module_name, attribute)
         entry = FakeEntry()
         controller = controller_type(FakeRoot(entry))
         controller.install(controller.root)
         assert "<Control-KeyPress>" in entry.bindings, module_name
-        assert controller.handle_control_key(SimpleNamespace(
-            widget=entry, keysym="??", char="ษ", keycode=65)) == "break", module_name
-
+        assert (
+            controller.handle_control_key(
+                SimpleNamespace(widget=entry, keysym="??", char="ษ", keycode=65)
+            )
+            == "break"
+        ), module_name

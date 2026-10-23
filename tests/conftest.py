@@ -10,6 +10,7 @@ replaces the cached root so every smoke test always gets a usable, *default*
 root — `tk.BooleanVar()` and friends fail with "no default root window"
 otherwise.
 """
+
 import pytest
 
 _ROOT = None
@@ -17,6 +18,7 @@ _ROOT = None
 
 def _usable(root):
     import tkinter
+
     try:
         return root.winfo_exists() and tkinter._default_root is root
     except Exception:
@@ -26,6 +28,7 @@ def _usable(root):
 def tk_root():
     global _ROOT
     import tkinter
+
     if _ROOT is not None and not _usable(_ROOT):
         try:
             _ROOT.destroy()

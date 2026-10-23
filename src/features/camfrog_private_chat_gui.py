@@ -1,4 +1,5 @@
 """Private chat window manager. It lists and focuses windows without reading or sending messages."""
+
 import argparse
 import copy
 import json
@@ -21,7 +22,9 @@ def private_config_path(path):
     try:
         candidate.relative_to(ca.BASE.resolve())
     except ValueError as exc:
-        raise ValueError("Private chat config must stay beside this executable.") from exc
+        raise ValueError(
+            "Private chat config must stay beside this executable."
+        ) from exc
     return candidate
 
 
@@ -51,7 +54,9 @@ def main(argv=None):
         args = parser.parse_args(argv)
         if args.config is not None and not args.config.strip():
             parser.error("argument --config: expected a path")
-        config_path = private_config_path(args.config) if args.config is not None else CONFIG_PATH
+        config_path = (
+            private_config_path(args.config) if args.config is not None else CONFIG_PATH
+        )
     except SystemExit as exc:
         return exc.code
     except ValueError as exc:
@@ -85,62 +90,109 @@ class PrivateChatManager:
         except self.tk.TclError:
             pass
         style.configure("TFrame", background="#f4f1e8")
-        style.configure("TLabel", background="#f4f1e8", foreground="#283648", font=("Segoe UI", 9))
+        style.configure(
+            "TLabel", background="#f4f1e8", foreground="#283648", font=("Segoe UI", 9)
+        )
         style.configure("TCheckbutton", background="#f4f1e8", foreground="#283648")
         style.configure("TRadiobutton", background="#f4f1e8", foreground="#283648")
         style.configure("TLabelframe", background="#f4f1e8", bordercolor="#d5c8ac")
-        style.configure("TLabelframe.Label", background="#f4f1e8", foreground="#8b672b",
-                        font=("Segoe UI", 9, "bold"))
-        style.configure("TButton", padding=(7, 4), font=("Segoe UI", 9),
-                        background="#ebe5d9", foreground="#283648")
+        style.configure(
+            "TLabelframe.Label",
+            background="#f4f1e8",
+            foreground="#8b672b",
+            font=("Segoe UI", 9, "bold"),
+        )
+        style.configure(
+            "TButton",
+            padding=(7, 4),
+            font=("Segoe UI", 9),
+            background="#ebe5d9",
+            foreground="#283648",
+        )
         style.map("TButton", background=[("active", "#d6e9e8"), ("pressed", "#d5c8ac")])
-        style.configure("TEntry", padding=(4, 4), fieldbackground="#ffffff",
-                        foreground="#283648")
+        style.configure(
+            "TEntry", padding=(4, 4), fieldbackground="#ffffff", foreground="#283648"
+        )
         style.configure("TNotebook", background="#f4f1e8")
         style.configure("TNotebook.Tab", padding=(11, 6), font=("Segoe UI", 9))
-        style.map("TNotebook.Tab", background=[("selected", "#fffdfa")],
-                  foreground=[("selected", "#8b672b")])
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", "#fffdfa")],
+            foreground=[("selected", "#8b672b")],
+        )
         self.root.title("Camfrog Private Chat")
         self.root.geometry("460x360")
         self.root.minsize(360, 280)
 
-        self.ttk.Label(self.root, text=(
-            "Open a private chat in Camfrog, then refresh this list. "
-            "This tool only lists and focuses private chat windows; it does not read or send messages."
-        ), wraplength=520).pack(fill="x", padx=12, pady=(12, 8))
+        self.ttk.Label(
+            self.root,
+            text=(
+                "Open a private chat in Camfrog, then refresh this list. "
+                "This tool only lists and focuses private chat windows; it does not read or send messages."
+            ),
+            wraplength=520,
+        ).pack(fill="x", padx=12, pady=(12, 8))
 
         filters = self.ttk.Frame(self.root, padding=(12, 0, 12, 8))
         filters.pack(fill="x")
-        self.ttk.Label(filters, text="Window title filter").grid(row=0, column=0, sticky="w")
-        self.title_filter = self.tk.StringVar(value=self.config["autoreply_im"].get("window_title_regex", ""))
-        self.ttk.Entry(filters, textvariable=self.title_filter).grid(row=0, column=1, sticky="ew", padx=6)
-        self.ttk.Label(filters, text="Max windows").grid(row=1, column=0, sticky="w", pady=(5, 0))
-        self.max_windows = self.tk.StringVar(value=str(self.config["autoreply_im"].get("max_windows", 5)))
-        self.ttk.Spinbox(filters, from_=1, to=20, textvariable=self.max_windows, width=6).grid(
-            row=1, column=1, sticky="w", padx=6, pady=(5, 0))
+        self.ttk.Label(filters, text="Window title filter").grid(
+            row=0, column=0, sticky="w"
+        )
+        self.title_filter = self.tk.StringVar(
+            value=self.config["autoreply_im"].get("window_title_regex", "")
+        )
+        self.ttk.Entry(filters, textvariable=self.title_filter).grid(
+            row=0, column=1, sticky="ew", padx=6
+        )
+        self.ttk.Label(filters, text="Max windows").grid(
+            row=1, column=0, sticky="w", pady=(5, 0)
+        )
+        self.max_windows = self.tk.StringVar(
+            value=str(self.config["autoreply_im"].get("max_windows", 5))
+        )
+        self.ttk.Spinbox(
+            filters, from_=1, to=20, textvariable=self.max_windows, width=6
+        ).grid(row=1, column=1, sticky="w", padx=6, pady=(5, 0))
         filters.columnconfigure(1, weight=1)
 
         list_frame = self.ttk.Frame(self.root, padding=(12, 0, 12, 8))
         list_frame.pack(fill="both", expand=True)
         self.listbox = self.tk.Listbox(
-            list_frame, exportselection=False, background="#fffdfa", foreground="#283648",
-            selectbackground="#8b672b", selectforeground="#fffdfa",
-            highlightbackground="#d5c8ac", highlightcolor="#8b672b")
+            list_frame,
+            exportselection=False,
+            background="#fffdfa",
+            foreground="#283648",
+            selectbackground="#8b672b",
+            selectforeground="#fffdfa",
+            highlightbackground="#d5c8ac",
+            highlightcolor="#8b672b",
+        )
         self.listbox.pack(side="left", fill="both", expand=True)
-        scrollbar = self.ttk.Scrollbar(list_frame, orient="vertical", command=self.listbox.yview)
+        scrollbar = self.ttk.Scrollbar(
+            list_frame, orient="vertical", command=self.listbox.yview
+        )
         scrollbar.pack(side="right", fill="y")
         self.listbox.configure(yscrollcommand=scrollbar.set)
         self.listbox.bind("<Double-Button-1>", lambda _event: self.activate_selected())
 
         actions = self.ttk.Frame(self.root, padding=(12, 0, 12, 8))
         actions.pack(fill="x")
-        self.ttk.Button(actions, text="Save filters", command=self.save_filters).pack(side="left", padx=5)
-        self.ttk.Button(actions, text="Discover controls", command=self.discover).pack(side="left")
-        self.ttk.Button(actions, text="Refresh", command=self.refresh).pack(side="right")
-        self.ttk.Button(actions, text="Activate selected", command=self.activate_selected).pack(
-            side="right", padx=5)
+        self.ttk.Button(actions, text="Save filters", command=self.save_filters).pack(
+            side="left", padx=5
+        )
+        self.ttk.Button(actions, text="Discover controls", command=self.discover).pack(
+            side="left"
+        )
+        self.ttk.Button(actions, text="Refresh", command=self.refresh).pack(
+            side="right"
+        )
+        self.ttk.Button(
+            actions, text="Activate selected", command=self.activate_selected
+        ).pack(side="right", padx=5)
         self.status = self.tk.StringVar(value=f"Private settings: {self.config_path}")
-        self.ttk.Label(self.root, textvariable=self.status, anchor="w", padding=(12, 0, 12, 10)).pack(fill="x")
+        self.ttk.Label(
+            self.root, textvariable=self.status, anchor="w", padding=(12, 0, 12, 10)
+        ).pack(fill="x")
         self.clipboard_controller = ClipboardController(self.root)
         self.clipboard_controller.install(self.root)
         self.root.after(200, self.refresh)
@@ -151,13 +203,18 @@ class PrivateChatManager:
             if not 1 <= limit <= 20:
                 raise ValueError
             config = load_private_config(self.config_path)
-            config["autoreply_im"]["window_title_regex"] = self.title_filter.get().strip()
+            config["autoreply_im"]["window_title_regex"] = (
+                self.title_filter.get().strip()
+            )
             config["autoreply_im"]["max_windows"] = limit
             try:
                 re.compile(config["autoreply_im"]["window_title_regex"])
             except Exception as exc:
                 raise ValueError(f"Invalid title filter: {exc}") from exc
-            ca.atomic_write(self.config_path, json.dumps(config, ensure_ascii=False, indent=2) + "\n")
+            ca.atomic_write(
+                self.config_path,
+                json.dumps(config, ensure_ascii=False, indent=2) + "\n",
+            )
             self.config = config
             self.status.set("Private chat filters saved to this app's private config.")
             if refresh_after:
@@ -190,19 +247,26 @@ class PrivateChatManager:
             self.save_filters(refresh_after=False, silent=True)
             main_window = ca.get_window(self.config)
             self.windows = ca.get_im_windows(
-                self.config, main_window, self.config["autoreply_im"]["max_windows"])
+                self.config, main_window, self.config["autoreply_im"]["max_windows"]
+            )
             self.listbox.delete(0, "end")
             for window, _history, _input in self.windows:
                 try:
                     title = window.window_text().strip()
                 except Exception:
                     title = ""
-                self.listbox.insert("end", title or f"Private chat window ({window.handle})")
+                self.listbox.insert(
+                    "end", title or f"Private chat window ({window.handle})"
+                )
             if self.windows:
                 self.listbox.selection_set(0)
-                self.status.set(f"Found {len(self.windows)} private chat window(s). No message text is read.")
+                self.status.set(
+                    f"Found {len(self.windows)} private chat window(s). No message text is read."
+                )
             else:
-                self.status.set("No private chat windows found. Open one in Camfrog and refresh.")
+                self.status.set(
+                    "No private chat windows found. Open one in Camfrog and refresh."
+                )
         except Exception as exc:
             self.windows = []
             self.listbox.delete(0, "end")

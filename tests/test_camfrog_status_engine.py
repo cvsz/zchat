@@ -267,9 +267,7 @@ def test_status_control_adapter_rejects_control_class_or_id_mismatch(monkeypatch
         GetDlgCtrlID=lambda hwnd: control_ids[hwnd],
         GetClassName=lambda hwnd: classes[hwnd],
     )
-    win32process = SimpleNamespace(
-        GetWindowThreadProcessId=lambda hwnd: (1, 55)
-    )
+    win32process = SimpleNamespace(GetWindowThreadProcessId=lambda hwnd: (1, 55))
     monkeypatch.setattr(cse.sys, "platform", "win32")
     monkeypatch.setitem(sys.modules, "win32gui", win32gui)
     monkeypatch.setitem(sys.modules, "win32process", win32process)

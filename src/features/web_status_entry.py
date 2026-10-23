@@ -1,4 +1,5 @@
 """Launch the web status updater: GUI with no args, CLI passthrough otherwise."""
+
 import sys
 from pathlib import Path
 

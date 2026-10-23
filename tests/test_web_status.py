@@ -1,4 +1,5 @@
 """Tk-free tests for the prototype web status updater (no network)."""
+
 import os
 import json
 import sys
@@ -67,10 +68,18 @@ def _patch_opener_sequence(monkeypatch, bodies):
 
 
 def test_dry_run_touches_nothing(monkeypatch, capsys):
-    monkeypatch.setattr(ws.urllib.request, "build_opener", lambda *a: (_ for _ in ()).throw(
-        AssertionError("no network in dry-run")))
-    monkeypatch.setattr(ws.getpass, "getpass", lambda *a: (_ for _ in ()).throw(
-        AssertionError("no password prompt in dry-run")))
+    monkeypatch.setattr(
+        ws.urllib.request,
+        "build_opener",
+        lambda *a: (_ for _ in ()).throw(AssertionError("no network in dry-run")),
+    )
+    monkeypatch.setattr(
+        ws.getpass,
+        "getpass",
+        lambda *a: (_ for _ in ()).throw(
+            AssertionError("no password prompt in dry-run")
+        ),
+    )
     assert ws.main(["--login", "Seaza", "--status", "hello"]) == 0
     out = capsys.readouterr().out
     assert "profiles.camfrog.com/home.php" in out
@@ -104,10 +113,13 @@ def test_live_wrong_password_reports_auth_failure(monkeypatch, capsys):
 
 def test_live_login_success_still_gated(monkeypatch, capsys):
     monkeypatch.setattr(ws.getpass, "getpass", lambda *a: "pw")
-    _patch_opener_sequence(monkeypatch, [
-        b"https://profiles.camfrog.com/en/",               # login reply
-        b"<title>Camfrog - home</title>var _user_id = '1'; var nick = 'Seaza';",  # signed-in profile page
-    ])
+    _patch_opener_sequence(
+        monkeypatch,
+        [
+            b"https://profiles.camfrog.com/en/",  # login reply
+            b"<title>Camfrog - home</title>var _user_id = '1'; var nick = 'Seaza';",  # signed-in profile page
+        ],
+    )
     assert ws.main(["--login", "Seaza", "--status", "hi", "--live"]) == 3
     out = capsys.readouterr().out
     assert "not confirmed" in out and "--confirm-update" in out
@@ -141,28 +153,66 @@ def test_live_network_failure_returns_int_code(monkeypatch, capsys):
 
 def _cookie_file(tmp_path, value="s3cret-value"):
     path = tmp_path / "camfrog-cookies.txt"
-    path.write_text("# Netscape HTTP Cookie File\n"
-                    ".camfrog.com\tTRUE\t/\tTRUE\t0\tsess\t{0}\n".format(value),
-                    encoding="utf-8")
+    path.write_text(
+        "# Netscape HTTP Cookie File\n"
+        ".camfrog.com\tTRUE\t/\tTRUE\t0\tsess\t{0}\n".format(value),
+        encoding="utf-8",
+    )
     return str(path)
 
 
 def test_probe_missing_cookie_file(capsys):
-    assert ws.main(["--login", "Seaza", "--status", "hi",
-                    "--cookies-file", "/nonexistent/x.txt", "--probe"]) == 2
+    assert (
+        ws.main(
+            [
+                "--login",
+                "Seaza",
+                "--status",
+                "hi",
+                "--cookies-file",
+                "/nonexistent/x.txt",
+                "--probe",
+            ]
+        )
+        == 2
+    )
 
 
 def test_probe_bad_cookie_file(tmp_path, capsys):
     bad = tmp_path / "bad.txt"
     bad.write_text("not a cookie file\n", encoding="utf-8")
-    assert ws.main(["--login", "Seaza", "--status", "hi",
-                    "--cookies-file", str(bad), "--probe"]) == 2
+    assert (
+        ws.main(
+            [
+                "--login",
+                "Seaza",
+                "--status",
+                "hi",
+                "--cookies-file",
+                str(bad),
+                "--probe",
+            ]
+        )
+        == 2
+    )
 
 
 def test_probe_detects_logged_out_session(tmp_path, monkeypatch, capsys):
     fake = _patch_opener(monkeypatch, b"<title>Camfrog - Login Page</title>Sign On")
-    assert ws.main(["--login", "Seaza", "--status", "hi",
-                    "--cookies-file", _cookie_file(tmp_path), "--probe"]) == 0
+    assert (
+        ws.main(
+            [
+                "--login",
+                "Seaza",
+                "--status",
+                "hi",
+                "--cookies-file",
+                _cookie_file(tmp_path),
+                "--probe",
+            ]
+        )
+        == 0
+    )
     assert fake.calls, "probe must hit the network"
     out = capsys.readouterr().out
     assert "NOT signed in" in out
@@ -172,8 +222,20 @@ def test_probe_detects_logged_out_session(tmp_path, monkeypatch, capsys):
 
 def test_probe_never_claims_verified_blindly(tmp_path, monkeypatch, capsys):
     _patch_opener(monkeypatch, b"<title>Camfrog - Profile Page</title>hello")
-    assert ws.main(["--login", "Seaza", "--status", "hi",
-                    "--cookies-file", _cookie_file(tmp_path), "--probe"]) == 0
+    assert (
+        ws.main(
+            [
+                "--login",
+                "Seaza",
+                "--status",
+                "hi",
+                "--cookies-file",
+                _cookie_file(tmp_path),
+                "--probe",
+            ]
+        )
+        == 0
+    )
     assert "no signed-in marker" in capsys.readouterr().out
 
 
@@ -181,6 +243,7 @@ def test_probe_requires_cookies_file():
     with pytest.raises(SystemExit) as exc:
         ws.main(["--login", "Seaza", "--status", "hi", "--probe"])
     assert exc.value.code == 2
+
 
 def test_parse_pool_drops_blanks():
     assert ws.parse_pool("  hi\n\n  hello world  \n") == ["hi", "hello world"]
@@ -224,19 +287,23 @@ def test_perform_update_refused_until_confirmed():
 def test_perform_update_confirmed_needs_csrf(monkeypatch):
     fake = _patch_opener(
         monkeypatch,
-        b"<title>no token here</title>var _user_id = '1'; var nick = 'Seaza';")
+        b"<title>no token here</title>var _user_id = '1'; var nick = 'Seaza';",
+    )
     ok, message = ws.perform_update(
-        fake, "hi", 1.0, confirm=True, expected_login="Seaza")
+        fake, "hi", 1.0, confirm=True, expected_login="Seaza"
+    )
     assert ok is False
     assert "CSRF" in message
     assert fake.calls  # it did read the profile page first
 
 
 def test_perform_update_confirmed_posts_status(monkeypatch):
-    page = (b"<title>Camfrog</title>"
-            b"var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';"
-            b"var _user_id = '1';"
-            b"var nick = 'Seaza';")
+    page = (
+        b"<title>Camfrog</title>"
+        b"var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';"
+        b"var _user_id = '1';"
+        b"var nick = 'Seaza';"
+    )
     fake = _patch_opener(monkeypatch, page)
     posted = {}
 
@@ -247,11 +314,14 @@ def test_perform_update_confirmed_posts_status(monkeypatch):
 
     monkeypatch.setattr(ws, "_post", fake_post)
     ok, message = ws.perform_update(
-        fake, "hi there", 1.0, confirm=True, expected_login="Seaza")
+        fake, "hi there", 1.0, confirm=True, expected_login="Seaza"
+    )
     assert ok is True, message
     assert posted["url"] == ws.WEB_UPDATE_URL
-    assert posted["fields"] == {"status": "hi there",
-                                "csrf": "90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0"}
+    assert posted["fields"] == {
+        "status": "hi there",
+        "csrf": "90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0",
+    }
 
 
 def test_requests_carry_a_browser_user_agent(monkeypatch):
@@ -263,26 +333,31 @@ def test_requests_carry_a_browser_user_agent(monkeypatch):
             seen["headers"] = dict(request.headers)
             return FakeResponse(b"ok")
 
-    monkeypatch.setattr(ws.urllib.request, "build_opener",
-                        lambda *a: RecordingOpener())
+    monkeypatch.setattr(ws.urllib.request, "build_opener", lambda *a: RecordingOpener())
     ws._post(RecordingOpener(), ws.LOGIN_URL, {"a": "b"}, 1.0)
     ws.fetch_profile(RecordingOpener(), "Seaza", 1.0)
     joined = " ".join(seen["headers"])  # urllib capitalizes header names
-    assert "Mozilla/5.0" in seen["headers"].get("User-agent", "") or \
-        "Mozilla/5.0" in joined
+    assert (
+        "Mozilla/5.0" in seen["headers"].get("User-agent", "")
+        or "Mozilla/5.0" in joined
+    )
 
 
 def test_extract_csrf_from_logged_in_page():
-    page = ("<html>var csrf = '90d230418b54c662c347d84f32f663e0a94fc5ab';"
-            "var nick = 'Seaza';</html>")
+    page = (
+        "<html>var csrf = '90d230418b54c662c347d84f32f663e0a94fc5ab';"
+        "var nick = 'Seaza';</html>"
+    )
     assert ws.extract_csrf(page).startswith("90d2")
     assert ws.extract_csrf("<html>nothing</html>") == ""
 
 
 def test_summarize_session_reports_signed_in():
-    page = ("<title>Camfrog - \u0e0b\u0e48\u0e2d\u0e19</title>"
-            "<div class=\"nav-user-logged\">var _user_id = '146802792';"
-            "var nick = 'Seaza';")
+    page = (
+        "<title>Camfrog - \u0e0b\u0e48\u0e2d\u0e19</title>"
+        "<div class=\"nav-user-logged\">var _user_id = '146802792';"
+        "var nick = 'Seaza';"
+    )
     verdict, detail = ws.summarize_session(page)
     assert verdict == "signed-in"
     assert "Seaza" in detail and "146802792" in detail
@@ -301,10 +376,8 @@ def test_encrypted_credentials_roundtrip(tmp_path, monkeypatch):
         assert os.environ["CAMFROG_USER"] == "Seaza"
         assert os.environ["CAMFROG_PASSWORD"] == "s3cret"
     else:
-        monkeypatch.setattr(ws, "dpapi_protect",
-                            lambda data: b"blob:" + data)
-        monkeypatch.setattr(ws, "dpapi_unprotect",
-                            lambda blob: blob[len(b"blob:"):])
+        monkeypatch.setattr(ws, "dpapi_protect", lambda data: b"blob:" + data)
+        monkeypatch.setattr(ws, "dpapi_unprotect", lambda blob: blob[len(b"blob:") :])
         ok, message = ws.save_credentials("Seaza", "s3cret")
         assert ok, message
         assert ws.load_env_enc() is True
@@ -365,12 +438,16 @@ def test_cookie_from_paste_rejects_garbage(bad):
     assert "devtools" in str(exc.value) or "home.php" in str(exc.value)
 
 
-@pytest.mark.parametrize(("key", "expected", "value"), [
-    ("WEBAUTH_USER", "PHPSESSID", "PHPSESSID=session-value"),
-    ("WEBAUTH_BOT_USER", "cloudbot", "cloudbot=bot-session-value"),
-])
+@pytest.mark.parametrize(
+    ("key", "expected", "value"),
+    [
+        ("WEBAUTH_USER", "PHPSESSID", "PHPSESSID=session-value"),
+        ("WEBAUTH_BOT_USER", "cloudbot", "cloudbot=bot-session-value"),
+    ],
+)
 def test_environment_cookie_accepts_expected_single_cookie(
-        monkeypatch, key, expected, value):
+    monkeypatch, key, expected, value
+):
     monkeypatch.setenv(key, value)
     assert ws.environment_cookie(key, expected) == value
     assert wsg.environment_cookie(key, expected) == value
@@ -380,30 +457,43 @@ def test_environment_cookie_rejects_wrong_or_multiple_cookie_names(monkeypatch):
     monkeypatch.setenv("WEBAUTH_USER", "cloudbot=bot-session-value")
     with pytest.raises(ValueError, match="PHPSESSID"):
         ws.environment_cookie("WEBAUTH_USER", "PHPSESSID")
-    monkeypatch.setenv(
-        "WEBAUTH_USER", "PHPSESSID=session-value; other=extra-value")
+    monkeypatch.setenv("WEBAUTH_USER", "PHPSESSID=session-value; other=extra-value")
     with pytest.raises(ValueError, match="exactly one"):
         wsg.environment_cookie("WEBAUTH_USER", "PHPSESSID")
 
 
-@pytest.mark.parametrize(("module", "entry"), [
-    (ws, "main"), (wsg, "cli_main"),
-])
+@pytest.mark.parametrize(
+    ("module", "entry"),
+    [
+        (ws, "main"),
+        (wsg, "cli_main"),
+    ],
+)
 def test_live_cli_uses_env_cookie_without_password_or_post_when_unconfirmed(
-        tmp_path, monkeypatch, capsys, module, entry):
+    tmp_path, monkeypatch, capsys, module, entry
+):
     monkeypatch.setattr(wsg, "BASE", tmp_path)
     secret = "PHPSESSID=synthetic-session-value"
     monkeypatch.setenv("WEBAUTH_USER", secret)
     monkeypatch.setattr(
-        module.getpass, "getpass",
-        lambda *_args: pytest.fail("cookie auth must not prompt for a password"))
+        module.getpass,
+        "getpass",
+        lambda *_args: pytest.fail("cookie auth must not prompt for a password"),
+    )
     monkeypatch.setattr(
-        module, "live_update",
-        lambda *_args, **_kwargs: pytest.fail("cookie auth must not use password login"))
+        module,
+        "live_update",
+        lambda *_args, **_kwargs: pytest.fail(
+            "cookie auth must not use password login"
+        ),
+    )
 
-    assert getattr(module, entry)([
-        "--login", "Example", "--status", "synthetic", "--live"
-    ]) == 3
+    assert (
+        getattr(module, entry)(
+            ["--login", "Example", "--status", "synthetic", "--live"]
+        )
+        == 3
+    )
     output = capsys.readouterr().out
     assert "refused" in output
     assert secret not in output
@@ -419,11 +509,14 @@ def test_stored_account_reads_the_environment(monkeypatch):
 
 def test_live_update_signs_in_then_updates(monkeypatch):
     """The cookie-free path: login -> session page -> gated update."""
-    monkeypatch.setattr(ws, "attempt_login",
-                        lambda *a: "https://profiles.camfrog.com/en/")
-    monkeypatch.setattr(ws, "fetch_profile",
-                        lambda *a: "var _user_id = '1'; var nick = 'Seaza'; "
-                                   "nav-user-logged")
+    monkeypatch.setattr(
+        ws, "attempt_login", lambda *a: "https://profiles.camfrog.com/en/"
+    )
+    monkeypatch.setattr(
+        ws,
+        "fetch_profile",
+        lambda *a: "var _user_id = '1'; var nick = 'Seaza'; nav-user-logged",
+    )
     seen = {}
 
     def fake_update(opener, status, timeout, confirm=False, expected_login=None):
@@ -435,17 +528,20 @@ def test_live_update_signs_in_then_updates(monkeypatch):
     monkeypatch.setattr(ws, "perform_update", fake_update)
     code, message = ws.live_update("Seaza", "pw", "hello", 1.0, confirm=True)
     assert code == ws.EXIT_OK, message
-    assert seen == {"confirm": True, "status": "hello",
-                    "expected_login": "Seaza"}
+    assert seen == {"confirm": True, "status": "hello", "expected_login": "Seaza"}
     assert "Seaza" in message
 
 
 def test_live_update_gated_without_confirmation(monkeypatch):
-    monkeypatch.setattr(ws, "attempt_login",
-                        lambda *a: "https://profiles.camfrog.com/en/")
-    monkeypatch.setattr(ws, "fetch_profile", lambda *a: "var _user_id = '1'; var nick = 'Seaza';")
-    monkeypatch.setattr(ws, "perform_update",
-                        lambda *a, **k: (False, "update refused: not confirmed"))
+    monkeypatch.setattr(
+        ws, "attempt_login", lambda *a: "https://profiles.camfrog.com/en/"
+    )
+    monkeypatch.setattr(
+        ws, "fetch_profile", lambda *a: "var _user_id = '1'; var nick = 'Seaza';"
+    )
+    monkeypatch.setattr(
+        ws, "perform_update", lambda *a, **k: (False, "update refused: not confirmed")
+    )
     code, message = ws.live_update("Seaza", "pw", "hello", 1.0)
     assert code == ws.EXIT_BLOCKED
     assert "not confirmed" in message
@@ -460,15 +556,23 @@ def test_live_update_reports_wrong_password(monkeypatch):
 
 def test_env_enc_is_gitignored():
     import subprocess, os
+
     root = Path(__file__).resolve().parents[1]
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    rc = subprocess.run(["git", "-c", "safe.directory=*", "-C", str(root), "check-ignore", ".env.enc"],
-                        capture_output=True, env=env)
+    rc = subprocess.run(
+        ["git", "-c", "safe.directory=*", "-C", str(root), "check-ignore", ".env.enc"],
+        capture_output=True,
+        env=env,
+    )
     assert rc.returncode == 0, ".env.enc must be git-ignored"
 
 
-def _chrome_profile(tmp_path, name="Default", rows=((".camfrog.com", "sess", "plain", b""),),
-                   network=False):
+def _chrome_profile(
+    tmp_path,
+    name="Default",
+    rows=((".camfrog.com", "sess", "plain", b""),),
+    network=False,
+):
     import sqlite3
 
     profile = tmp_path / "chrome" / name
@@ -477,11 +581,15 @@ def _chrome_profile(tmp_path, name="Default", rows=((".camfrog.com", "sess", "pl
     profile.mkdir(parents=True)
     db = profile / "Cookies"
     connection = sqlite3.connect(db)
-    connection.execute("CREATE TABLE cookies(host_key TEXT, name TEXT, value TEXT, "
-                       "encrypted_value BLOB, path TEXT, is_secure INTEGER, expires_utc INTEGER)")
+    connection.execute(
+        "CREATE TABLE cookies(host_key TEXT, name TEXT, value TEXT, "
+        "encrypted_value BLOB, path TEXT, is_secure INTEGER, expires_utc INTEGER)"
+    )
     for host, cookie, value, encrypted in rows:
-        connection.execute("INSERT INTO cookies VALUES(?,?,?,?,?,?,?)",
-                           (host, cookie, value, encrypted, "/", 0, 0))
+        connection.execute(
+            "INSERT INTO cookies VALUES(?,?,?,?,?,?,?)",
+            (host, cookie, value, encrypted, "/", 0, 0),
+        )
     connection.commit()
     connection.close()
     return tmp_path / "chrome"
@@ -491,6 +599,7 @@ def test_find_chrome_profiles_only_standard_dirs(tmp_path):
     base = _chrome_profile(tmp_path)
     (base / "Profile 1").mkdir()
     import sqlite3
+
     connection = sqlite3.connect(base / "Profile 1" / "Cookies")
     connection.execute("CREATE TABLE cookies(a)")
     connection.commit()
@@ -506,6 +615,7 @@ def test_find_chrome_profiles_network_layout(tmp_path):
     base = _chrome_profile(tmp_path, network=True)
     (base / "Profile 1" / "Network").mkdir(parents=True)
     import sqlite3
+
     connection = sqlite3.connect(base / "Profile 1" / "Network" / "Cookies")
     connection.execute("CREATE TABLE cookies(a)")
     connection.commit()
@@ -579,10 +689,14 @@ def test_import_plain_values_and_redacts_summary(tmp_path):
 
 
 def test_import_skips_foreign_and_evil_domains(tmp_path):
-    base = _chrome_profile(tmp_path, rows=(
-        ("other.com", "a", "x", b""),
-        ("evilcamfrog.com", "b", "y", b""),
-        ("profiles.camfrog.com", "c", "z", b"")))
+    base = _chrome_profile(
+        tmp_path,
+        rows=(
+            ("other.com", "a", "x", b""),
+            ("evilcamfrog.com", "b", "y", b""),
+            ("profiles.camfrog.com", "c", "z", b""),
+        ),
+    )
     jar = ws.import_chrome_jar(str(base))
     assert sorted(c.name for c in jar) == ["c"]
 
@@ -643,8 +757,18 @@ def test_aes_cookie_without_library_is_a_clean_error(monkeypatch):
 
 def test_probe_chrome_flag_conflicts_with_file():
     with pytest.raises(SystemExit) as exc:
-        ws.main(["--login", "Seaza", "--status", "hi", "--probe",
-                 "--chrome", "--cookies-file", "x.txt"])
+        ws.main(
+            [
+                "--login",
+                "Seaza",
+                "--status",
+                "hi",
+                "--probe",
+                "--chrome",
+                "--cookies-file",
+                "x.txt",
+            ]
+        )
     assert exc.value.code == 2
 
 
@@ -670,16 +794,20 @@ def test_data_blob_pins_backing_buffer():
     assert blob.cbData == 3
     assert blob._backing.value == b"abc"
     import ctypes
+
     assert ctypes.string_at(blob.pbData, blob.cbData) == b"abc"
 
 
-@pytest.mark.parametrize("content", [
-    "{not json",
-    "[]",
-    '{"os_crypt": "nope"}',
-    '{"os_crypt": {}}',
-    '{"os_crypt": {"encrypted_key": "!!!not-base64!!!"}}',
-])
+@pytest.mark.parametrize(
+    "content",
+    [
+        "{not json",
+        "[]",
+        '{"os_crypt": "nope"}',
+        '{"os_crypt": {}}',
+        '{"os_crypt": {"encrypted_key": "!!!not-base64!!!"}}',
+    ],
+)
 def test_chrome_aes_key_malformed_local_state(tmp_path, content):
     local_state = tmp_path / "Local State"
     local_state.write_text(content, encoding="utf-8")
@@ -693,23 +821,33 @@ def test_chrome_aes_key_missing_file(tmp_path):
         ws.chrome_aes_key(str(tmp_path / "nothing"))
 
 
-@pytest.mark.parametrize(("reply", "state"), [
-    ('{}', "outcome unknown"),
-    ('[]', "outcome unknown"),
-    ('null', "outcome unknown"),
-    ('{"response":""}', "outcome unknown"),
-    ('{"response":"   "}', "outcome unknown"),
-    ('{"response":null}', "outcome unknown"),
-    ('{"error":true,"response":"denied"}', "refused"),
-])
+@pytest.mark.parametrize(
+    ("reply", "state"),
+    [
+        ("{}", "outcome unknown"),
+        ("[]", "outcome unknown"),
+        ("null", "outcome unknown"),
+        ('{"response":""}', "outcome unknown"),
+        ('{"response":"   "}', "outcome unknown"),
+        ('{"response":null}', "outcome unknown"),
+        ('{"error":true,"response":"denied"}', "refused"),
+    ],
+)
 def test_perform_update_classifies_unacknowledged_server_reply(
-        monkeypatch, reply, state):
-    monkeypatch.setattr(ws, "fetch_profile",
-                        lambda *a: "var _user_id = '1'; var nick = 'Seaza'; "
-                        "var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';")
+    monkeypatch, reply, state
+):
+    monkeypatch.setattr(
+        ws,
+        "fetch_profile",
+        lambda *a: (
+            "var _user_id = '1'; var nick = 'Seaza'; "
+            "var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';"
+        ),
+    )
     monkeypatch.setattr(ws, "_post", lambda *a: reply)
     ok, message = ws.perform_update(
-        object(), "new status", 1.0, confirm=True, expected_login="Seaza")
+        object(), "new status", 1.0, confirm=True, expected_login="Seaza"
+    )
     assert not ok
     assert state in message
 
@@ -717,14 +855,19 @@ def test_perform_update_classifies_unacknowledged_server_reply(
 @pytest.mark.parametrize("module", [ws, wsg], ids=["cli", "gui"])
 def test_perform_update_rejects_mismatched_account_before_post(monkeypatch, module):
     monkeypatch.setattr(
-        module, "fetch_profile",
-        lambda *a: "var _user_id = '2'; var nick = 'DifferentAccount'; "
-        "var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';")
+        module,
+        "fetch_profile",
+        lambda *a: (
+            "var _user_id = '2'; var nick = 'DifferentAccount'; "
+            "var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';"
+        ),
+    )
     posts = []
     monkeypatch.setattr(module, "_post", lambda *a: posts.append(a))
 
     ok, message = module.perform_update(
-        object(), "status", 2.0, confirm=True, expected_login="Seaza")
+        object(), "status", 2.0, confirm=True, expected_login="Seaza"
+    )
 
     assert not ok
     assert "does not match" in message
@@ -750,16 +893,26 @@ def test_perform_update_reports_safe_response_diagnostics(monkeypatch):
         "<script>var csrf = '{0}';</script></head>"
         "<body><p>Rate limited for private status</p>"
         "<p>Contact admin@example.test, reference 123456789</p>"
-        "<input type='hidden' name='csrf' value='{0}'></body></html>".format(csrf))
+        "<input type='hidden' name='csrf' value='{0}'></body></html>".format(csrf)
+    )
     monkeypatch.setattr(
-        wsg, "fetch_profile",
-        lambda *a: "var _user_id = '1'; var nick = 'Seaza'; var csrf = '{0}';".format(csrf))
+        wsg,
+        "fetch_profile",
+        lambda *a: "var _user_id = '1'; var nick = 'Seaza'; var csrf = '{0}';".format(
+            csrf
+        ),
+    )
     monkeypatch.setattr(
-        wsg, "_post", lambda *a: json.dumps({
-            "error": True, "response": server_response, "ok": False}))
+        wsg,
+        "_post",
+        lambda *a: json.dumps(
+            {"error": True, "response": server_response, "ok": False}
+        ),
+    )
 
     ok, message = wsg.perform_update(
-        object(), "private status", 2.0, confirm=True, expected_login="Seaza")
+        object(), "private status", 2.0, confirm=True, expected_login="Seaza"
+    )
 
     assert not ok
     assert "response_keys=error,ok,response" in message
@@ -775,17 +928,25 @@ def test_perform_update_reports_safe_response_diagnostics(monkeypatch):
 
 
 def test_perform_update_includes_http_metadata_for_unconfirmed_reply(monkeypatch):
-    monkeypatch.setattr(wsg, "fetch_profile",
-                        lambda *a: "var _user_id = '1'; var nick = 'Seaza'; "
-                        "var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';")
     monkeypatch.setattr(
-        wsg, "_post",
+        wsg,
+        "fetch_profile",
+        lambda *a: (
+            "var _user_id = '1'; var nick = 'Seaza'; "
+            "var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';"
+        ),
+    )
+    monkeypatch.setattr(
+        wsg,
+        "_post",
         lambda *a: wsg.WebStatusReply(
-            '{"response":""}', status_code=503,
-            content_type="application/json"))
+            '{"response":""}', status_code=503, content_type="application/json"
+        ),
+    )
 
     ok, message = wsg.perform_update(
-        object(), "status", 2.0, confirm=True, expected_login="Seaza")
+        object(), "status", 2.0, confirm=True, expected_login="Seaza"
+    )
 
     assert not ok
     assert "outcome unknown" in message
@@ -796,19 +957,27 @@ def test_perform_update_includes_http_metadata_for_unconfirmed_reply(monkeypatch
 
 @pytest.mark.parametrize("module", [ws, wsg], ids=["cli", "gui"])
 def test_perform_update_rejects_non_success_http_even_with_success_json(
-        monkeypatch, module):
+    monkeypatch, module
+):
     monkeypatch.setattr(
-        module, "fetch_profile",
-        lambda *a: "var _user_id = '1'; var nick = 'Seaza'; "
-        "var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';")
+        module,
+        "fetch_profile",
+        lambda *a: (
+            "var _user_id = '1'; var nick = 'Seaza'; "
+            "var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';"
+        ),
+    )
     monkeypatch.setattr(
-        module, "_post",
+        module,
+        "_post",
         lambda *a: wsg.WebStatusReply(
-            '{"response":"accepted"}', status_code=503,
-            content_type="application/json"))
+            '{"response":"accepted"}', status_code=503, content_type="application/json"
+        ),
+    )
 
     ok, message = module.perform_update(
-        object(), "status", 2.0, confirm=True, expected_login="Seaza")
+        object(), "status", 2.0, confirm=True, expected_login="Seaza"
+    )
 
     assert not ok
     assert "HTTP" in message and "503" in message
@@ -816,20 +985,23 @@ def test_perform_update_rejects_non_success_http_even_with_success_json(
 
 
 @pytest.mark.parametrize("module", [ws, wsg], ids=["cli", "gui"])
-def test_perform_update_marks_post_transport_error_outcome_unknown(
-        monkeypatch, module):
+def test_perform_update_marks_post_transport_error_outcome_unknown(monkeypatch, module):
     monkeypatch.setattr(
-        module, "fetch_profile",
-        lambda *a: "var _user_id = '1'; var nick = 'Seaza'; "
-        "var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';")
+        module,
+        "fetch_profile",
+        lambda *a: (
+            "var _user_id = '1'; var nick = 'Seaza'; "
+            "var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';"
+        ),
+    )
 
     def fail_post(*_args):
         raise TimeoutError("simulated network timeout")
 
     monkeypatch.setattr(module, "_post", fail_post)
     ok, message = module.perform_update(
-        object(), "private status", 2.0, confirm=True,
-        expected_login="Seaza")
+        object(), "private status", 2.0, confirm=True, expected_login="Seaza"
+    )
 
     assert not ok
     assert "outcome unknown" in message
@@ -840,22 +1012,32 @@ def test_perform_update_marks_post_transport_error_outcome_unknown(
 @pytest.mark.parametrize("module", [ws, wsg], ids=["cli", "gui"])
 @pytest.mark.parametrize("reply", ['{"response":"new status"}', '{"response":"ok"}'])
 def test_perform_update_accepts_profile_ui_success_response(monkeypatch, module, reply):
-    monkeypatch.setattr(module, "fetch_profile",
-                        lambda *a: "var _user_id = '1'; var nick = 'Seaza'; "
-                        "var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';")
+    monkeypatch.setattr(
+        module,
+        "fetch_profile",
+        lambda *a: (
+            "var _user_id = '1'; var nick = 'Seaza'; "
+            "var csrf = '90d230418b54c662c347d84f32f663e0a94fc5abd9d705a0';"
+        ),
+    )
     monkeypatch.setattr(module, "_post", lambda *a: reply)
 
     ok, message = module.perform_update(
-        object(), "new status", 1.0, confirm=True, expected_login="Seaza")
+        object(), "new status", 1.0, confirm=True, expected_login="Seaza"
+    )
 
     assert ok, message
 
 
 def test_live_update_requires_verified_session_before_post(monkeypatch):
-    monkeypatch.setattr(ws, "attempt_login", lambda *a: "https://profiles.camfrog.com/en/")
+    monkeypatch.setattr(
+        ws, "attempt_login", lambda *a: "https://profiles.camfrog.com/en/"
+    )
     monkeypatch.setattr(ws, "fetch_profile", lambda *a: "var nick = 'Seaza';")
+
     def unexpected_update(*args, **kwargs):
         raise AssertionError("No POST before confirming signed-in session")
+
     monkeypatch.setattr(ws, "perform_update", unexpected_update)
     code, message = ws.live_update("Seaza", "password", "hello", 1.0, confirm=True)
     assert code == ws.EXIT_BLOCKED
@@ -863,9 +1045,15 @@ def test_live_update_requires_verified_session_before_post(monkeypatch):
 
 
 def test_unverified_session_explains_confirmation_and_blocks_post(monkeypatch):
-    monkeypatch.setattr(ws, "attempt_login", lambda *a: "https://profiles.camfrog.com/en/")
+    monkeypatch.setattr(
+        ws, "attempt_login", lambda *a: "https://profiles.camfrog.com/en/"
+    )
     monkeypatch.setattr(ws, "fetch_profile", lambda *a: "<title>Camfrog</title>")
-    monkeypatch.setattr(ws, "perform_update", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("must not POST")))
+    monkeypatch.setattr(
+        ws,
+        "perform_update",
+        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("must not POST")),
+    )
     code, message = ws.live_update("test", "secret", "hi", 1.0, confirm=False)
     assert code == ws.EXIT_BLOCKED
     assert "not confirmed signed in" in message
@@ -938,8 +1126,16 @@ def test_color_alternator_extract_external_data_balanced_brace():
 
     # Malformed / missing fails closed (returns None)
     assert ws.extract_external_data("<html>no external data</html>") is None
-    assert ws.extract_external_data("var external_data = (function(){return {broken;})()||{};") is None
-    assert ws.extract_external_data("var external_data = (function(){return ;})()||{};") is None
+    assert (
+        ws.extract_external_data(
+            "var external_data = (function(){return {broken;})()||{};"
+        )
+        is None
+    )
+    assert (
+        ws.extract_external_data("var external_data = (function(){return ;})()||{};")
+        is None
+    )
 
 
 def test_color_alternator_parse_settings_colors():
@@ -954,15 +1150,19 @@ def test_color_alternator_parse_settings_colors():
     with pytest.raises(ValueError):
         ws.parse_settings_nickname_colors({"type": "settings", "settings": {}})
     with pytest.raises(ValueError):
-        ws.parse_settings_nickname_colors({"type": "settings", "settings": {"nickname": {"colors": []}}})
+        ws.parse_settings_nickname_colors(
+            {"type": "settings", "settings": {"nickname": {"colors": []}}}
+        )
 
 
 def test_color_alternator_refuses_unknown_color_id(monkeypatch):
     out_msgs = []
-    monkeypatch.setattr(ws, "verify_active_session",
-                        lambda *a: (True, {"nickname": "Seaza", "user_id": "1"}, "token", ""))
-    monkeypatch.setattr(ws, "fetch_settings",
-                        lambda *a: (SANITIZED_SETTINGS_HTML, 200))
+    monkeypatch.setattr(
+        ws,
+        "verify_active_session",
+        lambda *a: (True, {"nickname": "Seaza", "user_id": "1"}, "token", ""),
+    )
+    monkeypatch.setattr(ws, "fetch_settings", lambda *a: (SANITIZED_SETTINGS_HTML, 200))
 
     ret = ws.run_color_alternator(
         opener=object(),
@@ -973,7 +1173,9 @@ def test_color_alternator_refuses_unknown_color_id(monkeypatch):
         print_fn=out_msgs.append,
     )
     assert ret == ws.EXIT_USAGE
-    assert any("Refusing color A: id 9999 is not in allowed colors" in m for m in out_msgs)
+    assert any(
+        "Refusing color A: id 9999 is not in allowed colors" in m for m in out_msgs
+    )
 
 
 def test_color_alternator_alternation_order_and_restore(monkeypatch):
@@ -989,7 +1191,8 @@ def test_color_alternator_alternation_order_and_restore(monkeypatch):
     def fake_fetch_settings(opener, timeout):
         html = SANITIZED_SETTINGS_HTML.replace(
             '"nickname_color": "#279a29"',
-            '"nickname_color": "{0}"'.format(current_color_state["hex"]))
+            '"nickname_color": "{0}"'.format(current_color_state["hex"]),
+        )
         return html, 200
 
     def fake_post_flair_color(opener, color_id, csrf, timeout):
@@ -1031,10 +1234,12 @@ def test_color_alternator_alternation_order_and_restore(monkeypatch):
 
 def test_color_alternator_stops_immediately_on_429(monkeypatch):
     out_msgs = []
-    monkeypatch.setattr(ws, "verify_active_session",
-                        lambda *a: (True, {"nickname": "Seaza", "user_id": "1"}, "token", ""))
-    monkeypatch.setattr(ws, "fetch_settings",
-                        lambda *a: (SANITIZED_SETTINGS_HTML, 200))
+    monkeypatch.setattr(
+        ws,
+        "verify_active_session",
+        lambda *a: (True, {"nickname": "Seaza", "user_id": "1"}, "token", ""),
+    )
+    monkeypatch.setattr(ws, "fetch_settings", lambda *a: (SANITIZED_SETTINGS_HTML, 200))
 
     def fake_post_429(opener, color_id, csrf, timeout):
         return "rate limit", 429, "60"
@@ -1058,13 +1263,21 @@ def test_color_alternator_stops_immediately_on_429(monkeypatch):
 
 def test_color_alternator_stops_immediately_on_error_true(monkeypatch):
     out_msgs = []
-    monkeypatch.setattr(ws, "verify_active_session",
-                        lambda *a: (True, {"nickname": "Seaza", "user_id": "1"}, "token", ""))
-    monkeypatch.setattr(ws, "fetch_settings",
-                        lambda *a: (SANITIZED_SETTINGS_HTML, 200))
     monkeypatch.setattr(
-        ws, "post_flair_color",
-        lambda *a: (json.dumps({"error": True, "response": "color expired"}), 200, None))
+        ws,
+        "verify_active_session",
+        lambda *a: (True, {"nickname": "Seaza", "user_id": "1"}, "token", ""),
+    )
+    monkeypatch.setattr(ws, "fetch_settings", lambda *a: (SANITIZED_SETTINGS_HTML, 200))
+    monkeypatch.setattr(
+        ws,
+        "post_flair_color",
+        lambda *a: (
+            json.dumps({"error": True, "response": "color expired"}),
+            200,
+            None,
+        ),
+    )
 
     ret = ws.run_color_alternator(
         opener=object(),
@@ -1082,13 +1295,17 @@ def test_color_alternator_stops_immediately_on_error_true(monkeypatch):
 
 def test_color_alternator_stops_on_redirect_and_logged_out(monkeypatch):
     out_msgs = []
-    monkeypatch.setattr(ws, "verify_active_session",
-                        lambda *a: (True, {"nickname": "Seaza", "user_id": "1"}, "token", ""))
-    monkeypatch.setattr(ws, "fetch_settings",
-                        lambda *a: (SANITIZED_SETTINGS_HTML, 200))
     monkeypatch.setattr(
-        ws, "post_flair_color",
-        lambda *a: (json.dumps({"error": False, "redirect": "/login.php"}), 200, None))
+        ws,
+        "verify_active_session",
+        lambda *a: (True, {"nickname": "Seaza", "user_id": "1"}, "token", ""),
+    )
+    monkeypatch.setattr(ws, "fetch_settings", lambda *a: (SANITIZED_SETTINGS_HTML, 200))
+    monkeypatch.setattr(
+        ws,
+        "post_flair_color",
+        lambda *a: (json.dumps({"error": False, "redirect": "/login.php"}), 200, None),
+    )
 
     ret = ws.run_color_alternator(
         opener=object(),
@@ -1105,14 +1322,18 @@ def test_color_alternator_stops_on_redirect_and_logged_out(monkeypatch):
 
 def test_color_alternator_reports_unverified_when_color_mismatch(monkeypatch):
     out_msgs = []
-    monkeypatch.setattr(ws, "verify_active_session",
-                        lambda *a: (True, {"nickname": "Seaza", "user_id": "1"}, "token", ""))
-    # Settings html always returns #279a29, even after requesting #cd46ff
-    monkeypatch.setattr(ws, "fetch_settings",
-                        lambda *a: (SANITIZED_SETTINGS_HTML, 200))
     monkeypatch.setattr(
-        ws, "post_flair_color",
-        lambda *a: (json.dumps({"error": False, "response": "ok"}), 200, None))
+        ws,
+        "verify_active_session",
+        lambda *a: (True, {"nickname": "Seaza", "user_id": "1"}, "token", ""),
+    )
+    # Settings html always returns #279a29, even after requesting #cd46ff
+    monkeypatch.setattr(ws, "fetch_settings", lambda *a: (SANITIZED_SETTINGS_HTML, 200))
+    monkeypatch.setattr(
+        ws,
+        "post_flair_color",
+        lambda *a: (json.dumps({"error": False, "response": "ok"}), 200, None),
+    )
 
     ret = ws.run_color_alternator(
         opener=object(),
@@ -1151,8 +1372,10 @@ def test_color_alternator_redacts_credentials_and_personal_data():
 def test_sanitize_wipes_detail_when_short_secret_survives_word():
     # A short secret is only word-boundary redacted; an embedded occurrence
     # would otherwise leak, so the whole detail must be discarded.
-    assert wsg._sanitize_web_status_detail(
-        "xxabcxx", redaction_terms=("abc",)) == "[redacted-detail]"
+    assert (
+        wsg._sanitize_web_status_detail("xxabcxx", redaction_terms=("abc",))
+        == "[redacted-detail]"
+    )
 
 
 def test_sanitize_keeps_boundary_short_secret_redactions():
@@ -1164,9 +1387,13 @@ def test_sanitize_keeps_boundary_short_secret_redactions():
 def test_sanitize_wipes_when_whitespace_folding_hides_secret():
     # Two spaces fold to one, so the folded form can re-match the needle;
     # the fail-closed check catches it and discards the whole detail.
-    assert wsg._sanitize_web_status_detail(
-        "value: needle  tail dead", redaction_terms=("needle tail",),
-    ) == "[redacted-detail]"
+    assert (
+        wsg._sanitize_web_status_detail(
+            "value: needle  tail dead",
+            redaction_terms=("needle tail",),
+        )
+        == "[redacted-detail]"
+    )
 
 
 def test_sanitize_long_payload_truncation_unchanged_without_terms():
@@ -1179,10 +1406,11 @@ def test_append_log_never_stores_known_secret(tmp_path):
     path = tmp_path / "activity.log"
     needle = "Hunt3r22Val"
     wsg.append_web_status_log(
-        "session_verification_failed", path=str(path),
+        "session_verification_failed",
+        path=str(path),
         detail="probe failed around {0} tail".format(needle),
-        redaction_terms=(needle,))
+        redaction_terms=(needle,),
+    )
     stored = path.read_text(encoding="utf-8")
     assert needle not in stored
     assert "[redacted]" in stored
-

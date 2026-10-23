@@ -1,4 +1,5 @@
 """Launch the combined Random/Marquee Status Changer application."""
+
 import os
 import sys
 from pathlib import Path

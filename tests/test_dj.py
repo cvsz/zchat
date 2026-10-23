@@ -1,4 +1,5 @@
 """Offline DJ tests: queue engine, commands, validation, music profile."""
+
 import copy
 import base64
 import json
@@ -40,7 +41,9 @@ def _dj_runner(cfg, monkeypatch, lines):
     r = c.Runner(cfg)
     r.history, r.input, r.chat_win = object(), object(), object()
     sent = []
-    monkeypatch.setattr(r, "send", lambda ctrl, text, btn=None, win=None: sent.append(text) or True)
+    monkeypatch.setattr(
+        r, "send", lambda ctrl, text, btn=None, win=None: sent.append(text) or True
+    )
     monkeypatch.setattr(c, "read_chat", lambda hist, tail: "\n".join(lines))
     return r, sent
 
@@ -64,9 +67,16 @@ def test_dj_first_request_starts_playing_immediately(cfg, monkeypatch):
 
 
 def test_dj_caps_and_duplicates(cfg, monkeypatch):
-    r, sent = _dj_runner(cfg, monkeypatch, [
-        "Ann: !request one", "Ann: !request two", "Ann: !request three",
-        "Ann: !request four"])
+    r, sent = _dj_runner(
+        cfg,
+        monkeypatch,
+        [
+            "Ann: !request one",
+            "Ann: !request two",
+            "Ann: !request three",
+            "Ann: !request four",
+        ],
+    )
     r.do_dj(True)
     assert len([s for s in sent if "Queued" in s or "Now playing" in s]) == 4
     r2, sent2 = _dj_runner(cfg, monkeypatch, ["Ann: !request five"])
@@ -87,7 +97,9 @@ def test_dj_caps_and_duplicates(cfg, monkeypatch):
 def test_dj_queue_current_help(cfg, monkeypatch):
     r, sent = _dj_runner(cfg, monkeypatch, ["Ann: !request song a"])
     r.do_dj(True)
-    r2, sent2 = _dj_runner(cfg, monkeypatch, ["Bob: !queue", "Bob: !current", "Bob: !help"])
+    r2, sent2 = _dj_runner(
+        cfg, monkeypatch, ["Bob: !queue", "Bob: !current", "Bob: !help"]
+    )
     r2.dj_prev = []
     r2.do_dj(True)
     assert any("queue is empty" in s for s in sent2)
@@ -96,8 +108,9 @@ def test_dj_queue_current_help(cfg, monkeypatch):
 
 
 def test_dj_skip_rules(cfg, monkeypatch):
-    r, sent = _dj_runner(cfg, monkeypatch,
-                         ["Ann: !request song a", "Bob: !request song b"])
+    r, sent = _dj_runner(
+        cfg, monkeypatch, ["Ann: !request song a", "Bob: !request song b"]
+    )
     r.do_dj(True)
     stranger, stranger_sent = _dj_runner(cfg, monkeypatch, ["Zed: !skip"])
     stranger.dj_prev = []
@@ -135,7 +148,9 @@ def test_do_chat_yields_dj_lines_to_dj(cfg, monkeypatch):
     r = c.Runner(cfg)
     r.history, r.input, r.chat_win = object(), object(), object()
     sent = []
-    monkeypatch.setattr(r, "send", lambda ctrl, text, btn=None, win=None: sent.append(text) or True)
+    monkeypatch.setattr(
+        r, "send", lambda ctrl, text, btn=None, win=None: sent.append(text) or True
+    )
     monkeypatch.setattr(c, "read_chat", lambda hist, tail: "Ann: !request song a")
     r.do_chat(True)
     assert "ROOM" not in sent
@@ -168,8 +183,12 @@ def test_dj_audio_duration_reads_mci_length(tmp_path, monkeypatch):
     path = tmp_path / "My Song.mp3"
 
     assert c.dj_audio_duration(path) == 1.25
-    assert any(command.startswith('open "') and " alias " in command
-               and " type " not in command for command in commands)
+    assert any(
+        command.startswith('open "')
+        and " alias " in command
+        and " type " not in command
+        for command in commands
+    )
     assert any("time format milliseconds" in command for command in commands)
     assert commands[-1].startswith("close ")
 
@@ -202,17 +221,24 @@ def test_dj_mci_reads_wav_duration_with_mocked_backend(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("extension", ["wav", "mp3", "flac", "mid"])
 def test_dj_playback_uses_mci_auto_type_and_closes_previous_track(
-        extension, tmp_path, monkeypatch):
+    extension, tmp_path, monkeypatch
+):
     commands = []
     monkeypatch.setattr(c, "_dj_windows_audio", lambda: True)
-    monkeypatch.setattr(c, "_dj_mci_command", lambda command: commands.append(command) or "")
+    monkeypatch.setattr(
+        c, "_dj_mci_command", lambda command: commands.append(command) or ""
+    )
     path = tmp_path / "Music Folder" / f"My Song.{extension}"
 
     assert c.dj_play(path) is True
     assert any(command.startswith("close ") for command in commands)
-    assert any(command.startswith('open "') and f"My Song.{extension}" in command
-               and " alias " in command and " type " not in command
-               for command in commands)
+    assert any(
+        command.startswith('open "')
+        and f"My Song.{extension}" in command
+        and " alias " in command
+        and " type " not in command
+        for command in commands
+    )
     assert any(command.startswith("play ") for command in commands)
     c.dj_stop()
     assert commands[-2].startswith("stop ")
@@ -239,7 +265,9 @@ def test_dj_local_request_plays_matching_mp3(cfg, monkeypatch, tmp_path):
     assert any("Now playing: requested song" in line for line in sent)
 
 
-def test_dj_failed_initial_playback_does_not_block_later_request(cfg, monkeypatch, tmp_path):
+def test_dj_failed_initial_playback_does_not_block_later_request(
+    cfg, monkeypatch, tmp_path
+):
     cfg["dry_run"] = False
     cfg["dj"]["audio_backend"] = "local"
     music = tmp_path / "music"
@@ -248,8 +276,9 @@ def test_dj_failed_initial_playback_does_not_block_later_request(cfg, monkeypatc
     broken.write_bytes(b"broken")
     good.write_bytes(b"good")
     cfg["dj"]["music_dir"] = str(music)
-    monkeypatch.setattr(c, "dj_find_song",
-                        lambda _directory, title: music / (title + ".mp3"))
+    monkeypatch.setattr(
+        c, "dj_find_song", lambda _directory, title: music / (title + ".mp3")
+    )
     played = []
 
     def play(path):
@@ -258,8 +287,9 @@ def test_dj_failed_initial_playback_does_not_block_later_request(cfg, monkeypatc
 
     monkeypatch.setattr(c, "dj_play", play)
     monkeypatch.setattr(c, "dj_audio_duration", lambda _path: 60.0)
-    runner, sent = _dj_runner(cfg, monkeypatch, [
-        "Ann: !request broken", "Bob: !request good"])
+    runner, sent = _dj_runner(
+        cfg, monkeypatch, ["Ann: !request broken", "Bob: !request good"]
+    )
 
     runner.do_dj(True)
 
@@ -271,7 +301,9 @@ def test_dj_failed_initial_playback_does_not_block_later_request(cfg, monkeypatc
     assert any("Now playing: good" in line for line in sent)
 
 
-def test_dj_auto_advance_discards_failed_queue_entry_and_tries_next(cfg, monkeypatch, tmp_path):
+def test_dj_auto_advance_discards_failed_queue_entry_and_tries_next(
+    cfg, monkeypatch, tmp_path
+):
     cfg["dry_run"] = False
     cfg["dj"]["audio_backend"] = "local"
     music = tmp_path / "music"
@@ -280,8 +312,9 @@ def test_dj_auto_advance_discards_failed_queue_entry_and_tries_next(cfg, monkeyp
     broken.write_bytes(b"broken")
     queued.write_bytes(b"queued")
     cfg["dj"]["music_dir"] = str(music)
-    monkeypatch.setattr(c, "dj_find_song",
-                        lambda _directory, title: music / (title + ".mp3"))
+    monkeypatch.setattr(
+        c, "dj_find_song", lambda _directory, title: music / (title + ".mp3")
+    )
     played = []
 
     def play(path):
@@ -317,8 +350,9 @@ def test_dj_finished_track_skips_unplayable_next_entry(cfg, monkeypatch, tmp_pat
     broken.write_bytes(b"broken")
     queued.write_bytes(b"queued")
     cfg["dj"]["music_dir"] = str(music)
-    monkeypatch.setattr(c, "dj_find_song",
-                        lambda _directory, title: music / (title + ".mp3"))
+    monkeypatch.setattr(
+        c, "dj_find_song", lambda _directory, title: music / (title + ".mp3")
+    )
     played = []
 
     def play(path):
@@ -362,7 +396,8 @@ def test_dj_auto_advance_moves_on_after_duration(cfg, monkeypatch):
 
 
 def test_dj_auto_advance_uses_mci_mode_when_duration_is_unavailable(
-        cfg, monkeypatch, tmp_path):
+    cfg, monkeypatch, tmp_path
+):
     cfg["dry_run"] = False
     cfg["dj"]["audio_backend"] = "local"
     runner, sent = _dj_runner(cfg, monkeypatch, [])
@@ -408,7 +443,9 @@ def test_dj_find_song_matches_supported_audio_files(tmp_path):
     assert c.dj_find_song(music, "not audio") is None
 
 
-def test_dj_local_play_failure_does_not_announce_now_playing(cfg, monkeypatch, tmp_path):
+def test_dj_local_play_failure_does_not_announce_now_playing(
+    cfg, monkeypatch, tmp_path
+):
     cfg["dry_run"] = False
     cfg["dj"]["audio_backend"] = "local"
     music = tmp_path / "music"
@@ -430,8 +467,14 @@ def test_dj_validation(cfg):
     errs, _ = c.validate(cfg)
     assert any("autoreply.enabled" in e for e in errs)
     cfg["autoreply"]["enabled"] = True
-    for bad in ({"prefix": ""}, {"prefix": "/x"}, {"max_per_user": 0},
-                {"audio_backend": "mp3"}, {"announce_now": ""}, {"queue_file": ""}):
+    for bad in (
+        {"prefix": ""},
+        {"prefix": "/x"},
+        {"max_per_user": 0},
+        {"audio_backend": "mp3"},
+        {"announce_now": ""},
+        {"queue_file": ""},
+    ):
         bad_cfg = copy.deepcopy(cfg)
         bad_cfg["dj"].update(bad)
         assert c.validate(bad_cfg)[0], bad
@@ -483,7 +526,8 @@ def test_dj_control_skip_is_processed_by_owner_loop(cfg, tmp_path, monkeypatch):
     stopped = []
     monkeypatch.setattr(c, "dj_stop", lambda: stopped.append(True))
     request, response = _write_dj_control_request(
-        tmp_path, "skip", "a" * 32, time.time())
+        tmp_path, "skip", "a" * 32, time.time()
+    )
 
     assert c.process_dj_control_request(cfg, base=tmp_path) == 1
 
@@ -496,15 +540,16 @@ def test_dj_control_skip_is_processed_by_owner_loop(cfg, tmp_path, monkeypatch):
     assert not request.exists()
 
 
-def test_dj_control_clear_stops_audio_and_persists_empty_queue(cfg, tmp_path, monkeypatch):
+def test_dj_control_clear_stops_audio_and_persists_empty_queue(
+    cfg, tmp_path, monkeypatch
+):
     queue = c.DJQueue(tmp_path / "dj_queue.json")
     queue.current = {"title": "First", "user": "Ann"}
     queue.queue = [{"title": "Next", "user": "Bob"}]
     assert queue.save()
     stopped = []
     monkeypatch.setattr(c, "dj_stop", lambda: stopped.append(True))
-    _, response = _write_dj_control_request(
-        tmp_path, "clear", "b" * 32, time.time())
+    _, response = _write_dj_control_request(tmp_path, "clear", "b" * 32, time.time())
 
     c.process_dj_control_request(cfg, base=tmp_path)
 
@@ -519,16 +564,19 @@ def test_dj_control_speak_starts_bounded_local_voice(cfg, tmp_path, monkeypatch)
     spoken = []
     monkeypatch.setattr(c, "start_room_speech", lambda text: spoken.append(text))
     _, response = _write_dj_control_request(
-        tmp_path, "speak", "e" * 32, time.time(), text="Now playing a song")
-    assert c.process_dj_control_request(
-        cfg, base=tmp_path, runner=SimpleNamespace()) == 1
+        tmp_path, "speak", "e" * 32, time.time(), text="Now playing a song"
+    )
+    assert (
+        c.process_dj_control_request(cfg, base=tmp_path, runner=SimpleNamespace()) == 1
+    )
     result = json.loads(response.read_text(encoding="utf-8"))
     assert result["ok"] is True
     assert result["action"] == "speak"
     assert spoken == ["Now playing a song"]
 
     _, bad_response = _write_dj_control_request(
-        tmp_path, "speak", "f" * 32, time.time(), text="x" * 241)
+        tmp_path, "speak", "f" * 32, time.time(), text="x" * 241
+    )
     c.process_dj_control_request(cfg, base=tmp_path, runner=SimpleNamespace())
     bad_result = json.loads(bad_response.read_text(encoding="utf-8"))
     assert bad_result["ok"] is False
@@ -540,8 +588,7 @@ def test_dj_control_skip_refuses_when_dj_is_disabled(cfg, tmp_path):
     queue = c.DJQueue(tmp_path / "dj_queue.json")
     queue.current = {"title": "First", "user": "Ann"}
     assert queue.save()
-    _, response = _write_dj_control_request(
-        tmp_path, "skip", "d" * 32, time.time())
+    _, response = _write_dj_control_request(tmp_path, "skip", "d" * 32, time.time())
 
     c.process_dj_control_request(cfg, base=tmp_path)
 
@@ -554,8 +601,8 @@ def test_dj_control_skip_refuses_when_dj_is_disabled(cfg, tmp_path):
 
 def test_dj_control_expired_request_is_rejected(cfg, tmp_path):
     _, response = _write_dj_control_request(
-        tmp_path, "clear", "c" * 32,
-        time.time() - c.DJ_CONTROL_REQUEST_TTL_SECONDS - 1)
+        tmp_path, "clear", "c" * 32, time.time() - c.DJ_CONTROL_REQUEST_TTL_SECONDS - 1
+    )
 
     c.process_dj_control_request(cfg, base=tmp_path)
 
@@ -611,12 +658,20 @@ def test_windows_speech_command_keeps_user_text_out_of_powershell_source():
 def test_dj_status_includes_requester_time_and_next_song():
     summary = c.dj_status_summary(
         {"title": "Current song", "user": "Ann"},
-        {"title": "Next song", "user": "Bob"}, elapsed=75, duration=180)
-    assert summary == ("[dj] current: Current song; requested by Ann; time 01:15/03:00; "
-                       "next: Next song (Bob)")
+        {"title": "Next song", "user": "Bob"},
+        elapsed=75,
+        duration=180,
+    )
+    assert summary == (
+        "[dj] current: Current song; requested by Ann; time 01:15/03:00; "
+        "next: Next song (Bob)"
+    )
     spoken = c.dj_status_speech(
         {"title": "Current song", "user": "Ann"},
-        {"title": "Next song", "user": "Bob"}, elapsed=75, duration=180)
+        {"title": "Next song", "user": "Bob"},
+        elapsed=75,
+        duration=180,
+    )
     assert "Current song" in spoken
     assert "Ann" in spoken
     assert "01:15 of 03:00" in spoken
@@ -669,25 +724,31 @@ def test_dj_skip_semantics():
     assert q.current is None
 
 
-@pytest.mark.parametrize("value,expected", [
-    ("abcdefghijk", "abcdefghijk"),
-    ("https://www.youtube.com/watch?v=abcdefghijk", "abcdefghijk"),
-    ("https://youtu.be/abcdefghijk", "abcdefghijk"),
-    ("https://youtube.com/shorts/abcdefghijk", "abcdefghijk"),
-    ("https://youtube.com/embed/abcdefghijk", "abcdefghijk"),
-])
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("abcdefghijk", "abcdefghijk"),
+        ("https://www.youtube.com/watch?v=abcdefghijk", "abcdefghijk"),
+        ("https://youtu.be/abcdefghijk", "abcdefghijk"),
+        ("https://youtube.com/shorts/abcdefghijk", "abcdefghijk"),
+        ("https://youtube.com/embed/abcdefghijk", "abcdefghijk"),
+    ],
+)
 def test_youtube_video_id_accepts_only_supported_video_forms(value, expected):
     assert c.youtube_video_id(value) == expected
 
 
-@pytest.mark.parametrize("value", [
-    "https://example.com/watch?v=abcdefghijk",
-    "http://youtube.com/watch?v=abcdefghijk",
-    "https://youtube.com.evil.test/watch?v=abcdefghijk",
-    "https://user@youtube.com/watch?v=abcdefghijk",
-    "https://youtube.com/watch?v=short",
-    "not a video id",
-])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://example.com/watch?v=abcdefghijk",
+        "http://youtube.com/watch?v=abcdefghijk",
+        "https://youtube.com.evil.test/watch?v=abcdefghijk",
+        "https://user@youtube.com/watch?v=abcdefghijk",
+        "https://youtube.com/watch?v=short",
+        "not a video id",
+    ],
+)
 def test_youtube_video_id_rejects_untrusted_or_invalid_forms(value):
     with pytest.raises(ValueError):
         c.youtube_video_id(value)
@@ -699,13 +760,17 @@ def test_youtube_player_bridge_checks_token_origin_revision_and_metadata(monkeyp
     import urllib.request
 
     host = c.YouTubePlayerHost()
-    monkeypatch.setattr(host, "_open_player_window", lambda _video: setattr(
-        host, "_browser_launched", True))
+    monkeypatch.setattr(
+        host,
+        "_open_player_window",
+        lambda _video: setattr(host, "_browser_launched", True),
+    )
     host.load_video("abcdefghijk")
     origin = host.origin
     token = host._token
-    query = urllib.parse.urlencode({
-        "token": token, "video": "abcdefghijk", "revision": host.revision})
+    query = urllib.parse.urlencode(
+        {"token": token, "video": "abcdefghijk", "revision": host.revision}
+    )
     try:
         with pytest.raises(urllib.error.HTTPError) as denied:
             urllib.request.urlopen(origin + "/?video=abcdefghijk", timeout=2)
@@ -717,14 +782,21 @@ def test_youtube_player_bridge_checks_token_origin_revision_and_metadata(monkeyp
         assert "Music DJ YouTube Player" in page
         assert "const names={'-1':'ready'" in page
 
-        payload = json.dumps({
-            "kind": "playing", "error_code": 0, "video_id": "abcdefghijk",
-            "revision": host.revision, "video_title": "Artist - Song",
-        }).encode("utf-8")
+        payload = json.dumps(
+            {
+                "kind": "playing",
+                "error_code": 0,
+                "video_id": "abcdefghijk",
+                "revision": host.revision,
+                "video_title": "Artist - Song",
+            }
+        ).encode("utf-8")
         request = urllib.request.Request(
-            origin + "/event?token=" + urllib.parse.quote(token), data=payload,
+            origin + "/event?token=" + urllib.parse.quote(token),
+            data=payload,
             headers={"Content-Type": "application/json", "Origin": origin},
-            method="POST")
+            method="POST",
+        )
         with urllib.request.urlopen(request, timeout=2) as response:
             assert response.status == 204
         event = host.consume_events()[0]
@@ -733,14 +805,21 @@ def test_youtube_player_bridge_checks_token_origin_revision_and_metadata(monkeyp
 
         old_revision = host.revision
         host.load_video("lmnopqrstuv")
-        stale = json.dumps({
-            "kind": "ended", "error_code": 0, "video_id": "abcdefghijk",
-            "revision": old_revision, "video_title": "Old track",
-        }).encode("utf-8")
+        stale = json.dumps(
+            {
+                "kind": "ended",
+                "error_code": 0,
+                "video_id": "abcdefghijk",
+                "revision": old_revision,
+                "video_title": "Old track",
+            }
+        ).encode("utf-8")
         stale_request = urllib.request.Request(
-            origin + "/event?token=" + urllib.parse.quote(token), data=stale,
+            origin + "/event?token=" + urllib.parse.quote(token),
+            data=stale,
             headers={"Content-Type": "application/json", "Origin": origin},
-            method="POST")
+            method="POST",
+        )
         with pytest.raises(urllib.error.HTTPError) as conflict:
             urllib.request.urlopen(stale_request, timeout=2)
         assert conflict.value.code == 409
@@ -750,7 +829,9 @@ def test_youtube_player_bridge_checks_token_origin_revision_and_metadata(monkeyp
         host.close()
 
 
-def test_youtube_queue_advances_only_for_current_player_events(cfg, monkeypatch, tmp_path):
+def test_youtube_queue_advances_only_for_current_player_events(
+    cfg, monkeypatch, tmp_path
+):
     cfg["dry_run"] = False
     cfg["dj"]["audio_backend"] = "youtube"
 
@@ -771,12 +852,14 @@ def test_youtube_queue_advances_only_for_current_player_events(cfg, monkeypatch,
             return events
 
         def emit(self, kind, video_id=None, revision=None, title=""):
-            self.events.append({
-                "kind": kind,
-                "video_id": video_id if video_id is not None else self.video_id,
-                "revision": revision if revision is not None else self.revision,
-                "video_title": title,
-            })
+            self.events.append(
+                {
+                    "kind": kind,
+                    "video_id": video_id if video_id is not None else self.video_id,
+                    "revision": revision if revision is not None else self.revision,
+                    "video_title": title,
+                }
+            )
 
         def stop_video(self):
             self.video_id = ""
@@ -799,7 +882,10 @@ def test_youtube_queue_advances_only_for_current_player_events(cfg, monkeypatch,
     loading = runner.dj_command(queue, cfg["dj"], "request", first, "Ann", "djbot")
     assert "Loading YouTube video abcdefghijk" in loading
     assert queue.current == {
-        "title": "abcdefghijk", "user": "Ann", "video_id": "abcdefghijk"}
+        "title": "abcdefghijk",
+        "user": "Ann",
+        "video_id": "abcdefghijk",
+    }
     runner.dj_command(queue, cfg["dj"], "request", second, "Bob", "djbot")
     assert queue.queue[0]["video_id"] == "lmnopqrstuv"
 
@@ -814,8 +900,12 @@ def test_youtube_queue_advances_only_for_current_player_events(cfg, monkeypatch,
     assert runner.dj_auto_advance(queue, cfg["dj"]) is True
     assert queue.current["video_id"] == "lmnopqrstuv"
     assert fake.video_id == "lmnopqrstuv"
-    fake.emit("playing", video_id="abcdefghijk", revision=old_revision,
-              title="Late event from previous video")
+    fake.emit(
+        "playing",
+        video_id="abcdefghijk",
+        revision=old_revision,
+        title="Late event from previous video",
+    )
     runner.dj_auto_advance(queue, cfg["dj"])
     assert queue.current["title"] == "lmnopqrstuv"
     fake.emit("playing", title="Artist - Second Song")
@@ -833,13 +923,12 @@ def test_youtube_queue_advances_only_for_current_player_events(cfg, monkeypatch,
 def test_bot_manager_skip_uses_live_youtube_runner(cfg, tmp_path):
     cfg["dj"]["audio_backend"] = "youtube"
     queue = c.DJQueue(tmp_path / "dj_queue.json")
-    queue.current = {
-        "title": "First video", "user": "Ann", "video_id": "abcdefghijk"}
-    queue.queue = [{
-        "title": "lmnopqrstuv", "user": "Bob", "video_id": "lmnopqrstuv"}]
+    queue.current = {"title": "First video", "user": "Ann", "video_id": "abcdefghijk"}
+    queue.queue = [{"title": "lmnopqrstuv", "user": "Bob", "video_id": "lmnopqrstuv"}]
     assert queue.save()
     _, response_path = _write_dj_control_request(
-        tmp_path, "skip", "e" * 32, time.time())
+        tmp_path, "skip", "e" * 32, time.time()
+    )
 
     class FakeRunner:
         def __init__(self):
@@ -857,6 +946,6 @@ def test_bot_manager_skip_uses_live_youtube_runner(cfg, tmp_path):
     response = json.loads(response_path.read_text(encoding="utf-8"))
     assert response["ok"] is True
     assert response["current"]["video_id"] == "lmnopqrstuv"
-    assert runner.started == [(
-        {"title": "lmnopqrstuv", "user": "Bob", "video_id": "lmnopqrstuv"},
-        "youtube")]
+    assert runner.started == [
+        ({"title": "lmnopqrstuv", "user": "Bob", "video_id": "lmnopqrstuv"}, "youtube")
+    ]

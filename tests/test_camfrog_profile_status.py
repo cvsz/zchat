@@ -49,9 +49,11 @@ class SequenceOpener:
 
 def test_identity_and_csrf_require_observed_profile_markers():
     html = "var _user_id = '42'; var nick = 'Example'; var csrf = '{0}';".format(
-        "a" * 32)
+        "a" * 32
+    )
     assert profile.extract_profile_identity(html) == {
-        "user_id": "42", "nickname": "Example"
+        "user_id": "42",
+        "nickname": "Example",
     }
     assert profile.extract_csrf(html) == "a" * 32
     assert profile.extract_profile_identity("var nick = 'Example';") is None
@@ -68,10 +70,12 @@ def test_fetch_profile_uses_profile_home_and_decodes_replacement():
 
 
 def test_post_status_encodes_fields_and_returns_sanitizable_http_metadata():
-    opener = FakeOpener(FakeResponse(
-        b'{"response":"accepted"}',
-        {"Content-Type": "application/json", "Retry-After": "10"},
-    ))
+    opener = FakeOpener(
+        FakeResponse(
+            b'{"response":"accepted"}',
+            {"Content-Type": "application/json", "Retry-After": "10"},
+        )
+    )
     reply = profile.post_profile_status(opener, "hello world", "a" * 32, 9)
     request, timeout = opener.calls[0]
     assert request.full_url == profile.WEB_UPDATE_URL
@@ -80,14 +84,14 @@ def test_post_status_encodes_fields_and_returns_sanitizable_http_metadata():
     assert timeout == 9
     assert reply == '{"response":"accepted"}'
     assert (reply.status_code, reply.content_type, reply.retry_after) == (
-        200, "application/json", "10"
+        200,
+        "application/json",
+        "10",
     )
 
 
 def test_profile_cookie_is_single_and_scoped_to_profile_host():
-    assert profile.parse_profile_cookie("PHPSESSID=opaque") == (
-        "PHPSESSID", "opaque"
-    )
+    assert profile.parse_profile_cookie("PHPSESSID=opaque") == ("PHPSESSID", "opaque")
     for invalid in ("", "PHPSESSID=one; cloudbot=two", "cloudbot=one", "PHPSESSID="):
         try:
             profile.parse_profile_cookie(invalid)
@@ -98,10 +102,11 @@ def test_profile_cookie_is_single_and_scoped_to_profile_host():
 
     opener = profile.build_profile_opener("PHPSESSID=opaque")
     processor = next(
-        handler for handler in opener.handlers
+        handler
+        for handler in opener.handlers
         if isinstance(handler, __import__("urllib.request").request.HTTPCookieProcessor)
     )
-    cookie, = list(processor.cookiejar)
+    (cookie,) = list(processor.cookiejar)
     assert cookie.name == "PHPSESSID"
     assert cookie.domain == "profiles.camfrog.com"
     assert cookie.secure is True
@@ -145,7 +150,9 @@ def test_submit_returns_acknowledged_unverified_without_claiming_readback():
     assert result.outcome is profile.ProfileStatusOutcome.ACKNOWLEDGED_UNVERIFIED
     assert result.error_code == "READBACK_UNAVAILABLE"
     assert result.http_status == 200
-    assert len(opener.calls) == 2  # profile GET + one POST; no automatic retry/read-back
+    assert (
+        len(opener.calls) == 2
+    )  # profile GET + one POST; no automatic retry/read-back
     assert opener.calls[1][0].full_url == profile.WEB_UPDATE_URL
     assert opener.calls[1][1] == 8
 

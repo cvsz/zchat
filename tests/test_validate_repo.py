@@ -1,4 +1,5 @@
 """Tests for the repository validator that do not need the real tree."""
+
 import json
 import os
 import shlex
@@ -63,12 +64,14 @@ def test_clean_prunes_generated_directories_before_recursive_scans():
     assert "-name .pytest_cache -o" in commands[0]
     assert "-name .ruff_cache -o" in commands[0]
     assert (
-        "\\) -prune -o -type d -name '__pycache__' -prune -exec rm -rf"
-        in commands[0]
+        "\\) -prune -o -type d -name '__pycache__' -prune -exec rm -rf" in commands[0]
     )
     assert "-type d -name '.pytest_cache' -prune -exec rm -rf" in commands[1]
     assert "-type d -name '.ruff_cache' -prune -exec rm -rf" in commands[2]
-    assert all("2>/dev/null" not in command and "|| true" not in command for command in commands)
+    assert all(
+        "2>/dev/null" not in command and "|| true" not in command
+        for command in commands
+    )
 
 
 def test_clean_returns_failure_when_a_filesystem_scan_fails(tmp_path):
@@ -130,14 +133,18 @@ def test_build_and_dist_exclusions(tmp_path, monkeypatch):
 
 def test_changelog_with_version_heading(tmp_path, monkeypatch):
     _skeleton(tmp_path)
-    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## [1.0.0] - 2026-01-01\n\nInitial\n", encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## [1.0.0] - 2026-01-01\n\nInitial\n", encoding="utf-8"
+    )
     monkeypatch.setattr(validate_repo, "ROOT", tmp_path)
     assert validate_repo.validate_changelog() == []
 
 
 def test_changelog_missing_version_heading(tmp_path, monkeypatch):
     _skeleton(tmp_path)
-    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\nNo version heading here\n", encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\nNo version heading here\n", encoding="utf-8"
+    )
     monkeypatch.setattr(validate_repo, "ROOT", tmp_path)
     errors = validate_repo.validate_changelog()
     assert any("CHANGELOG.md" in e and "version heading" in e for e in errors)
@@ -202,5 +209,3 @@ def test_root_under_excluded_named_directory(tmp_path, monkeypatch):
     monkeypatch.setattr(validate_repo, "ROOT", nested_root)
     errors = validate_repo.validate_markdown_links()
     assert any("missing.md" in e for e in errors)
-
-

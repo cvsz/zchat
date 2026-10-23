@@ -1,4 +1,5 @@
 """Music DJ GUI tests: self-containment, profile, CLI passthrough, smoke."""
+
 import copy
 import json
 import sys
@@ -15,11 +16,20 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_module_has_no_project_imports():
     """The DJ exe is built from this single file: no sibling modules allowed."""
-    src = (ROOT / "src" / "features" / "camfrog_music_gui.py").read_text(encoding="utf-8")
-    for banned in ("import camfrog_auto", "import camfrog_gui", "import camfrog_status_gui",
-                   "import camfrog_private_chat_gui", "import web_status_gui",
-                   "from tools", "import tools", "import clipboard_support",
-                   "from clipboard_support"):
+    src = (ROOT / "src" / "features" / "camfrog_music_gui.py").read_text(
+        encoding="utf-8"
+    )
+    for banned in (
+        "import camfrog_auto",
+        "import camfrog_gui",
+        "import camfrog_status_gui",
+        "import camfrog_private_chat_gui",
+        "import web_status_gui",
+        "from tools",
+        "import tools",
+        "import clipboard_support",
+        "from clipboard_support",
+    ):
         assert banned not in src, banned
 
 
@@ -66,9 +76,11 @@ def test_gui_smoke(tmp_path, monkeypatch):
     config = json.loads((ROOT / "config.example.json").read_text("utf-8"))
     config["autoreply"]["own_nickname"] = "DJBot"
     (tmp_path / "config.json").write_text(
-        json.dumps(config, ensure_ascii=False), encoding="utf-8")
+        json.dumps(config, ensure_ascii=False), encoding="utf-8"
+    )
     monkeypatch.setattr(g, "BASE", tmp_path)  # config must live beside BASE
     import tkinter
+
     root = tk_root()
     root.deiconify()
     monkeypatch.setattr(tkinter, "Tk", lambda: root)
@@ -83,7 +95,7 @@ def test_gui_smoke(tmp_path, monkeypatch):
     assert hasattr(app, "dj_tree") and hasattr(app, "t_skips")
     assert not hasattr(app, "im_tree") and not hasattr(app, "htree")
     app.dj_refresh()
-    app.dj_skip()   # nothing playing: user-facing error, no crash
+    app.dj_skip()  # nothing playing: user-facing error, no crash
     app.dj_clear()
     app.test_rule()
     assert "rule" in app.tout.cget("text")

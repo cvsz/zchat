@@ -664,9 +664,7 @@ def run_icon_alternator(
         exit_code = EXIT_BLOCKED
 
     if initial_icon_id is not None:
-        safe_print(
-            f"Restoring initial icon (id {initial_icon_id})..."
-        )
+        safe_print(f"Restoring initial icon (id {initial_icon_id})...")
         _r_ack, r_verified, r_msg, _r_err = update_icon_once(
             opener, initial_icon_id, timeout
         )
@@ -998,7 +996,6 @@ class ClipboardController:
             except Exception:
                 pass
         return "break"
-
 
 
 # ==============================================================================

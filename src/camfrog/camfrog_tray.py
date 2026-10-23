@@ -3,6 +3,7 @@
 The Tk window owns the message pump. Closing a GUI window can therefore hide it
 without leaving a second Python event loop running in the background.
 """
+
 import os
 from pathlib import Path
 
@@ -43,8 +44,18 @@ class TrayIcon:
             wc.lpfnWndProc = self._window_proc
             self._class_atom = win32gui.RegisterClass(wc)
             self.hwnd = win32gui.CreateWindowEx(
-                0, self.class_name, self.title, 0,
-                0, 0, 0, 0, 0, 0, self.hinstance, None,
+                0,
+                self.class_name,
+                self.title,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                self.hinstance,
+                None,
             )
             self.icon = self._load_icon(icon_path)
             flags = win32gui.NIF_ICON | win32gui.NIF_MESSAGE | win32gui.NIF_TIP
@@ -70,7 +81,11 @@ class TrayIcon:
             try:
                 if path.is_file():
                     icon = gui.LoadImage(
-                        0, str(path), con.IMAGE_ICON, 0, 0,
+                        0,
+                        str(path),
+                        con.IMAGE_ICON,
+                        0,
+                        0,
                         con.LR_LOADFROMFILE | con.LR_DEFAULTSIZE,
                     )
                     if icon:

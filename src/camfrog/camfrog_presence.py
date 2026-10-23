@@ -132,9 +132,12 @@ class _SameOriginHttpsRedirectHandler(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         if not _is_safe_camfrog_url(newurl):
             raise HTTPError(
-                req.full_url, code,
+                req.full_url,
+                code,
                 "Blocked redirect outside the Camfrog HTTPS status endpoint.",
-                headers, fp)
+                headers,
+                fp,
+            )
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
@@ -144,10 +147,13 @@ def _is_safe_camfrog_url(value: str) -> bool:
         port = target.port
     except (TypeError, ValueError):
         return False
-    return (target.scheme.lower() == "https" and
-            (target.hostname or "").lower() == "www.camfrog.com" and
-            port in (None, 443) and target.username is None and
-            target.password is None)
+    return (
+        target.scheme.lower() == "https"
+        and (target.hostname or "").lower() == "www.camfrog.com"
+        and port in (None, 443)
+        and target.username is None
+        and target.password is None
+    )
 
 
 def validate_nickname(value: str) -> str:
@@ -156,7 +162,9 @@ def validate_nickname(value: str) -> str:
     if not nickname:
         raise ValueError("Enter a Camfrog nickname.")
     if len(nickname) > MAX_NICKNAME_CHARS:
-        raise ValueError("Camfrog nickname is longer than the 256-character safety limit.")
+        raise ValueError(
+            "Camfrog nickname is longer than the 256-character safety limit."
+        )
     if any(ord(char) < 32 or ord(char) == 127 for char in nickname):
         raise ValueError("Camfrog nickname cannot contain control characters.")
     return nickname
@@ -166,8 +174,11 @@ def _utc_timestamp(value: datetime | None = None) -> str:
     stamp = value or datetime.now(timezone.utc)
     if stamp.tzinfo is None:
         stamp = stamp.replace(tzinfo=timezone.utc)
-    return stamp.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace(
-        "+00:00", "Z")
+    return (
+        stamp.astimezone(timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
 
 
 def _safe_header(headers, name: str, limit: int = 1024) -> str | None:
@@ -218,8 +229,14 @@ def fingerprint_gif(data: bytes) -> GifFingerprint:
     """
     raw_sha256 = hashlib.sha256(data).hexdigest()
     if not data.startswith((b"GIF87a", b"GIF89a")):
-        return GifFingerprint(raw_sha256, None, None, None, None,
-                              "Response does not have a GIF87a/GIF89a header.")
+        return GifFingerprint(
+            raw_sha256,
+            None,
+            None,
+            None,
+            None,
+            "Response does not have a GIF87a/GIF89a header.",
+        )
 
     try:
         with warnings.catch_warnings():
@@ -229,10 +246,16 @@ def fingerprint_gif(data: bytes) -> GifFingerprint:
                     raise ValueError("Pillow did not identify the response as GIF.")
                 width, height = image.size
                 frames = int(getattr(image, "n_frames", 1))
-                if (width <= 0 or height <= 0 or frames <= 0 or
-                        frames > MAX_GIF_FRAMES or
-                        width * height * frames > MAX_GIF_TOTAL_PIXELS):
-                    raise ValueError("GIF dimensions or frame count exceed safety limits.")
+                if (
+                    width <= 0
+                    or height <= 0
+                    or frames <= 0
+                    or frames > MAX_GIF_FRAMES
+                    or width * height * frames > MAX_GIF_TOTAL_PIXELS
+                ):
+                    raise ValueError(
+                        "GIF dimensions or frame count exceed safety limits."
+                    )
 
                 normalized = hashlib.sha256()
                 normalized.update(b"camfrog-presence-rgba-frames-v1\0")
@@ -244,12 +267,20 @@ def fingerprint_gif(data: bytes) -> GifFingerprint:
                     rgba = image.convert("RGBA")
                     normalized.update(frame_index.to_bytes(4, "big"))
                     normalized.update(rgba.tobytes())
-                return GifFingerprint(raw_sha256, normalized.hexdigest(), width,
-                                      height, frames)
-    except (Image.DecompressionBombError, Image.DecompressionBombWarning,
-            UnidentifiedImageError, OSError, ValueError, SyntaxError) as exc:
-        return GifFingerprint(raw_sha256, None, None, None, None,
-                              (str(exc) or type(exc).__name__)[:240])
+                return GifFingerprint(
+                    raw_sha256, normalized.hexdigest(), width, height, frames
+                )
+    except (
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+        UnidentifiedImageError,
+        OSError,
+        ValueError,
+        SyntaxError,
+    ) as exc:
+        return GifFingerprint(
+            raw_sha256, None, None, None, None, (str(exc) or type(exc).__name__)[:240]
+        )
 
 
 def classify_presence(_evidence: PresenceEvidence) -> PresenceState:
@@ -267,19 +298,35 @@ def default_database_path() -> Path:
         return Path(local_app_data) / "Camfrog" / "Presence" / DATABASE_FILENAME
     xdg_data_home = os.environ.get("XDG_DATA_HOME", "").strip()
     if xdg_data_home:
-        return Path(xdg_data_home).expanduser() / "camfrog" / "presence" / DATABASE_FILENAME
+        return (
+            Path(xdg_data_home).expanduser()
+            / "camfrog"
+            / "presence"
+            / DATABASE_FILENAME
+        )
     if os.name == "nt":
-        return Path.home() / "AppData" / "Local" / "Camfrog" / "Presence" / DATABASE_FILENAME
+        return (
+            Path.home()
+            / "AppData"
+            / "Local"
+            / "Camfrog"
+            / "Presence"
+            / DATABASE_FILENAME
+        )
     return Path.home() / ".local" / "share" / "camfrog" / "presence" / DATABASE_FILENAME
 
 
 class RawPresenceProvider:
     """Fetch a single public Camfrog status image without account credentials."""
 
-    def __init__(self, timeout: float = DEFAULT_TIMEOUT_SECONDS,
-                 max_retries: int = DEFAULT_MAX_RETRIES,
-                 max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
-                 opener=None, sleep_fn=time.sleep):
+    def __init__(
+        self,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+        opener=None,
+        sleep_fn=time.sleep,
+    ):
         if not 0 < float(timeout) <= 30:
             raise ValueError("Timeout must be between 0 and 30 seconds.")
         if not 0 <= int(max_retries) <= 2:
@@ -292,9 +339,16 @@ class RawPresenceProvider:
         self.opener = opener or build_opener(_SameOriginHttpsRedirectHandler())
         self.sleep_fn = sleep_fn
 
-    def _error_evidence(self, nickname: str, outcome: ProbeOutcome,
-                        observed_at: str, attempts: int, error: str,
-                        status: int | None = None, headers=None) -> PresenceEvidence:
+    def _error_evidence(
+        self,
+        nickname: str,
+        outcome: ProbeOutcome,
+        observed_at: str,
+        attempts: int,
+        error: str,
+        status: int | None = None,
+        headers=None,
+    ) -> PresenceEvidence:
         cache_control = _safe_header(headers, "Cache-Control")
         return PresenceEvidence(
             nickname=nickname,
@@ -325,10 +379,14 @@ class RawPresenceProvider:
         nickname = validate_nickname(value)
         observed_at = _utc_timestamp(now)
         url = CAMFROG_STATUS_URL + "?" + urlencode({"nick": nickname})
-        request = Request(url, headers={
-            "Accept": "image/gif",
-            "User-Agent": "CamfrogPresenceProbe/1.0",
-        }, method="GET")
+        request = Request(
+            url,
+            headers={
+                "Accept": "image/gif",
+                "User-Agent": "CamfrogPresenceProbe/1.0",
+            },
+            method="GET",
+        )
 
         for attempt in range(1, self.max_retries + 2):
             try:
@@ -337,21 +395,35 @@ class RawPresenceProvider:
                     if callable(geturl):
                         if not _is_safe_camfrog_url(geturl()):
                             return self._error_evidence(
-                                nickname, ProbeOutcome.HTTP_ERROR, observed_at, attempt,
+                                nickname,
+                                ProbeOutcome.HTTP_ERROR,
+                                observed_at,
+                                attempt,
                                 "Status response redirected outside the Camfrog HTTPS origin.",
-                                int(getattr(response, "status", 0) or response.getcode()),
-                                getattr(response, "headers", None))
-                    return self._process_response(nickname, response, observed_at, attempt)
+                                int(
+                                    getattr(response, "status", 0) or response.getcode()
+                                ),
+                                getattr(response, "headers", None),
+                            )
+                    return self._process_response(
+                        nickname, response, observed_at, attempt
+                    )
             except HTTPError as exc:
-                retryable = (exc.code in {500, 502, 503, 504} and
-                             not _safe_header(exc.headers, "Retry-After", 128))
+                retryable = exc.code in {500, 502, 503, 504} and not _safe_header(
+                    exc.headers, "Retry-After", 128
+                )
                 if retryable and attempt <= self.max_retries:
                     self.sleep_fn(min(0.5 * (2 ** (attempt - 1)), 2.0))
                     continue
                 return self._error_evidence(
-                    nickname, ProbeOutcome.HTTP_ERROR, observed_at, attempt,
-                    "Camfrog returned HTTP {0}.".format(exc.code), exc.code,
-                    exc.headers)
+                    nickname,
+                    ProbeOutcome.HTTP_ERROR,
+                    observed_at,
+                    attempt,
+                    "Camfrog returned HTTP {0}.".format(exc.code),
+                    exc.code,
+                    exc.headers,
+                )
             except (URLError, TimeoutError, OSError) as exc:
                 if attempt <= self.max_retries:
                     self.sleep_fn(min(0.5 * (2 ** (attempt - 1)), 2.0))
@@ -359,13 +431,18 @@ class RawPresenceProvider:
                 reason = getattr(exc, "reason", None)
                 detail = str(reason if reason is not None else exc)[:400]
                 return self._error_evidence(
-                    nickname, ProbeOutcome.NETWORK_ERROR, observed_at, attempt,
-                    "Camfrog status request failed: {0}".format(detail))
+                    nickname,
+                    ProbeOutcome.NETWORK_ERROR,
+                    observed_at,
+                    attempt,
+                    "Camfrog status request failed: {0}".format(detail),
+                )
 
         raise RuntimeError("Presence retry loop ended without a result.")
 
-    def _process_response(self, nickname: str, response, observed_at: str,
-                          attempts: int) -> PresenceEvidence:
+    def _process_response(
+        self, nickname: str, response, observed_at: str, attempts: int
+    ) -> PresenceEvidence:
         headers = getattr(response, "headers", None)
         status = int(getattr(response, "status", None) or response.getcode())
         content_type = _content_type(headers)
@@ -379,10 +456,19 @@ class RawPresenceProvider:
             "retry_after": _safe_header(headers, "Retry-After", 128),
         }
 
-        def response_evidence(outcome, *, bytes_received=0, raw_sha256=None,
-                              normalized_sha256=None, width=None, height=None,
-                              frames=None, error=None, image_error=None,
-                              raw_gif=b""):
+        def response_evidence(
+            outcome,
+            *,
+            bytes_received=0,
+            raw_sha256=None,
+            normalized_sha256=None,
+            width=None,
+            height=None,
+            frames=None,
+            error=None,
+            image_error=None,
+            raw_gif=b"",
+        ):
             return PresenceEvidence(
                 nickname=nickname,
                 state=PresenceState.UNKNOWN,
@@ -407,22 +493,27 @@ class RawPresenceProvider:
 
         if status != 200:
             return response_evidence(
-                ProbeOutcome.HTTP_ERROR, error="Camfrog returned HTTP {0}.".format(status))
+                ProbeOutcome.HTTP_ERROR,
+                error="Camfrog returned HTTP {0}.".format(status),
+            )
         if content_type != "image/gif":
             return response_evidence(
                 ProbeOutcome.NON_GIF_RESPONSE,
-                error="Camfrog did not return an image/gif response.")
+                error="Camfrog did not return an image/gif response.",
+            )
         if content_length is not None and content_length > self.max_response_bytes:
             return response_evidence(
                 ProbeOutcome.RESPONSE_TOO_LARGE,
-                error="GIF response exceeds the configured size limit.")
+                error="GIF response exceeds the configured size limit.",
+            )
 
         data = response.read(self.max_response_bytes + 1)
         if len(data) > self.max_response_bytes:
             return response_evidence(
                 ProbeOutcome.RESPONSE_TOO_LARGE,
                 bytes_received=len(data),
-                error="GIF response exceeds the configured size limit.")
+                error="GIF response exceeds the configured size limit.",
+            )
 
         fingerprint = fingerprint_gif(data)
         valid_image = fingerprint.normalized_sha256 is not None
@@ -464,7 +555,9 @@ class EvidenceStore:
             connection.execute("PRAGMA journal_mode=WAL")
             version = int(connection.execute("PRAGMA user_version").fetchone()[0])
             if version > DATABASE_SCHEMA_VERSION:
-                raise RuntimeError("Presence evidence database schema is newer than this app.")
+                raise RuntimeError(
+                    "Presence evidence database schema is newer than this app."
+                )
             connection.executescript(
                 "CREATE TABLE IF NOT EXISTS presence_gifs ("
                 " raw_sha256 TEXT PRIMARY KEY CHECK(length(raw_sha256)=64),"
@@ -502,11 +595,16 @@ class EvidenceStore:
                 "CREATE INDEX IF NOT EXISTS presence_observations_raw_hash "
                 "ON presence_observations(raw_sha256);"
             )
-            columns = {row[1] for row in connection.execute(
-                "PRAGMA table_info(presence_observations)")}
+            columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(presence_observations)"
+                )
+            }
             if "retry_after" not in columns:
                 connection.execute(
-                    "ALTER TABLE presence_observations ADD COLUMN retry_after TEXT")
+                    "ALTER TABLE presence_observations ADD COLUMN retry_after TEXT"
+                )
             connection.execute("PRAGMA user_version=2")
             connection.commit()
         if os.name != "nt":
@@ -526,12 +624,16 @@ class EvidenceStore:
         raw_gif = evidence._raw_gif
         if raw_gif:
             if len(raw_gif) > DEFAULT_MAX_RESPONSE_BYTES:
-                raise ValueError("GIF evidence exceeds the maximum stored response size.")
+                raise ValueError(
+                    "GIF evidence exceeds the maximum stored response size."
+                )
             digest = hashlib.sha256(raw_gif).hexdigest()
             if digest != evidence.raw_sha256:
                 raise ValueError("GIF evidence does not match its SHA-256 fingerprint.")
         elif evidence.raw_sha256 is not None:
-            raise ValueError("A raw GIF fingerprint cannot be stored without its GIF bytes.")
+            raise ValueError(
+                "A raw GIF fingerprint cannot be stored without its GIF bytes."
+            )
 
         with self._connection() as connection:
             with connection:
@@ -539,13 +641,21 @@ class EvidenceStore:
                     connection.execute(
                         "INSERT OR IGNORE INTO presence_gifs "
                         "(raw_sha256, content, byte_count, first_seen_at) VALUES (?, ?, ?, ?)",
-                        (evidence.raw_sha256, sqlite3.Binary(raw_gif), len(raw_gif),
-                         evidence.observed_at))
+                        (
+                            evidence.raw_sha256,
+                            sqlite3.Binary(raw_gif),
+                            len(raw_gif),
+                            evidence.observed_at,
+                        ),
+                    )
                     existing = connection.execute(
                         "SELECT content FROM presence_gifs WHERE raw_sha256=?",
-                        (evidence.raw_sha256,)).fetchone()
+                        (evidence.raw_sha256,),
+                    ).fetchone()
                     if existing is None or bytes(existing["content"]) != raw_gif:
-                        raise sqlite3.IntegrityError("SHA-256 collision in presence GIF store.")
+                        raise sqlite3.IntegrityError(
+                            "SHA-256 collision in presence GIF store."
+                        )
 
                 cursor = connection.execute(
                     "INSERT INTO presence_observations ("
@@ -554,14 +664,31 @@ class EvidenceStore:
                     "last_modified, retry_after, raw_sha256, normalized_sha256, width, height, frames, "
                     "observed_at, attempts, error, image_error"
                     ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (evidence.nickname, evidence.state.value, evidence.entity_kind.value,
-                     evidence.outcome.value, evidence.http_status, evidence.content_type,
-                     evidence.content_length, evidence.bytes_received, evidence.cache_control,
-                     evidence.cache_max_age, evidence.etag, evidence.last_modified,
-                     evidence.retry_after,
-                     evidence.raw_sha256, evidence.normalized_sha256, evidence.width,
-                     evidence.height, evidence.frames, evidence.observed_at, evidence.attempts,
-                     evidence.error, evidence.image_error))
+                    (
+                        evidence.nickname,
+                        evidence.state.value,
+                        evidence.entity_kind.value,
+                        evidence.outcome.value,
+                        evidence.http_status,
+                        evidence.content_type,
+                        evidence.content_length,
+                        evidence.bytes_received,
+                        evidence.cache_control,
+                        evidence.cache_max_age,
+                        evidence.etag,
+                        evidence.last_modified,
+                        evidence.retry_after,
+                        evidence.raw_sha256,
+                        evidence.normalized_sha256,
+                        evidence.width,
+                        evidence.height,
+                        evidence.frames,
+                        evidence.observed_at,
+                        evidence.attempts,
+                        evidence.error,
+                        evidence.image_error,
+                    ),
+                )
                 return int(cursor.lastrowid)
 
     @staticmethod
@@ -596,23 +723,30 @@ class EvidenceStore:
         with self._connection() as connection:
             row = connection.execute(
                 "SELECT * FROM presence_observations WHERE nickname=? "
-                "ORDER BY observed_at DESC, id DESC LIMIT 1", (nickname,)).fetchone()
+                "ORDER BY observed_at DESC, id DESC LIMIT 1",
+                (nickname,),
+            ).fetchone()
         return self._from_row(row) if row is not None else None
 
-    def recent(self, nickname: str | None = None, limit: int = 100) -> list[PresenceEvidence]:
+    def recent(
+        self, nickname: str | None = None, limit: int = 100
+    ) -> list[PresenceEvidence]:
         if not 1 <= int(limit) <= 10_000:
             raise ValueError("Limit must be between 1 and 10000.")
         with self._connection() as connection:
             if nickname is None:
                 rows = connection.execute(
                     "SELECT * FROM presence_observations "
-                    "ORDER BY observed_at DESC, id DESC LIMIT ?", (int(limit),)).fetchall()
+                    "ORDER BY observed_at DESC, id DESC LIMIT ?",
+                    (int(limit),),
+                ).fetchall()
             else:
                 nickname = validate_nickname(nickname)
                 rows = connection.execute(
                     "SELECT * FROM presence_observations WHERE nickname=? "
                     "ORDER BY observed_at DESC, id DESC LIMIT ?",
-                    (nickname, int(limit))).fetchall()
+                    (nickname, int(limit)),
+                ).fetchall()
         return [self._from_row(row) for row in rows]
 
     def get_raw_gif(self, raw_sha256: str) -> bytes | None:
@@ -620,13 +754,15 @@ class EvidenceStore:
             raise ValueError("Invalid GIF SHA-256 fingerprint.")
         with self._connection() as connection:
             row = connection.execute(
-                "SELECT content FROM presence_gifs WHERE raw_sha256=?",
-                (raw_sha256,)).fetchone()
+                "SELECT content FROM presence_gifs WHERE raw_sha256=?", (raw_sha256,)
+            ).fetchone()
         if row is None:
             return None
         content = bytes(row["content"])
         if hashlib.sha256(content).hexdigest() != raw_sha256:
-            raise sqlite3.DatabaseError("Stored GIF does not match its SHA-256 fingerprint.")
+            raise sqlite3.DatabaseError(
+                "Stored GIF does not match its SHA-256 fingerprint."
+            )
         return content
 
     def prune_before(self, timestamp: str) -> int:
@@ -634,42 +770,60 @@ class EvidenceStore:
         try:
             cutoff = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
         except ValueError as exc:
-            raise ValueError("Cutoff must be an ISO-8601 timestamp with a timezone.") from exc
+            raise ValueError(
+                "Cutoff must be an ISO-8601 timestamp with a timezone."
+            ) from exc
         if cutoff.tzinfo is None:
             raise ValueError("Cutoff timestamp must include a timezone.")
         cutoff_text = _utc_timestamp(cutoff)
         with self._connection() as connection:
             with connection:
                 cursor = connection.execute(
-                    "DELETE FROM presence_observations WHERE observed_at < ?", (cutoff_text,))
+                    "DELETE FROM presence_observations WHERE observed_at < ?",
+                    (cutoff_text,),
+                )
                 connection.execute(
                     "DELETE FROM presence_gifs WHERE NOT EXISTS ("
                     "SELECT 1 FROM presence_observations "
-                    "WHERE presence_observations.raw_sha256=presence_gifs.raw_sha256)")
+                    "WHERE presence_observations.raw_sha256=presence_gifs.raw_sha256)"
+                )
                 return int(cursor.rowcount)
+
+
 def _json_lines(values) -> str:
     return json.dumps(values, ensure_ascii=False, indent=2, sort_keys=True)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Collect and store public Camfrog status-image evidence; classification stays UNKNOWN.")
-    parser.add_argument("--database", type=Path, default=default_database_path(),
-                        help="SQLite evidence database path.")
+        description="Collect and store public Camfrog status-image evidence; classification stays UNKNOWN."
+    )
+    parser.add_argument(
+        "--database",
+        type=Path,
+        default=default_database_path(),
+        help="SQLite evidence database path.",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
 
-    probe_parser = commands.add_parser("probe", help="Fetch one public status image and store evidence.")
+    probe_parser = commands.add_parser(
+        "probe", help="Fetch one public status image and store evidence."
+    )
     probe_parser.add_argument("nickname")
 
     recent_parser = commands.add_parser("recent", help="Show stored evidence metadata.")
     recent_parser.add_argument("--nickname")
     recent_parser.add_argument("--limit", type=int, default=20)
 
-    export_parser = commands.add_parser("export-gif", help="Export a previously stored raw GIF sample.")
+    export_parser = commands.add_parser(
+        "export-gif", help="Export a previously stored raw GIF sample."
+    )
     export_parser.add_argument("raw_sha256")
     export_parser.add_argument("output", type=Path)
 
-    prune_parser = commands.add_parser("prune", help="Delete evidence older than an ISO-8601 cutoff.")
+    prune_parser = commands.add_parser(
+        "prune", help="Delete evidence older than an ISO-8601 cutoff."
+    )
     prune_parser.add_argument("--before", required=True)
 
     args = parser.parse_args(argv)
@@ -683,7 +837,11 @@ def main(argv: list[str] | None = None) -> int:
         print(_json_lines(output))
         return 0 if evidence.outcome is ProbeOutcome.STATUS_IMAGE else 1
     if args.command == "recent":
-        print(_json_lines([item.to_dict() for item in store.recent(args.nickname, args.limit)]))
+        print(
+            _json_lines(
+                [item.to_dict() for item in store.recent(args.nickname, args.limit)]
+            )
+        )
         return 0
     if args.command == "export-gif":
         content = store.get_raw_gif(args.raw_sha256)

@@ -143,7 +143,9 @@ class ProcessMonitorPage(ttk.Frame):
                 state = evaluate_client_runtime_state(identity, windows)
             except Exception:  # noqa: BLE001, S112 - skip one bad process row and continue.
                 continue
-            state_text = self._text("state_running" if state.ui_visible else "state_no_ui")
+            state_text = self._text(
+                "state_running" if state.ui_visible else "state_no_ui"
+            )
             self.tree.insert(
                 "",
                 tk.END,

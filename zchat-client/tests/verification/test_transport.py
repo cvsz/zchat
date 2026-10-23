@@ -17,7 +17,9 @@ def test_transport_retry():
 
 
 def test_transport_retries_network_exceptions(monkeypatch):
-    monkeypatch.setattr("zchat_client.verification.transport.time.sleep", lambda _: None)
+    monkeypatch.setattr(
+        "zchat_client.verification.transport.time.sleep", lambda _: None
+    )
     calls = []
 
     def sender(url, payload, timeout):
@@ -26,6 +28,8 @@ def test_transport_retries_network_exceptions(monkeypatch):
             raise TimeoutError("network timeout")
         return TransportResult(ok=True, status_code=200)
 
-    result = EvidenceTransport("https://localhost", max_retries=1).submit("/evidence", {}, sender)
+    result = EvidenceTransport("https://localhost", max_retries=1).submit(
+        "/evidence", {}, sender
+    )
     assert result.ok is True
     assert len(calls) == 2

@@ -17,6 +17,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple
 
+
 # System taskkill path helper (safe Windows system directory execution)
 def system_taskkill_path() -> str:
     """Return taskkill.exe from Windows system directory, never from PATH/cwd."""
@@ -24,6 +25,7 @@ def system_taskkill_path() -> str:
         return "taskkill.exe"
     try:
         from ctypes import create_unicode_buffer, windll
+
         buffer = create_unicode_buffer(260)
         chars = windll.kernel32.GetSystemDirectoryW(buffer, 260)
         if chars > 0:
@@ -36,8 +38,10 @@ def system_taskkill_path() -> str:
 
 # ---------- Enums and Data Models ----------
 
+
 class WindowRole(str, Enum):
     """Semantic UI roles for Camfrog client top-level windows."""
+
     MAIN_DIRECTORY = "main_directory"
     ROOM_WINDOW = "room_window"
     IM_WINDOW = "im_window"
@@ -47,6 +51,7 @@ class WindowRole(str, Enum):
 @dataclass(frozen=True)
 class ProcessIdentity:
     """Immutable identity record for a verified Camfrog process."""
+
     pid: int
     create_time: float
     exe_path: str
@@ -70,6 +75,7 @@ class ProcessIdentity:
 @dataclass
 class ClassifiedWindow:
     """Record of a top-level window classified by structural UI signatures."""
+
     hwnd: int
     role: WindowRole
     title: str
@@ -101,6 +107,7 @@ class ClientRuntimeState:
     - An accepted URI handoff does not establish completed behavior.
     - UI Automation success is not equivalent to successful server-side execution.
     """
+
     process_running: bool
     ui_visible: bool
     account_authenticated: bool
@@ -120,6 +127,7 @@ class ClientRuntimeState:
 
 
 # ---------- Authenticode Verification Helper ----------
+
 
 def verify_windows_authenticode(exe_path: str) -> Tuple[bool, str]:
     """Verify Authenticode digital signature and extract Subject/Publisher name.
@@ -167,8 +175,10 @@ def verify_windows_authenticode(exe_path: str) -> Tuple[bool, str]:
             ]
 
         WINTRUST_ACTION_GENERIC_VERIFY_V2 = GUID(
-            0x00AAC56B, 0xCD44, 0x11D0,
-            (ctypes.c_byte * 8)(0x8C, 0xC2, 0x00, 0xC0, 0x4F, 0xC2, 0x95, 0xEE)
+            0x00AAC56B,
+            0xCD44,
+            0x11D0,
+            (ctypes.c_byte * 8)(0x8C, 0xC2, 0x00, 0xC0, 0x4F, 0xC2, 0x95, 0xEE),
         )
 
         WTD_UI_NONE = 2
@@ -191,31 +201,47 @@ def verify_windows_authenticode(exe_path: str) -> Tuple[bool, str]:
         trust_data.dwUnionChoice = WTD_CHOICE_FILE
         trust_data.pFile = ctypes.pointer(file_info)
         trust_data.dwStateAction = WTD_STATEACTION_IGNORE
-        trust_data.dwProvFlags = WTD_REVOCATION_CHECK_NONE | WTD_CACHE_ONLY_URL_RETRIEVAL
+        trust_data.dwProvFlags = (
+            WTD_REVOCATION_CHECK_NONE | WTD_CACHE_ONLY_URL_RETRIEVAL
+        )
 
         wintrust = ctypes.windll.wintrust
         status = wintrust.WinVerifyTrust(
             None,
             ctypes.byref(WINTRUST_ACTION_GENERIC_VERIFY_V2),
-            ctypes.byref(trust_data)
+            ctypes.byref(trust_data),
         )
-        is_valid = (status == 0)
+        is_valid = status == 0
 
         # Extract publisher / signer certificate subject via crypt32
         crypt32 = ctypes.windll.crypt32
         crypt32.CryptQueryObject.restype = wintypes.BOOL
         crypt32.CryptQueryObject.argtypes = [
-            wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD,
-            wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(wintypes.DWORD),
-            ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(wintypes.HANDLE),
-            ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+            ctypes.POINTER(wintypes.DWORD),
+            ctypes.POINTER(wintypes.DWORD),
+            ctypes.POINTER(wintypes.HANDLE),
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.c_void_p,
         ]
         crypt32.CertEnumCertificatesInStore.restype = ctypes.c_void_p
-        crypt32.CertEnumCertificatesInStore.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+        crypt32.CertEnumCertificatesInStore.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_void_p,
+        ]
         crypt32.CertGetNameStringW.restype = wintypes.DWORD
         crypt32.CertGetNameStringW.argtypes = [
-            ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
-            wintypes.LPWSTR, wintypes.DWORD
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            wintypes.LPWSTR,
+            wintypes.DWORD,
         ]
         crypt32.CertCloseStore.restype = wintypes.BOOL
         crypt32.CertCloseStore.argtypes = [wintypes.HANDLE, wintypes.DWORD]
@@ -245,7 +271,7 @@ def verify_windows_authenticode(exe_path: str) -> Tuple[bool, str]:
             ctypes.byref(dwFormatType),
             ctypes.byref(hStore),
             ctypes.byref(hMsg),
-            None
+            None,
         )
 
         try:
@@ -254,12 +280,7 @@ def verify_windows_authenticode(exe_path: str) -> Tuple[bool, str]:
                 while pCert:
                     buf = ctypes.create_unicode_buffer(512)
                     chars = crypt32.CertGetNameStringW(
-                        pCert,
-                        CERT_NAME_SIMPLE_DISPLAY_TYPE,
-                        0,
-                        None,
-                        buf,
-                        len(buf)
+                        pCert, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, None, buf, len(buf)
                     )
                     if chars > 1:
                         name = buf.value
@@ -291,6 +312,7 @@ def get_pe_file_version(exe_path: str) -> str:
         return ""
     try:
         import win32api
+
         info = win32api.GetFileVersionInfo(exe_path, "\\")
         ms = info["FileVersionMS"]
         ls = info["FileVersionLS"]
@@ -300,6 +322,7 @@ def get_pe_file_version(exe_path: str) -> str:
 
 
 # ---------- WindowsCamfrogProcessDiscovery ----------
+
 
 class WindowsCamfrogProcessDiscovery:
     """Discovers and validates genuine Camfrog Video Chat client processes.
@@ -341,17 +364,20 @@ class WindowsCamfrogProcessDiscovery:
         if pid == os.getpid():
             return True
         joined_cmd = " ".join(cmdline or []).lower()
-        if any(marker in joined_cmd for marker in (
-            "camfrog_auto.py",
-            "camfrog_gui.py",
-            "camfrog_music_gui.py",
-            "camfrog_status_gui.py",
-            "room_control_gui.py",
-            "chat_im_private_gui.py",
-            "im_autoreply_gui.py",
-            "web_status_gui.py",
-            "pytest",
-        )):
+        if any(
+            marker in joined_cmd
+            for marker in (
+                "camfrog_auto.py",
+                "camfrog_gui.py",
+                "camfrog_music_gui.py",
+                "camfrog_status_gui.py",
+                "room_control_gui.py",
+                "chat_im_private_gui.py",
+                "im_autoreply_gui.py",
+                "web_status_gui.py",
+                "pytest",
+            )
+        ):
             return True
         return False
 
@@ -405,6 +431,7 @@ class WindowsCamfrogProcessDiscovery:
 
                 # Match base executable identity
                 from pathlib import PureWindowsPath
+
                 base_name = PureWindowsPath(exe).name if exe else name
                 if base_name.lower() != self.DEFAULT_EXE_NAME.lower():
                     continue
@@ -450,10 +477,14 @@ class WindowsCamfrogProcessDiscovery:
             for cand in candidates:
                 if cand.pid == pid:
                     return cand
-            raise ProcessLookupError(f"No verified Camfrog process found with PID {pid}.")
+            raise ProcessLookupError(
+                f"No verified Camfrog process found with PID {pid}."
+            )
 
         if not candidates:
-            raise ProcessLookupError("No verified Camfrog Video Chat process found on this system.")
+            raise ProcessLookupError(
+                "No verified Camfrog Video Chat process found on this system."
+            )
 
         if len(candidates) > 1:
             raise RuntimeError(
@@ -465,6 +496,7 @@ class WindowsCamfrogProcessDiscovery:
 
 
 # ---------- WindowsCamfrogWindowClassifier ----------
+
 
 class WindowsCamfrogWindowClassifier:
     """Classifies top-level Camfrog windows into distinct semantic UI roles.
@@ -514,9 +546,7 @@ class WindowsCamfrogWindowClassifier:
         return False
 
     def inspect_window_structures(
-        self,
-        hwnd: int,
-        element: Any = None
+        self, hwnd: int, element: Any = None
     ) -> Dict[str, Any]:
         """Collect structural UI metadata without inspecting private message bodies."""
         child_classes: Set[str] = set()
@@ -525,6 +555,7 @@ class WindowsCamfrogWindowClassifier:
         if sys.platform == "win32":
             try:
                 import win32gui
+
                 def _enum_cb(ch, _):
                     cls = win32gui.GetClassName(ch)
                     child_classes.add(cls)
@@ -532,6 +563,7 @@ class WindowsCamfrogWindowClassifier:
                     if cid:
                         child_ids.add(cid)
                     return True
+
                 win32gui.EnumChildWindows(hwnd, _enum_cb, None)
             except Exception:
                 pass
@@ -555,7 +587,11 @@ class WindowsCamfrogWindowClassifier:
                     if aid and aid.isdigit():
                         child_ids.add(int(aid))
 
-                    if cls == "VideoViewport" or "VideoViewport" in name or "VideoViewport" in aid:
+                    if (
+                        cls == "VideoViewport"
+                        or "VideoViewport" in name
+                        or "VideoViewport" in aid
+                    ):
                         has_videoviewport = True
 
                     if cls == "Internet Explorer_Server":
@@ -663,9 +699,7 @@ class WindowsCamfrogWindowClassifier:
         )
 
     def classify_process_windows(
-        self,
-        identity: ProcessIdentity,
-        visible_only: bool = False
+        self, identity: ProcessIdentity, visible_only: bool = False
     ) -> List[ClassifiedWindow]:
         """Classify top-level windows of a verified process, supporting minimized/tray windows."""
         classified: List[ClassifiedWindow] = []
@@ -697,18 +731,25 @@ class WindowsCamfrogWindowClassifier:
                         elem = desktop.window(handle=h).wrapper_object()
                     except Exception:
                         elem = None
-                    cw = self.classify_window(elem) if elem is not None else ClassifiedWindow(
-                        hwnd=h,
-                        role=WindowRole.UNKNOWN,
-                        title=win32gui.GetWindowText(h),
-                        pid=identity.pid,
-                        is_visible=is_vis,
+                    cw = (
+                        self.classify_window(elem)
+                        if elem is not None
+                        else ClassifiedWindow(
+                            hwnd=h,
+                            role=WindowRole.UNKNOWN,
+                            title=win32gui.GetWindowText(h),
+                            pid=identity.pid,
+                            is_visible=is_vis,
+                        )
                     )
                     # If elem was None or unknown, inspect structures directly by HWND
                     if cw.role == WindowRole.UNKNOWN:
                         structs = self.inspect_window_structures(h, elem)
                         child_classes = structs["child_classes"]
-                        if "CTreeViewTS" in child_classes and "CComboBoxTS" in child_classes:
+                        if (
+                            "CTreeViewTS" in child_classes
+                            and "CComboBoxTS" in child_classes
+                        ):
                             cw.role = WindowRole.MAIN_DIRECTORY
                             cw.signatures = ["CTreeViewTS+CComboBoxTS"]
                         cw.is_visible = is_vis
@@ -721,6 +762,7 @@ class WindowsCamfrogWindowClassifier:
 
         try:
             from pywinauto import Desktop
+
             d = Desktop(backend="uia")
             top_windows = d.windows(process=identity.pid, visible_only=visible_only)
             for w in top_windows:
@@ -734,6 +776,7 @@ class WindowsCamfrogWindowClassifier:
 
 
 # ---------- Identity Revalidation and Anti-Targeting ----------
+
 
 def revalidate_process_identity(identity: ProcessIdentity) -> bool:
     """Revalidate that the target PID is alive and unchanged in identity.
@@ -762,8 +805,7 @@ def revalidate_process_identity(identity: ProcessIdentity) -> bool:
 
 
 def revalidate_window_identity(
-    window: ClassifiedWindow,
-    identity: ProcessIdentity
+    window: ClassifiedWindow, identity: ProcessIdentity
 ) -> bool:
     """Revalidate that the window handle exists and still belongs to the target process."""
     if not revalidate_process_identity(identity):
@@ -788,10 +830,8 @@ def revalidate_window_identity(
 
 # ---------- Ownership Restrictions ----------
 
-def terminate_client_process(
-    identity: ProcessIdentity,
-    force: bool = False
-) -> bool:
+
+def terminate_client_process(identity: ProcessIdentity, force: bool = False) -> bool:
     """Terminate client process only if launched by the agent.
 
     Preserves strict ownership:
@@ -811,6 +851,7 @@ def terminate_client_process(
 
     try:
         import subprocess
+
         cmd = [system_taskkill_path(), "/PID", str(identity.pid)]
         if force:
             cmd.append("/F")
@@ -822,9 +863,9 @@ def terminate_client_process(
 
 # ---------- Evidence State Evaluation ----------
 
+
 def evaluate_client_runtime_state(
-    identity: ProcessIdentity,
-    classified_windows: Sequence[ClassifiedWindow]
+    identity: ProcessIdentity, classified_windows: Sequence[ClassifiedWindow]
 ) -> ClientRuntimeState:
     """Evaluate runtime states following explicit evidence boundary rules.
 
@@ -846,7 +887,9 @@ def evaluate_client_runtime_state(
             f"Authenticode signed by '{identity.publisher}'."
         )
     else:
-        evidence_notes.append(f"Process PID {identity.pid} is not running or failed identity revalidation.")
+        evidence_notes.append(
+            f"Process PID {identity.pid} is not running or failed identity revalidation."
+        )
         return ClientRuntimeState(
             process_running=False,
             ui_visible=False,
@@ -864,12 +907,18 @@ def evaluate_client_runtime_state(
             f"{[f'hwnd={w.hwnd} role={w.role.value}' for w in visible_windows]}."
         )
     else:
-        evidence_notes.append("No visible top-level windows found (client may be minimized to system tray).")
+        evidence_notes.append(
+            "No visible top-level windows found (client may be minimized to system tray)."
+        )
 
     # 3. Account authenticated state
     # Rule: Process running does NOT establish authentication!
     # Evidence requirement: Main Directory window must be present, visible, containing CTreeViewTS and CComboBoxTS.
-    main_wins = [w for w in classified_windows if w.role == WindowRole.MAIN_DIRECTORY and w.is_visible]
+    main_wins = [
+        w
+        for w in classified_windows
+        if w.role == WindowRole.MAIN_DIRECTORY and w.is_visible
+    ]
     account_authenticated = False
     if main_wins:
         account_authenticated = True
@@ -888,10 +937,16 @@ def evaluate_client_runtime_state(
     # visible room window with no kick/disconnect indicator is treated as
     # current membership (best available UI evidence). Affirmative
     # server-side membership verification is NOT_IMPLEMENTED.
-    room_wins = [w for w in classified_windows if w.role == WindowRole.ROOM_WINDOW and w.is_visible]
+    room_wins = [
+        w
+        for w in classified_windows
+        if w.role == WindowRole.ROOM_WINDOW and w.is_visible
+    ]
     room_member = False
     if not room_wins:
-        evidence_notes.append("Room membership not established: No room window present.")
+        evidence_notes.append(
+            "Room membership not established: No room window present."
+        )
     else:
         # Check for kick or disconnected banner in the room window
         is_kicked_or_parted = False
@@ -900,7 +955,11 @@ def evaluate_client_runtime_state(
             try:
                 for desc in room_win.element.descendants():
                     txt = (getattr(desc.element_info, "name", "") or "").lower()
-                    if "kicked" in txt or "disconnected" in txt or "you were kicked" in txt:
+                    if (
+                        "kicked" in txt
+                        or "disconnected" in txt
+                        or "you were kicked" in txt
+                    ):
                         is_kicked_or_parted = True
                         break
             except Exception:
@@ -930,6 +989,7 @@ def evaluate_client_runtime_state(
 
 # ---------- Read-Only Attachment Model ----------
 
+
 class CamfrogClientAttachment:
     """Read-only attachment to an already-running authorized Camfrog client."""
 
@@ -952,7 +1012,9 @@ class CamfrogClientAttachment:
     def get_windows(self) -> List[ClassifiedWindow]:
         """Classify and return current windows for the process."""
         if not self.revalidate():
-            raise ProcessLookupError(f"Target process PID {self.identity.pid} is no longer running.")
+            raise ProcessLookupError(
+                f"Target process PID {self.identity.pid} is no longer running."
+            )
         return self.classifier.classify_process_windows(self.identity)
 
     def get_runtime_state(self) -> ClientRuntimeState:
@@ -979,7 +1041,9 @@ class CamfrogClientAttachment:
 
 def attach_to_camfrog_client(
     pid: Optional[int] = None,
-    trusted_publishers: Sequence[str] = WindowsCamfrogProcessDiscovery.DEFAULT_TRUSTED_PUBLISHERS,
+    trusted_publishers: Sequence[
+        str
+    ] = WindowsCamfrogProcessDiscovery.DEFAULT_TRUSTED_PUBLISHERS,
 ) -> CamfrogClientAttachment:
     """Discover and attach in read-only mode to an already-running authorized client."""
     discovery = WindowsCamfrogProcessDiscovery(trusted_publishers=trusted_publishers)

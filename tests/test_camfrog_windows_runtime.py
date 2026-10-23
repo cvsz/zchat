@@ -35,6 +35,7 @@ from camfrog_windows_runtime import (
 
 # ---------- Process Discovery Unit Tests ----------
 
+
 def test_cef_subprocess_exclusion():
     discovery = WindowsCamfrogProcessDiscovery()
 
@@ -43,20 +44,28 @@ def test_cef_subprocess_exclusion():
     assert discovery.is_cef_subprocess("CAMFROG_CEF.EXE", []) is True
 
     # Subprocess with --type=renderer or --type=gpu-process
-    assert discovery.is_cef_subprocess(
-        "Camfrog Video Chat.exe",
-        ["Camfrog Video Chat.exe", "--type=renderer", "--no-sandbox"]
-    ) is True
-    assert discovery.is_cef_subprocess(
-        "Camfrog Video Chat.exe",
-        ["Camfrog Video Chat.exe", "--type=gpu-process"]
-    ) is True
+    assert (
+        discovery.is_cef_subprocess(
+            "Camfrog Video Chat.exe",
+            ["Camfrog Video Chat.exe", "--type=renderer", "--no-sandbox"],
+        )
+        is True
+    )
+    assert (
+        discovery.is_cef_subprocess(
+            "Camfrog Video Chat.exe", ["Camfrog Video Chat.exe", "--type=gpu-process"]
+        )
+        is True
+    )
 
     # Main process without --type flags
-    assert discovery.is_cef_subprocess(
-        "Camfrog Video Chat.exe",
-        ["C:\\Program Files\\Camfrog Video Chat\\Camfrog Video Chat.exe"]
-    ) is False
+    assert (
+        discovery.is_cef_subprocess(
+            "Camfrog Video Chat.exe",
+            ["C:\\Program Files\\Camfrog Video Chat\\Camfrog Video Chat.exe"],
+        )
+        is False
+    )
 
 
 def test_zchat_own_process_exclusion():
@@ -66,20 +75,22 @@ def test_zchat_own_process_exclusion():
     assert discovery.is_own_zchat_process(os.getpid(), []) is True
 
     # Python scripts belonging to ZChat
-    assert discovery.is_own_zchat_process(
-        99999,
-        ["python.exe", "camfrog_auto.py", "--run"]
-    ) is True
-    assert discovery.is_own_zchat_process(
-        99999,
-        ["python.exe", "room_control_gui.py"]
-    ) is True
+    assert (
+        discovery.is_own_zchat_process(
+            99999, ["python.exe", "camfrog_auto.py", "--run"]
+        )
+        is True
+    )
+    assert (
+        discovery.is_own_zchat_process(99999, ["python.exe", "room_control_gui.py"])
+        is True
+    )
 
     # Real Camfrog client
-    assert discovery.is_own_zchat_process(
-        12345,
-        ["C:\\Camfrog\\Camfrog Video Chat.exe"]
-    ) is False
+    assert (
+        discovery.is_own_zchat_process(12345, ["C:\\Camfrog\\Camfrog Video Chat.exe"])
+        is False
+    )
 
 
 def test_publisher_verification():
@@ -157,6 +168,7 @@ def test_process_discovery_filters_and_fail_closed(monkeypatch):
     ]
 
     import psutil
+
     monkeypatch.setattr(psutil, "process_iter", lambda attrs: simulated_processes)
     monkeypatch.setattr(os.path, "isfile", lambda path: True)
 
@@ -236,6 +248,7 @@ def test_get_verified_process_single_multiple_and_not_found(monkeypatch):
 
 # ---------- Window Classification Unit Tests ----------
 
+
 class MockUIAElement:
     def __init__(self, class_name="", name="", automation_id="", control_type=""):
         self.element_info = SimpleNamespace(
@@ -282,8 +295,12 @@ class MockWindow:
 def test_classify_main_directory_window(monkeypatch):
     # Main directory has CTreeViewTS, CComboBoxTS, and Edit controls
     desc = [
-        MockUIAElement(class_name="CTreeViewTS", automation_id="10867", control_type="Tree"),
-        MockUIAElement(class_name="CComboBoxTS", automation_id="1436", control_type="ComboBox"),
+        MockUIAElement(
+            class_name="CTreeViewTS", automation_id="10867", control_type="Tree"
+        ),
+        MockUIAElement(
+            class_name="CComboBoxTS", automation_id="1436", control_type="ComboBox"
+        ),
         MockUIAElement(class_name="Edit", automation_id="1001", control_type="Edit"),
     ]
     win = MockWindow(handle=10, title="Camfrog Video Chat", descendants=desc)
@@ -300,11 +317,13 @@ def test_classify_main_directory_window(monkeypatch):
 def test_classify_room_window(monkeypatch):
     # Room window has VideoViewport and Internet Explorer_Server with wb-log-room-data
     desc = [
-        MockUIAElement(class_name="VideoViewport", automation_id="11425", control_type="Pane"),
+        MockUIAElement(
+            class_name="VideoViewport", automation_id="11425", control_type="Pane"
+        ),
         MockUIAElement(
             class_name="Internet Explorer_Server",
             name="camfrog://wb-log-room-data.inside/",
-            control_type="Pane"
+            control_type="Pane",
         ),
         MockUIAElement(class_name="CEditTS", automation_id="1314", control_type="Edit"),
     ]
@@ -324,7 +343,7 @@ def test_classify_im_window(monkeypatch):
         MockUIAElement(
             class_name="Internet Explorer_Server",
             name="camfrog://wb-log-im-data.inside/",
-            control_type="Pane"
+            control_type="Pane",
         ),
         MockUIAElement(class_name="CEditTS", automation_id="1314", control_type="Edit"),
     ]
@@ -346,7 +365,7 @@ def test_classify_ambiguous_and_unknown_windows_fail_closed():
         MockUIAElement(class_name="VideoViewport"),
         MockUIAElement(
             class_name="Internet Explorer_Server",
-            name="camfrog://wb-log-im-data.inside/"
+            name="camfrog://wb-log-im-data.inside/",
         ),
         MockUIAElement(class_name="CTreeViewTS"),
         MockUIAElement(class_name="CComboBoxTS"),
@@ -394,6 +413,7 @@ def test_classify_ignores_own_zchat_gui_windows():
 
 # ---------- Revalidation and Anti-Targeting Tests ----------
 
+
 def test_revalidate_process_identity(monkeypatch):
     import psutil
 
@@ -433,6 +453,7 @@ def test_revalidate_process_identity(monkeypatch):
 
 # ---------- Ownership Restrictions Tests ----------
 
+
 def test_terminate_client_process_ownership_restriction():
     # If not launched by agent, MUST raise PermissionError
     unmanaged_proc = ProcessIdentity(
@@ -459,6 +480,7 @@ def test_terminate_client_process_ownership_restriction():
     )
     # mock revalidate to return False (process already exited)
     import camfrog_windows_runtime as m
+
     orig = m.revalidate_process_identity
     m.revalidate_process_identity = lambda p: False
     try:
@@ -469,8 +491,10 @@ def test_terminate_client_process_ownership_restriction():
 
 # ---------- Evidence State Separation Tests ----------
 
+
 def test_evaluate_client_runtime_state_boundary_rules(monkeypatch):
     import camfrog_windows_runtime as m
+
     monkeypatch.setattr(m, "revalidate_process_identity", lambda p: True)
 
     identity = ProcessIdentity(
@@ -540,6 +564,7 @@ def test_evaluate_client_runtime_state_boundary_rules(monkeypatch):
 
 
 # ---------- Diagnostics and Privacy Tests ----------
+
 
 def test_diagnostics_sanitized_and_no_private_messages():
     identity = ProcessIdentity(
