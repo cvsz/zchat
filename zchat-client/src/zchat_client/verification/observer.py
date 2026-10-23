@@ -266,36 +266,32 @@ def _read_control_value(control: Any) -> str | None:
 
 
 def _is_custom_status_control(control: Any) -> bool:
-    """Positive identification of a Custom Status UIA control.
+    """Identify a Custom Status UIA control using the real pywinauto API.
 
-    Conservative by design: only Text/Edit controls that are visible, enabled,
-    and carry an explicit status identity in the accessible name or automation
-    ID, excluding identity, presence, flair, avatar, and tooltip controls.
+    UIAWrapper exposes metadata through element_info and visibility through
+    is_enabled()/is_visible(). Plain attribute fixtures are supported only
+    when element_info is absent, so broken real wrappers fail closed.
     """
     try:
-        ctype = str(control.control_type or "")
-    except Exception:  # noqa: BLE001 - fail-closed: untrusted control object.
+        info = getattr(control, "element_info", None)
+        if info is not None:
+            ctype = str(info.control_type or "")
+            name = str(info.name or "").strip()
+            aid = str(info.automation_id or "")
+            enabled = control.is_enabled()
+            visible = control.is_visible()
+        else:
+            ctype = str(control.control_type or "")
+            name = str(control.name or "").strip()
+            aid = str(getattr(control, "automation_id", "") or "")
+            enabled = control.enabled
+            visible = control.visible
+    except Exception:  # noqa: BLE001 - stale or inaccessible UIA controls fail closed.
         return False
-    if ctype not in ("Text", "Edit"):
+    if ctype not in ("Text", "Edit") or not enabled or not visible or not name:
         return False
-    try:
-        if not control.enabled or not control.visible:
-            return False
-    except Exception:  # noqa: BLE001 - fail-closed: untrusted control object.
-        return False
-    try:
-        name = (control.name or "").strip()
-    except Exception:  # noqa: BLE001 - fail-closed: untrusted control object.
-        return False
-    if not name:
-        return False
-    try:
-        aid = control.automation_id or ""
-    except Exception:  # noqa: BLE001 - fail-closed: untrusted control object.
-        aid = ""
     combined = f"{aid} {name}".casefold()
     return "status" in combined and not any(hint in combined for hint in _NON_STATUS_NAME_HINTS)
-
 
 def _discover_row_status(row_item: Any) -> str | None:
     """Inspect UIA children of a friend-list row for the Custom Status field.
