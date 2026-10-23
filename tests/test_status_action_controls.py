@@ -143,7 +143,10 @@ def test_action_grid_has_one_row_and_distinct_button_colours(name):
     body = ast.get_source_segment(source, method)
     assert "tk.Button(" in body
     assert "for col in range(4):" in body
-    assert "row=0, column=index" in body
+    # One-row grid: all four buttons share row=0 and use their column index.
+    assert "button.grid(" in body
+    assert "row=0" in body
+    assert "column=index" in body
     assert all(
         colour in body for colour in ("#ebe5d9", "#d6e9e8", "#8b672b", "#9f3740")
     )
