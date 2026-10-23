@@ -18,6 +18,25 @@ from .comparison import normalize_text
 _CAMFROG_PROCESS_NAMES = frozenset({"camfrog.exe", "camfrog video chat.exe"})
 
 
+# UIA automation-id/name hints that indicate identity, presence, flair,
+# avatar, or tooltip controls rather than a user-entered Custom Status.
+# Controls matching these hints are rejected during status-field discovery.
+_NON_STATUS_NAME_HINTS = frozenset(
+    {
+        "name",
+        "nick",
+        "nickname",
+        "display",
+        "presence",
+        "flair",
+        "avatar",
+        "statusicon",
+        "tooltip",
+        "mood",
+    }
+)
+
+
 @dataclass(frozen=True)
 class Observation:
     visible: bool
@@ -140,7 +159,9 @@ class FriendListObserver:
                             status_value,
                             row_text or None,
                             "high" if status_value is not None else "low",
-                            "uia_status_field" if status_value is not None else "uia_identity_only",
+                            "uia_status_field"
+                            if status_value is not None
+                            else "uia_identity_only",
                             account_identity=target,
                             process_identity=_process_identity(process),
                             error_reason=None
@@ -207,38 +228,86 @@ def _process_identity(process: Any) -> dict[str, str]:
 
 
 def _read_control_value(control: Any) -> str | None:
-    """Read a UIA control's value via available patterns, fail-closed.
+    """Read a UIA control's value via supported pywinauto accessors, fail-closed.
+
+    Supported paths on pywinauto 0.6.9:
+      1. wrapper.get_value() (e.g. EditWrapper.iface_value.CurrentValue)
+      2. element.GetCurrentPattern(Value pattern id) -> .Current.Value
 
     Only values exposed through a UIA value pattern are treated as real status
-    text. `window_text()` labels are intentionally not returned as status
-    values, because they may be control names rather than user-entered text.
+    text. `window_text()`/`name` labels are intentionally not returned as
+    status values, because they may be control names rather than user-entered
+    text. Every path fails closed: COM/disconnected/stale errors yield None.
     """
-    for attr in ("get_value_pattern", "get_legacy_iaccessible_pattern"):
+    # Path 1: wrapper-level accessor (pywinauto EditWrapper.get_value, etc.)
+    try:
+        value = control.get_value()
+    except Exception:  # noqa: BLE001 - fail-closed: wrapper accessor unavailable.
+        value = None
+    if value:
+        return str(value).strip()
+
+    # Path 2: raw AutomationElement pattern access (pywinauto 0.6.9 supported).
+    try:
+        element = control.element
+    except Exception:  # noqa: BLE001 - control exposes no raw element.
+        element = None
+    if element is not None:
         try:
-            pattern = getattr(control, attr)()
-        except Exception:  # noqa: BLE001, S112 - fail-closed: skip a control whose pattern cannot be read.
-            continue
-        if pattern is None:
-            continue
-        value = getattr(pattern, "Value", None) or getattr(pattern, "value", None)
-        if callable(value):
-            try:
-                value = value()
-            except Exception:  # noqa: BLE001, S112 - fail-closed: skip a control whose value callable fails.
-                continue
+            from pywinauto import uia_defines  # Windows-only import; guarded.
+
+            ptrn_id, _ = uia_defines.pattern_ids["Value"]
+            pattern = element.GetCurrentPattern(ptrn_id)
+            current = getattr(pattern, "Current", None)
+            value = getattr(current, "Value", None) if current is not None else None
+        except Exception:  # noqa: BLE001 - fail-closed: Value pattern unsupported or stale.
+            value = None
         if value:
-            try:
-                return str(value).strip()
-            except Exception:  # noqa: BLE001, S112 - fail-closed: skip a control whose string conversion fails.
-                continue
+            return str(value).strip()
     return None
 
 
-def _discover_row_status(row_item: Any) -> str | None:
-    """Inspect UIA children of a friend-list row for a Custom Status field.
+def _is_custom_status_control(control: Any) -> bool:
+    """Positive identification of a Custom Status UIA control.
 
-    Returns the visible status text if exactly one accessible status control
-    is found and readable via a value pattern, otherwise None (fail closed).
+    Conservative by design: only Text/Edit controls that are visible, enabled,
+    and carry a non-empty name whose automation-id/name hints do not indicate
+    identity, presence, flair, avatar, or tooltip are accepted. Never infers
+    status identity from being the only readable descendant.
+    """
+    try:
+        ctype = str(control.control_type or "")
+    except Exception:  # noqa: BLE001 - fail-closed: untrusted control object.
+        return False
+    if ctype not in ("Text", "Edit"):
+        return False
+    try:
+        if not control.enabled or not control.visible:
+            return False
+    except Exception:  # noqa: BLE001 - fail-closed: untrusted control object.
+        return False
+    try:
+        name = (control.name or "").strip()
+    except Exception:  # noqa: BLE001 - fail-closed: untrusted control object.
+        return False
+    if not name:
+        return False
+    try:
+        aid = control.automation_id or ""
+    except Exception:  # noqa: BLE001 - fail-closed: untrusted control object.
+        aid = ""
+    combined = f"{aid} {name}".casefold()
+    return not any(hint in combined for hint in _NON_STATUS_NAME_HINTS)
+
+
+def _discover_row_status(row_item: Any) -> str | None:
+    """Inspect UIA children of a friend-list row for the Custom Status field.
+
+    Positively identifies candidate Custom Status controls via verified UIA
+    properties (control type, enabled/visible state, non-empty name, and
+    rejection of identity/presence/flair/avatar/tooltip hints). Rejects
+    multiple candidates. Returns the status text if exactly one candidate is
+    readable, otherwise None (fail closed / INCONCLUSIVE).
     """
     try:
         descendants = row_item.descendants()
@@ -247,6 +316,8 @@ def _discover_row_status(row_item: Any) -> str | None:
     candidates: list[str] = []
     for control in descendants:
         try:
+            if not _is_custom_status_control(control):
+                continue
             value = _read_control_value(control)
         except Exception:  # noqa: BLE001, S112 - fail-closed: skip a control whose value cannot be read.
             continue
