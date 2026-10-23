@@ -1,4 +1,5 @@
 """Offline browser-observer contract tests; no Camfrog account required."""
+import hashlib
 import importlib.util
 from pathlib import Path
 
@@ -156,3 +157,89 @@ def test_profile_banner_exact_text_without_hardcoded_css():
 
     result = observer.observe(BrowserPage(), "Seaza", ", but every challenge brings", "")
     assert result["state"] == "WEB_PROFILE_MATCH"
+
+
+# ---------- Evidence bundle (summary.json / manifest.json / linkage fields) ----------
+
+
+def _base_result(samples, matching, top_states, first=None, last=None):
+    return {
+        "run_id": "run0123456789abcdef", "nickname": "Seaza",
+        "source": "authenticated_web_profile", "command_id": "cmd-1",
+        "account_b_reference": "acctb-9", "observed_at": "t0", "finished_at": "t1",
+        "expected_text_sha256": "e" * 64, "first_observed_text_sha256": first,
+        "last_observed_text_sha256": last, "top_states": top_states,
+        "matching_samples": matching, "samples": samples,
+        "sample_log": "run.jsonl", "screenshot_files": ["a.png"],
+    }
+
+
+def test_summary_never_claims_external_effect_or_worker_stages():
+    summary = observer.build_summary(
+        _base_result(10, 10, {"WEB_PROFILE_MATCH": 10},
+                     first="a" * 64, last="b" * 64), "run.jsonl")
+    chain = summary["stage_chain"]
+    assert chain["WEB_PROFILE_OBSERVED"] is True
+    assert chain["EXTERNAL_EFFECT_VERIFIED"] is False
+    assert chain["COMMAND_ACCEPTED"] == observer.STAGE_EXTERNAL_TO_OBSERVER
+    assert chain["WORKER_EXECUTED"] == observer.STAGE_EXTERNAL_TO_OBSERVER
+    assert summary["transition_detected"] is True
+    assert summary["web_profile_observed"] is True
+
+
+def test_summary_without_matching_samples_reports_web_not_observed():
+    summary = observer.build_summary(
+        _base_result(10, 0, {"WEB_PROFILE_MISMATCH": 10},
+                     first="a" * 64, last="a" * 64), "run.jsonl")
+    assert summary["stage_chain"]["WEB_PROFILE_OBSERVED"] is False
+    assert summary["stage_chain"]["EXTERNAL_EFFECT_VERIFIED"] is False
+    assert summary["web_profile_observed"] is False
+    assert summary["transition_detected"] is False
+
+
+def test_optional_reference_validation():
+    assert observer._validate_optional_text(None, 64, "command_id") == ""
+    assert observer._validate_optional_text("", 64, "command_id") == ""
+    assert observer._validate_optional_text("cmd-001", 64, "command_id") == "cmd-001"
+    with pytest.raises(ValueError):
+        observer._validate_optional_text("a\nb", 64, "command_id")
+    with pytest.raises(ValueError):
+        observer._validate_optional_text("x" * 65, observer.MAX_COMMAND_ID, "command_id")
+    with pytest.raises(ValueError):
+        observer._validate_optional_text("x" * 129, observer.MAX_ACCOUNT_B_REFERENCE,
+                                         "account_b_reference")
+
+
+def test_manifest_hashes_every_evidence_file(tmp_path):
+    (tmp_path / "summary.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "run-0001.png").write_bytes(b"png-bytes")
+    sub = tmp_path / "subdir"
+    sub.mkdir()
+    (sub / "nested.txt").write_text("x", encoding="utf-8")
+    manifest = observer.write_manifest(tmp_path, "run1", "now")
+
+    names = [entry["file"] for entry in manifest["files"]]
+    assert names == ["run-0001.png", "summary.json"]
+    summary_entry = manifest["files"][1]
+    assert summary_entry["sha256"] == hashlib.sha256(b"{}").hexdigest()
+    assert summary_entry["size_bytes"] == 2
+    assert manifest["run_id"] == "run1" and manifest["generated_at"] == "now"
+
+
+def test_cli_propagates_optional_linkage_fields(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_run(args):
+        captured["command_id"] = args.command_id
+        captured["account_b_reference"] = args.account_b_reference
+        return 0
+
+    monkeypatch.setattr(observer, "run", fake_run)
+    assert observer.main([
+        "--expected", "RUN-001", "--selector", "[data-status]",
+        "--browser-profile", str(tmp_path / "account-b"),
+        "--command-id", "cmd-42", "--account-b-reference", "oper-opaque-ref",
+    ]) == 0
+    assert captured == {"command_id": "cmd-42",
+                        "account_b_reference": "oper-opaque-ref"}
+
