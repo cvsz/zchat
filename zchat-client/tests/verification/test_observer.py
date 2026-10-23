@@ -145,9 +145,17 @@ def test_read_control_value_whitespace_only_returns_empty():
 # ---------- Process identity (unchanged behavior) ----------
 
 
-def test_is_verified_camfrog_process_name_only():
+def test_is_verified_camfrog_process_missing_exe_rejected():
     proc = SimpleNamespace(name=lambda: "camfrog.exe", exe=lambda: "")
-    assert _is_verified_camfrog_process(proc) is True
+    assert _is_verified_camfrog_process(proc) is False
+
+
+def test_is_verified_camfrog_process_exe_access_denied_rejected():
+    proc = SimpleNamespace(
+        name=lambda: "camfrog.exe",
+        exe=lambda: (_ for _ in ()).throw(OSError("access denied")),
+    )
+    assert _is_verified_camfrog_process(proc) is False
 
 
 def test_is_verified_camfrog_process_camfrog_path():
@@ -201,6 +209,11 @@ def _status_control(**overrides):
 
 def test_is_custom_status_control_text_visible_enabled():
     assert _is_custom_status_control(_status_control()) is True
+
+
+def test_is_custom_status_control_unrelated_text_rejected():
+    assert _is_custom_status_control(_status_control(name="Biography")) is False
+    assert _is_custom_status_control(_status_control(name="Message")) is False
 
 
 def test_is_custom_status_control_edit_type_accepted():

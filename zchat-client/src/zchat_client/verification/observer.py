@@ -196,8 +196,8 @@ class FriendListObserver:
 def _is_verified_camfrog_process(process: Any) -> bool:
     """Exact process identity: Camfrog process name plus plausible exe path.
 
-    A missing exe path (access-restricted) is acceptable; a non-Camfrog path is
-    rejected even when the process name happens to match.
+    A missing executable path is inconclusive and rejected; process names
+    alone are not sufficient to verify the target application.
     """
     try:
         name = (process.name() or "").casefold()
@@ -208,8 +208,8 @@ def _is_verified_camfrog_process(process: Any) -> bool:
     try:
         exe = (process.exe() or "").casefold()
     except Exception:  # noqa: BLE001 - fail-closed: an untrusted process object must not abort discovery.
-        exe = ""
-    return "camfrog" in exe or not exe
+        return False
+    return bool(exe) and "camfrog" in exe
 
 
 def _process_identity(process: Any) -> dict[str, str]:
@@ -269,9 +269,8 @@ def _is_custom_status_control(control: Any) -> bool:
     """Positive identification of a Custom Status UIA control.
 
     Conservative by design: only Text/Edit controls that are visible, enabled,
-    and carry a non-empty name whose automation-id/name hints do not indicate
-    identity, presence, flair, avatar, or tooltip are accepted. Never infers
-    status identity from being the only readable descendant.
+    and carry an explicit status identity in the accessible name or automation
+    ID, excluding identity, presence, flair, avatar, and tooltip controls.
     """
     try:
         ctype = str(control.control_type or "")
@@ -295,7 +294,7 @@ def _is_custom_status_control(control: Any) -> bool:
     except Exception:  # noqa: BLE001 - fail-closed: untrusted control object.
         aid = ""
     combined = f"{aid} {name}".casefold()
-    return not any(hint in combined for hint in _NON_STATUS_NAME_HINTS)
+    return "status" in combined and not any(hint in combined for hint in _NON_STATUS_NAME_HINTS)
 
 
 def _discover_row_status(row_item: Any) -> str | None:
