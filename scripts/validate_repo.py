@@ -57,6 +57,7 @@ EXCLUDED_DIRS = {
     "node_modules",
     "camfrog-client",
     "line",
+    "reports",
 }
 
 LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
