@@ -2355,10 +2355,23 @@ class Runner:
         is_status = ctrl is getattr(self, "status_edit", None) and win is None
         if (is_status and self.cfg.get("status", {}).get("execution_mode")
                 == "strict_background"):
-            return commit_strict_background_status(text, self.dry)
+            if commit_strict_background_status(text, self.dry):
+                return True
+            # Strict background refused: foreground isolation could not be
+            # confirmed. Fall back to combo-post: the text is really dispatched
+            # to Camfrog via PostMessageW to the CComboBoxTS parent, but the
+            # provider-side outcome remains unverified (DISPATCHED_UNVERIFIED).
+            log.warning("Strict background submit refused; falling back to "
+                        "combo-post (provider outcome unverified).")
         target = (self.cfg["status"].get("background_enter_target", "edit")
                   if is_status else "edit")
-        return commit(win or self.win, ctrl, text, self.dry, s["require_foreground"], btn,
+        require_fg = s["require_foreground"]
+        # When falling back from strict background, submit without foreground
+        # requirement so combo-post can dispatch without stealing focus.
+        if (is_status and self.cfg.get("status", {}).get("execution_mode")
+                == "strict_background"):
+            require_fg = False
+        return commit(win or self.win, ctrl, text, self.dry, require_fg, btn,
                       s["restore_previous_window"], target)
 
     def resolve(self):
