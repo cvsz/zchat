@@ -1,13 +1,30 @@
 """Offline tests: no Camfrog / pywinauto needed (UI is never touched)."""
+import hashlib
 import json
 import os
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import camfrog_auto as c  # noqa: E402
+import camfrog_status_engine as cse  # noqa: E402
+from camfrog_status_engine import (  # noqa: E402
+    BackgroundStatusExecutor,
+    StatusControlAdapter,
+    StatusResultState,
+    validate_status_config,
+)
+from camfrog_windows_runtime import (  # noqa: E402
+    ClassifiedWindow,
+    ProcessIdentity,
+    WindowRole,
+)
+from tools.evidence_validator import validate_bundle  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -531,6 +548,601 @@ def test_blank_status_is_skipped_not_sent(cfg, monkeypatch):
     r.last_status = -1e9
     r.do_status(10.0)
     assert sent == [] and r.marq is None
+
+
+
+
+# ---------- strict background fallback safety (PHASE 1) ----------
+
+def _strict_runner(cfg, monkeypatch, fallback_authorized=False):
+    """Runner with status_edit bound and strict_background mode."""
+    cfg["status"]["execution_mode"] = "strict_background"
+    if fallback_authorized:
+        cfg["status"]["allow_authorized_background_fallback"] = True
+    r = c.Runner(cfg)
+    r.status_edit = object()
+    return r
+
+
+def test_send_strict_background_success_returns_true_no_fallback(cfg, monkeypatch):
+    """commit_strict_background_status success -> send True, commit never called."""
+    r = _strict_runner(cfg, monkeypatch)
+    called = []
+    monkeypatch.setattr(c, "commit_strict_background_status",
+                        lambda text, dry: (called.append(text) or True))
+    monkeypatch.setattr(c, "commit",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("commit must not be called on strict success")))
+    assert r.send(r.status_edit, "Available") is True
+    assert called == ["Available"]
+
+
+def test_send_strict_background_refused_no_fallback_returns_false(cfg, monkeypatch):
+    """commit_strict_background_status False + no authorized fallback -> send False, commit never called."""
+    r = _strict_runner(cfg, monkeypatch)
+    monkeypatch.setattr(c, "commit_strict_background_status", lambda text, dry: False)
+    monkeypatch.setattr(c, "commit",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("commit must not be called without authorized fallback")))
+    assert r.send(r.status_edit, "Available") is False
+
+
+def test_send_strict_background_refused_authorized_fallback_calls_commit(cfg, monkeypatch):
+    """Authorized fallback -> commit called with require_fg=False."""
+    r = _strict_runner(cfg, monkeypatch, fallback_authorized=True)
+    commit_args = {}
+    monkeypatch.setattr(c, "commit_strict_background_status", lambda text, dry: False)
+    def fake_commit(win, ctrl, text, dry, require_fg, btn, restore, target):
+        commit_args.update(require_fg=require_fg, target=target, text=text)
+        return True
+    monkeypatch.setattr(c, "commit", fake_commit)
+    assert r.send(r.status_edit, "Available") is True
+    assert commit_args["require_fg"] is False
+    assert commit_args["text"] == "Available"
+
+
+def test_send_strict_background_authorized_fallback_but_commit_fails(cfg, monkeypatch):
+    """Authorized fallback but commit returns False -> send False (no silent success)."""
+    r = _strict_runner(cfg, monkeypatch, fallback_authorized=True)
+    monkeypatch.setattr(c, "commit_strict_background_status", lambda text, dry: False)
+    monkeypatch.setattr(c, "commit", lambda *a, **k: False)
+    assert r.send(r.status_edit, "Available") is False
+
+
+def test_send_non_strict_mode_uses_normal_commit(cfg, monkeypatch):
+    """Non-strict mode -> normal commit path, commit_strict_background_status never called."""
+    r = c.Runner(cfg)
+    r.status_edit = object()
+    strict_called = []
+    monkeypatch.setattr(c, "commit_strict_background_status",
+                        lambda text, dry: strict_called.append(text) or True)
+    monkeypatch.setattr(c, "commit", lambda *a, **k: True)
+    assert r.send(r.status_edit, "Available") is True
+    assert strict_called == []
+
+
+def test_validate_rejects_non_boolean_allow_authorized_background_fallback(cfg):
+    cfg["status"]["execution_mode"] = "strict_background"
+    cfg["status"]["allow_authorized_background_fallback"] = "yes"
+    errs, _ = c.validate(cfg)
+    assert any("allow_authorized_background_fallback" in e for e in errs)
+
+
+def test_cmd_status_strict_background_refused_no_fallback_returns_1(cfg, monkeypatch):
+    """cmd_status strict_background refused + no fallback -> return 1."""
+    cfg["status"]["execution_mode"] = "strict_background"
+    monkeypatch.setattr(c, "commit_strict_background_status", lambda text, dry: False)
+    assert c.cmd_status(cfg, "Available") == 1
+
+
+def test_cmd_status_strict_background_authorized_fallback_returns_0(cfg, monkeypatch):
+    """cmd_status strict_background refused + authorized fallback -> commit called, return 0."""
+    cfg["status"]["execution_mode"] = "strict_background"
+    cfg["status"]["allow_authorized_background_fallback"] = True
+    monkeypatch.setattr(c, "commit_strict_background_status", lambda text, dry: False)
+    commit_args = {}
+    def fake_commit(win, ctrl, text, dry, require_fg, btn, restore, target):
+        commit_args.update(require_fg=require_fg)
+        return True
+    monkeypatch.setattr(c, "commit", fake_commit)
+    monkeypatch.setattr(c, "get_window", lambda cfg: object())
+    monkeypatch.setattr(c, "find", lambda win, sel: object())
+    assert c.cmd_status(cfg, "Available") == 0
+    assert commit_args["require_fg"] is False
+
+
+def test_cmd_status_strict_background_authorized_fallback_but_commit_fails(cfg, monkeypatch):
+    """cmd_status authorized fallback but commit fails -> return 1."""
+    cfg["status"]["execution_mode"] = "strict_background"
+    cfg["status"]["allow_authorized_background_fallback"] = True
+    monkeypatch.setattr(c, "commit_strict_background_status", lambda text, dry: False)
+    monkeypatch.setattr(c, "commit", lambda *a, **k: False)
+    monkeypatch.setattr(c, "get_window", lambda cfg: object())
+    monkeypatch.setattr(c, "find", lambda win, sel: object())
+    assert c.cmd_status(cfg, "Available") == 1
+
+
+def test_do_status_send_false_drops_marquee_and_raises(cfg, monkeypatch):
+    """do_status when send returns False raises RuntimeError and clears marquee (no duplicate on retry)."""
+    monkeypatch.setattr(c.time, "sleep", lambda s: None)
+    r = c.Runner(cfg)
+    r.status_edit, r.apply_btn = object(), None
+    calls = []
+    monkeypatch.setattr(c.Runner, "send",
+                        lambda self, ctrl, text, btn=None: (calls.append(text) or False))
+    r.last_status = -1e9
+    with pytest.raises(RuntimeError, match="status commit failed"):
+        r.do_status(10.0)
+    assert r.marq is None
+    assert len(calls) == 1  # exactly one dispatch attempt, no silent retry
+
+
+def test_send_status_edit_none_is_not_status_path(cfg, monkeypatch):
+    """send with ctrl != status_edit or win set -> normal commit, not strict path."""
+    r = c.Runner(cfg)
+    r.win = object()
+    monkeypatch.setattr(c, "commit_strict_background_status",
+                        lambda text, dry: (_ for _ in ()).throw(AssertionError("strict path must not be reached")))
+    monkeypatch.setattr(c, "commit", lambda *a, **k: True)
+    assert r.send(object(), "hello", win=r.win) is True
+
+
+def test_defaults_allow_authorized_background_fallback_is_false():
+    assert c.DEFAULTS["status"]["allow_authorized_background_fallback"] is False
+
+
+def test_validate_status_engine_contract_defaults():
+    valid, errors, normalized = validate_status_config({})
+    assert valid is True
+    assert errors == []
+    assert normalized["status"]["execution_mode"] == "strict_background"
+    assert normalized["safety"]["allow_clipboard_mutation"] is False
+
+
+def test_emergency_stop_refuses_new_status_work(tmp_path, monkeypatch):
+    """Emergency stop gate: new status work is refused while stopped."""
+    from camfrog_emergency_stop import EmergencyStopRegistry, EmergencyStopScope
+    monkeypatch.setenv("ZCHAT_EMERGENCY_STOP_DB", str(tmp_path / "es.sqlite3"))
+    registry = EmergencyStopRegistry()
+    registry._reset_for_testing()
+    try:
+        registry.activate(EmergencyStopScope.GLOBAL, "OPERATOR_HALT", "op-test")
+        ev = BackgroundStatusExecutor().execute_status_change("Available")
+        assert ev.result_state == "FAILED"
+        assert ev.error_code == "EMERGENCY_STOP"
+    finally:
+        registry._reset_for_testing()
+
+
+def test_no_duplicate_submission_when_status_already_applied(cfg, monkeypatch):
+    """Duplicate status text is skipped via client read-back fast path (no duplicate mutation)."""
+    same = "Currently In Meeting"
+    proc = ProcessIdentity(pid=5555, create_time=100.0,
+                           exe_path="C:\\Camfrog\\Camfrog Video Chat.exe",
+                           publisher="Camfrog LLC", signature_valid=True, version="8.5.0")
+    main_win = ClassifiedWindow(hwnd=9999, role=WindowRole.MAIN_DIRECTORY,
+                                title="Seaza (Online)", pid=5555, is_visible=True,
+                                signatures=["dir"])
+    adapter = MagicMock(spec=StatusControlAdapter)
+    adapter.read_applied_status.return_value = same
+    adapter.controls_are_current.return_value = True
+    adapter.supports_strict_background_submit.return_value = True
+    adapter.read_edit_text.return_value = same
+    resolver = MagicMock()
+    resolver.resolve_status_controls.return_value = (proc, main_win, adapter)
+    monkeypatch.setattr(cse, "_foreground_window_handle", lambda: 7001)
+    executor = BackgroundStatusExecutor(resolver=resolver)
+    executor._target_identity_is_current = MagicMock(return_value=True)
+    ev = executor.execute_status_change(same, pid=5555)
+    assert ev.result_state == StatusResultState.CLIENT_STATE_CONFIRMED.value
+    assert ev.verification_source == "client_combo_state_already_active"
+    assert not adapter.write_text_no_focus.called
+    assert not adapter.post_background_enter.called
+
+
+def test_stale_window_handle_fails_closed(cfg, monkeypatch):
+    """Stale/dangling window handle -> LookupError from resolve, no targeting of wrong window."""
+    monkeypatch.setattr(c, "get_window", lambda cfg: (_ for _ in ()).throw(
+        LookupError("control not found: {'section': 'status.edit'}")))
+    r = c.Runner(cfg)
+    with pytest.raises(LookupError):
+        r.resolve()
+    assert r.status_edit is None
+    assert r.win is None
+
+
+def test_multiple_camfrog_processes_raises_rather_than_guessing(monkeypatch):
+    """Multiple verified Camfrog processes -> RuntimeError, never picks wrong target."""
+    from camfrog_windows_runtime import WindowsCamfrogProcessDiscovery
+    discovery = WindowsCamfrogProcessDiscovery()
+    monkeypatch.setattr(discovery, "discover_processes", lambda: [
+        SimpleNamespace(pid=1111, create_time=1.0, exe_path="a", publisher="Camfrog LLC",
+                        signature_valid=True, version="8.5.0"),
+        SimpleNamespace(pid=2222, create_time=2.0, exe_path="b", publisher="Camfrog LLC",
+                        signature_valid=True, version="8.5.0"),
+    ])
+    with pytest.raises(RuntimeError, match="Multiple verified Camfrog processes"):
+        discovery.get_verified_process()
+
+
+def test_f4_during_dispatch_refuses(tmp_path, monkeypatch):
+    """F4 / emergency stop during dispatch -> work refused mid-flight."""
+    from camfrog_emergency_stop import EmergencyStopRegistry, EmergencyStopScope
+    monkeypatch.setenv("ZCHAT_EMERGENCY_STOP_DB", str(tmp_path / "es2.sqlite3"))
+    registry = EmergencyStopRegistry()
+    registry._reset_for_testing()
+    try:
+        registry.activate(EmergencyStopScope.GLOBAL, "OPERATOR_HALT", "op-f4")
+        ev = BackgroundStatusExecutor().execute_status_change("Available")
+        assert ev.error_code == "EMERGENCY_STOP"
+    finally:
+        registry._reset_for_testing()
+
+
+def test_repeated_failures_do_not_escalate_or_duplicate(cfg, monkeypatch):
+    """Repeated send() failures under strict_background never silently escalate to fallback."""
+    r = _strict_runner(cfg, monkeypatch)
+    monkeypatch.setattr(c, "commit_strict_background_status", lambda text, dry: False)
+    monkeypatch.setattr(c, "commit",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("commit must never be called without authorized fallback")))
+    for _ in range(5):
+        assert r.send(r.status_edit, "Available") is False
+
+
+def test_unknown_target_process_fails_closed(monkeypatch):
+    """Unknown/unverified target process -> ProcessLookupError, no fallback to guess."""
+    from camfrog_windows_runtime import WindowsCamfrogProcessDiscovery
+    discovery = WindowsCamfrogProcessDiscovery()
+    monkeypatch.setattr(discovery, "discover_processes", list)
+    with pytest.raises(ProcessLookupError):
+        discovery.get_verified_process()
+
+
+def test_com_ui_a_exceptions_do_not_crash_runner(cfg, monkeypatch):
+    """COM/UIA exceptions during discovery are caught and reported, never silently fall back."""
+    monkeypatch.setattr(c, "get_window", lambda cfg: (_ for _ in ()).throw(
+        RuntimeError("COM error: invalid class string")))
+    r = c.Runner(cfg)
+    with pytest.raises(RuntimeError, match="COM error"):
+        r.resolve()
+
+
+def test_config_with_execution_mode_best_effort_background(cfg):
+    """best_effort_background is an accepted mode (validated, not rejected)."""
+    cfg["status"]["execution_mode"] = "best_effort_background"
+    errs, _ = c.validate(cfg)
+    assert not any("execution_mode" in e for e in errs)
+
+
+def test_config_with_execution_mode_interactive(cfg):
+    """interactive is an accepted mode."""
+    cfg["status"]["execution_mode"] = "interactive"
+    errs, _ = c.validate(cfg)
+    assert not any("execution_mode" in e for e in errs)
+
+
+def test_config_with_invalid_execution_mode_rejected(cfg):
+    cfg["status"]["execution_mode"] = "invalid_stealing"
+    errs, _ = c.validate(cfg)
+    assert any("execution_mode" in e for e in errs)
+
+
+def test_do_status_re_resolves_immediately_when_control_lost(cfg, monkeypatch):
+    """do_status re-attempts resolve() immediately when status_edit is None (fail-closed recovery)."""
+    monkeypatch.setattr(c.time, "sleep", lambda s: None)
+    r = c.Runner(cfg)
+    r.status_edit = None
+    r.win = None
+    resolve_calls = []
+
+    def fake_resolve(self):
+        resolve_calls.append(True)
+        if len(resolve_calls) == 1:
+            raise LookupError("still missing")
+        self.status_edit = object()
+
+    monkeypatch.setattr(c.Runner, "resolve", fake_resolve)
+    r.do_status(100.0)
+    assert r.status_edit is None
+    assert len(resolve_calls) == 1
+    r.do_status(101.0)
+    assert r.status_edit is not None
+    assert len(resolve_calls) == 2
+
+
+def test_allow_authorized_background_fallback_requires_explicit_opt_in(cfg, monkeypatch):
+    """Even with execution_mode=strict_background, fallback is off unless explicitly True."""
+    cfg["status"]["execution_mode"] = "strict_background"
+    r = _strict_runner(cfg, monkeypatch, fallback_authorized=False)
+    monkeypatch.setattr(c, "commit_strict_background_status", lambda text, dry: False)
+    monkeypatch.setattr(c, "commit",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no silent fallback")))
+    assert r.send(r.status_edit, "Available") is False
+
+
+def test_authorized_fallback_not_enabled_by_default_in_config(cfg):
+    """config.example.json: allow_authorized_background_fallback is false by default."""
+    loaded = c.load_cfg(ROOT / "config.example.json")
+    assert loaded["status"].get("allow_authorized_background_fallback") is False
+
+
+# ---------- PHASE 4: evidence validator security ----------
+
+def _make_evidence_bundle(tmp_path, run_id, nickname="Seaza", command_id="CMD-1",
+                          account_b_ref="acct-b", transition=True, external_effect=False):
+    """Helper to build a minimal valid evidence bundle."""
+    out = tmp_path / run_id
+    out.mkdir()
+    samples = []
+    h1 = "aaaa"
+    h2 = "bbbb" if transition else "aaaa"
+    for i in range(1, 3):
+        samples.append({
+            "run_id": run_id,
+            "sample_index": i,
+            "observed_at": (datetime.now(UTC) + timedelta(seconds=i)).isoformat(),
+            "nickname": nickname,
+            "command_id": command_id,
+            "account_b_reference": account_b_ref,
+            "state": "WEB_PROFILE_MATCH" if transition else "UNVERIFIED",
+            "first_observed_text_sha256": h1 if i == 1 else ("cccc" if transition else "aaaa"),
+            "last_observed_text_sha256": h2 if i == 1 else ("dddd" if transition else "aaaa"),
+        })
+    (out / f"{run_id}.jsonl").write_text(
+        "".join(json.dumps(s) + "\n" for s in samples), encoding="utf-8")
+    summary = {
+        "run_id": run_id,
+        "account_a_nickname": nickname,
+        "command_id": command_id,
+        "account_b_reference": account_b_ref,
+        "stage_chain": {
+            "COMMAND_ACCEPTED": "EXTERNAL_NOT_OBSERVED_BY_THIS_TOOL",
+            "WORKER_EXECUTED": "EXTERNAL_NOT_OBSERVED_BY_THIS_TOOL",
+            "WEB_PROFILE_OBSERVED": "WEB_PROFILE_MATCH" if transition else "UNVERIFIED",
+            "EXTERNAL_EFFECT_VERIFIED": external_effect,
+        },
+        "sample_log": f"{run_id}.jsonl",
+        "screenshot_files": [],
+        "transition_detected": transition,
+    }
+    (out / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+
+    entries = []
+    for f in sorted(out.iterdir()):
+        if f.is_file() and f.name != "manifest.json":
+            data = f.read_bytes()
+            entries.append({"file": f.name, "sha256": hashlib.sha256(data).hexdigest(),
+                            "size_bytes": len(data)})
+    (out / "manifest.json").write_text(
+        json.dumps({"run_id": run_id,
+                    "generated_at": datetime.now(UTC).isoformat(),
+                    "files": entries}), encoding="utf-8")
+    return out
+
+
+def test_cross_run_command_id_mismatch_is_rejected(tmp_path):
+    """Cross-run command ID mismatch: observer command_id must match Windows request_id."""
+    out = _make_evidence_bundle(tmp_path, "RUN-XCMD", command_id="CMD-WRONG")
+    verdict = validate_bundle(out, expected_command_id="CMD-EXPECTED")
+    assert verdict["status"] == "FAIL"
+    assert any("command_id" in e for e in verdict["errors"])
+
+
+def test_account_identity_mismatch_rejected(tmp_path):
+    """Account A nickname mismatch: observer bundle must match authorized Account A."""
+    out = _make_evidence_bundle(tmp_path, "RUN-IDENT", nickname="Impostor")
+    verdict = validate_bundle(out, expected_nickname="Seaza")
+    assert verdict["status"] == "FAIL"
+    assert any("nickname" in e for e in verdict["errors"])
+
+
+def test_fabricated_external_effect_never_auto_assigned(tmp_path):
+    """EXTERNAL_EFFECT_VERIFIED must never be true from the observer tool; validator rejects it."""
+    out = _make_evidence_bundle(tmp_path, "RUN-EFFECT", external_effect=True)
+    verdict = validate_bundle(out)
+    assert verdict["status"] == "FAIL"
+    assert any("EXTERNAL_EFFECT_VERIFIED must be false" in e for e in verdict["errors"])
+
+
+def test_manifest_path_traversal_rejected(tmp_path):
+    """Manifest entries with path traversal (../) are rejected."""
+    out = _make_evidence_bundle(tmp_path, "RUN-PT")
+    manifest_path = out / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"].append({"file": "../etc/passwd", "sha256": "deadbeef", "size_bytes": 0})
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    verdict = validate_bundle(out)
+    assert verdict["status"] == "FAIL"
+
+
+def test_duplicate_manifest_entries_rejected(tmp_path):
+    """Duplicate manifest entries are rejected."""
+    out = _make_evidence_bundle(tmp_path, "RUN-DUP")
+    manifest_path = out / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"].append(dict(manifest["files"][0]))
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    verdict = validate_bundle(out)
+    assert verdict["status"] == "FAIL"
+
+
+def test_missing_file_not_in_manifest_rejected(tmp_path):
+    """File present on disk but missing from manifest is rejected."""
+    out = _make_evidence_bundle(tmp_path, "RUN-MISS")
+    (out / "extra.txt").write_text("unlisted file")
+    verdict = validate_bundle(out)
+    assert verdict["status"] == "FAIL"
+    assert any("missing from manifest" in e for e in verdict["errors"])
+
+
+def test_invalid_sha256_format_rejected(tmp_path):
+    """Invalid SHA-256 format in manifest is rejected (hash mismatch)."""
+    out = _make_evidence_bundle(tmp_path, "RUN-SHA")
+    manifest_path = out / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"][0]["sha256"] = "not-a-valid-sha256"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    verdict = validate_bundle(out)
+    assert verdict["status"] == "FAIL"
+    assert any("hash mismatch" in e for e in verdict["errors"])
+
+
+def test_malformed_jsonl_rejected(tmp_path):
+    """Malformed JSONL (unparseable lines) is rejected."""
+    out = _make_evidence_bundle(tmp_path, "RUN-JSONL")
+    jsonl_path = out / "RUN-JSONL.jsonl"
+    jsonl_path.write_text('{"run_id": "RUN-JSONL"}\n{not valid json}\n', encoding="utf-8")
+    manifest_path = out / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    data = jsonl_path.read_bytes()
+    for entry in manifest["files"]:
+        if entry["file"] == "RUN-JSONL.jsonl":
+            entry["sha256"] = hashlib.sha256(data).hexdigest()
+            entry["size_bytes"] = len(data)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    verdict = validate_bundle(out)
+    assert verdict["status"] == "FAIL"
+    assert any("invalid JSON" in e for e in verdict["errors"])
+
+
+def test_interrupted_evidence_collection_missing_sample_log(tmp_path):
+    """Interrupted collection: missing sample log file is rejected."""
+    out = _make_evidence_bundle(tmp_path, "RUN-INT")
+    (out / "RUN-INT.jsonl").unlink()
+    verdict = validate_bundle(out)
+    assert verdict["status"] == "FAIL"
+
+
+def test_exit_codes_structured_json(tmp_path):
+    """Validator exit codes: 0=PASS, structured JSON output."""
+    from tools.evidence_validator import main
+    out = _make_evidence_bundle(tmp_path, "RUN-EXIT")
+    rc = main([str(out)])
+    assert rc == 0
+
+
+# ---------- PHASE 2: control discovery ----------
+
+def test_resolve_status_controls_finds_combo_and_edit(monkeypatch):
+    """CamfrogWindowResolver discovers CComboBoxTS (1436) + Edit (1001) pair under main window."""
+    from camfrog_status_engine import CamfrogWindowResolver
+    proc = ProcessIdentity(pid=5555, create_time=100.0,
+                           exe_path="C:\\Camfrog\\Camfrog Video Chat.exe",
+                           publisher="Camfrog LLC", signature_valid=True, version="8.5.0")
+    main_win = ClassifiedWindow(hwnd=9999, role=WindowRole.MAIN_DIRECTORY,
+                                title="Seaza (Online)", pid=5555, is_visible=True,
+                                signatures=["CTreeViewTS+CComboBoxTS"])
+    control_ids = {10: 1436, 11: 1001}
+    classes = {10: "CComboBoxTS", 11: "Edit"}
+    parent = 9999
+    win32gui = SimpleNamespace(
+        IsWindow=lambda hwnd: hwnd in control_ids,
+        IsChild=lambda p, hwnd: p == parent and hwnd in control_ids,
+        GetDlgCtrlID=lambda hwnd: control_ids[hwnd],
+        GetClassName=lambda hwnd: classes[hwnd],
+        GetParent=lambda hwnd: parent,
+        EnumChildWindows=lambda hwnd, cb, _: [cb(ch, None) for ch in sorted(control_ids)],
+    )
+    win32process = SimpleNamespace(GetWindowThreadProcessId=lambda hwnd: (1, 5555))
+    monkeypatch.setattr(cse.sys, "platform", "win32")
+    monkeypatch.setattr(cse, "revalidate_window_identity", lambda win, ident: True)
+    monkeypatch.setitem(sys.modules, "win32gui", win32gui)
+    monkeypatch.setitem(sys.modules, "win32process", win32process)
+    resolver = CamfrogWindowResolver()
+    resolver.discovery.get_verified_process = lambda pid=None: proc
+    resolver.classifier.classify_process_windows = lambda identity, visible_only=False: [main_win]
+    p, w, a = resolver.resolve_status_controls(pid=5555)
+    assert p.pid == 5555
+    assert w.role == WindowRole.MAIN_DIRECTORY
+    assert a.combo_hwnd == 10
+    assert a.edit_hwnd == 11
+
+
+def test_resolve_status_controls_rejects_missing_controls(monkeypatch):
+    """No CComboBoxTS/Edit pair -> LookupError, never guesses a wrong control."""
+    from camfrog_status_engine import CamfrogWindowResolver
+    proc = ProcessIdentity(pid=5555, create_time=100.0,
+                           exe_path="C:\\Camfrog\\Camfrog Video Chat.exe",
+                           publisher="Camfrog LLC", signature_valid=True, version="8.5.0")
+    main_win = ClassifiedWindow(hwnd=9999, role=WindowRole.MAIN_DIRECTORY,
+                                title="Seaza (Online)", pid=5555, is_visible=True,
+                                signatures=["CTreeViewTS+CComboBoxTS"])
+    win32gui = SimpleNamespace(
+        IsWindow=lambda hwnd: False,
+        IsChild=lambda p, hwnd: False,
+        GetDlgCtrlID=lambda hwnd: 0,
+        GetClassName=lambda hwnd: "",
+        GetParent=lambda hwnd: 0,
+    )
+    monkeypatch.setattr(cse.sys, "platform", "win32")
+    monkeypatch.setattr(cse, "revalidate_window_identity", lambda win, ident: True)
+    monkeypatch.setitem(sys.modules, "win32gui", win32gui)
+    resolver = CamfrogWindowResolver()
+    resolver.discovery.get_verified_process = lambda pid=None: proc
+    resolver.classifier.classify_process_windows = lambda identity, visible_only=False: [main_win]
+    with pytest.raises(LookupError, match="Status controls not found"):
+        resolver.resolve_status_controls(pid=5555)
+
+
+def test_control_ids_take_precedence_over_class_names(monkeypatch):
+    """Control IDs (1436/1001) take precedence over class names to avoid binding wrong edit."""
+    from camfrog_status_engine import CamfrogWindowResolver
+    proc = ProcessIdentity(pid=5555, create_time=100.0,
+                           exe_path="C:\\Camfrog\\Camfrog Video Chat.exe",
+                           publisher="Camfrog LLC", signature_valid=True, version="8.5.0")
+    main_win = ClassifiedWindow(hwnd=9999, role=WindowRole.MAIN_DIRECTORY,
+                                title="Seaza (Online)", pid=5555, is_visible=True,
+                                signatures=["CTreeViewTS+CComboBoxTS"])
+    control_ids = {10: 1436, 11: 1001, 12: 9999}
+    classes = {10: "CComboBoxTS", 11: "Edit", 12: "Edit"}
+    parent = 9999
+    win32gui = SimpleNamespace(
+        IsWindow=lambda hwnd: hwnd in control_ids,
+        IsChild=lambda p, hwnd: p == parent and hwnd in control_ids,
+        GetDlgCtrlID=lambda hwnd: control_ids[hwnd],
+        GetClassName=lambda hwnd: classes[hwnd],
+        GetParent=lambda hwnd: 10 if hwnd == 11 else parent,
+        EnumChildWindows=lambda hwnd, cb, _: [cb(ch, None) for ch in sorted(control_ids)],
+    )
+    monkeypatch.setattr(cse.sys, "platform", "win32")
+    monkeypatch.setattr(cse, "revalidate_window_identity", lambda win, ident: True)
+    monkeypatch.setitem(sys.modules, "win32gui", win32gui)
+    resolver = CamfrogWindowResolver()
+    resolver.discovery.get_verified_process = lambda pid=None: proc
+    resolver.classifier.classify_process_windows = lambda identity, visible_only=False: [main_win]
+    _p, _w, a = resolver.resolve_status_controls(pid=5555)
+    assert a.edit_hwnd == 11  # ID 1001 wins over class-only match
+
+
+def test_hidden_and_stale_controls_not_targeted(monkeypatch):
+    """Hidden or stale controls fail controls_are_current check."""
+    adapter = StatusControlAdapter(combo_hwnd=10, edit_hwnd=11, expected_pid=55, parent_hwnd=99)
+    control_ids = {10: 1436, 11: 1001}
+    classes = {10: "CComboBoxTS", 11: "Edit"}
+    win32gui = SimpleNamespace(
+        IsWindow=lambda hwnd: hwnd == 10,  # edit (11) no longer a window -> stale
+        IsChild=lambda p, hwnd: False,
+        GetDlgCtrlID=lambda hwnd: control_ids[hwnd],
+        GetClassName=lambda hwnd: classes[hwnd],
+    )
+    win32process = SimpleNamespace(GetWindowThreadProcessId=lambda hwnd: (1, 55))
+    _psutil = SimpleNamespace(
+        pid_exists=lambda pid: True,
+        Process=lambda pid: SimpleNamespace(
+            is_running=lambda: True,
+            create_time=lambda: 100.0,
+            exe=lambda: "C:\\\\Camfrog\\\\Camfrog Video Chat.exe",
+        ),
+        NoSuchProcess=Exception,
+        AccessDenied=Exception,
+        ZombieProcess=Exception,
+    )
+    monkeypatch.setitem(sys.modules, "psutil", _psutil)
+    monkeypatch.setattr(cse.sys, "platform", "win32")
+    monkeypatch.setitem(sys.modules, "win32gui", win32gui)
+    monkeypatch.setitem(sys.modules, "win32process", win32process)
+    assert adapter.controls_are_current() is False
+
+
+# End of PHASE 1+2 tests
 
 
 def test_validate_marquee_and_history_rules(cfg):

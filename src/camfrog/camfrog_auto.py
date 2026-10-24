@@ -352,6 +352,7 @@ DEFAULTS = {
         "edit": {"class_name": "Edit", "auto_id": "1001", "index": 0},
         "apply_button": None,
         "background_enter_target": "edit",  # experimental "combo" targets the parent CComboBoxTS
+        "allow_authorized_background_fallback": False,  # explicit opt-in only; never silent
         "interval_seconds": 600, "set_on_start": True, "random": False,
         "language_mode": "both", "retry_seconds": 30, "max_length": 120, "messages": [],
         "schedules": [],
@@ -530,6 +531,10 @@ def _validate(cfg, errs, warns):
             errs.append(t("e_sel", k="status.edit"))
         if st.get("background_enter_target", "edit") not in ("edit", "combo"):
             errs.append("status.background_enter_target must be edit or combo")
+        if "allow_authorized_background_fallback" in st and not isinstance(st["allow_authorized_background_fallback"], bool):
+            errs.append("status.allow_authorized_background_fallback must be a boolean")
+        if "execution_mode" in st and st["execution_mode"] not in ("interactive", "strict_background", "best_effort_background"):
+            errs.append("status.execution_mode must be interactive, strict_background, or best_effort_background")
         mq, hs = st["marquee"], st["history"]
         try:
             inf = mq.get("infinite_loop", False)
@@ -2358,18 +2363,26 @@ class Runner:
             if commit_strict_background_status(text, self.dry):
                 return True
             # Strict background refused: foreground isolation could not be
-            # confirmed. Fall back to combo-post: the text is really dispatched
-            # to Camfrog via PostMessageW to the CComboBoxTS parent, but the
-            # provider-side outcome remains unverified (DISPATCHED_UNVERIFIED).
-            log.warning("Strict background submit refused; falling back to "
-                        "combo-post (provider outcome unverified).")
+            # confirmed. Fail closed by default. A less restrictive combo-post
+            # dispatch is only permitted when the operator has explicitly
+            # authorized it via status.allow_authorized_background_fallback.
+            if self.cfg.get("status", {}).get("allow_authorized_background_fallback"):
+                log.warning("Strict background submit refused; authorized "
+                            "background fallback to combo-post (provider "
+                            "outcome unverified).")
+            else:
+                log.warning("Strict background submit refused; fail-closed "
+                            "(set status.allow_authorized_background_fallback=true "
+                            "to authorize combo-post fallback).")
+                return False
         target = (self.cfg["status"].get("background_enter_target", "edit")
                   if is_status else "edit")
         require_fg = s["require_foreground"]
-        # When falling back from strict background, submit without foreground
-        # requirement so combo-post can dispatch without stealing focus.
+        # Authorized background fallback submits without foreground requirement
+        # so combo-post can dispatch without stealing focus.
         if (is_status and self.cfg.get("status", {}).get("execution_mode")
-                == "strict_background"):
+                == "strict_background"
+                and self.cfg.get("status", {}).get("allow_authorized_background_fallback")):
             require_fg = False
         return commit(win or self.win, ctrl, text, self.dry, require_fg, btn,
                       s["restore_previous_window"], target)
@@ -3719,8 +3732,27 @@ def cmd_im_probe(cfg):
 def cmd_status(cfg, text):
     if cfg.get("status", {}).get("execution_mode") == "strict_background":
         ok = commit_strict_background_status(text, cfg["dry_run"])
-        print(t("ok") if ok else t("failed"))
-        return 0 if ok else 1
+        if ok:
+            print(t("ok"))
+            return 0
+        # Strict background refused. Authorized combo-post fallback only when
+        # explicitly configured; otherwise fail closed.
+        if cfg.get("status", {}).get("allow_authorized_background_fallback"):
+            log.warning("Strict background submit refused; authorized "
+                        "background fallback to combo-post (provider outcome "
+                        "unverified).")
+            win = get_window(cfg)
+            st, sf = cfg["status"], cfg["safety"]
+            ctrl = find(win, st["edit"])
+            btn = find(win, st["apply_button"]) if st["apply_button"] else None
+            text = clip(expand(text, own=cfg["autoreply"]["own_nickname"]), st["max_length"])
+            ok = commit(win, ctrl, text, cfg["dry_run"], False, btn,
+                        sf["restore_previous_window"],
+                        st.get("background_enter_target", "edit"))
+            print(t("ok") if ok else t("failed"))
+            return 0 if ok else 1
+        print(t("failed"))
+        return 1
     win = get_window(cfg)
     st, sf = cfg["status"], cfg["safety"]
     ctrl = find(win, st["edit"])
