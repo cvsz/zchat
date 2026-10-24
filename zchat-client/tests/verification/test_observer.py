@@ -105,14 +105,30 @@ def test_read_control_value_via_wrapper_get_value():
     assert _read_control_value(control) == "Hello from Camfrog"
 
 
+def test_read_control_value_via_iface_value_current_value():
+    # pywinauto 0.6.9: UIAWrapper.iface_value -> comtypes Value pattern whose
+    # current text is exposed as CurrentValue (see EditWrapper.get_value impl).
+    control = SimpleNamespace(iface_value=SimpleNamespace(CurrentValue="Value pattern status"))
+    assert _read_control_value(control) == "Value pattern status"
+
+
+def test_read_control_value_via_legacy_properties_value():
+    # pywinauto 0.6.9: UIAWrapper.legacy_properties() maps LegacyIAccessible
+    # Current* properties to plain keys, e.g. "Value".
+    control = SimpleNamespace(legacy_properties=lambda: {"Value": "Legacy status"})
+    assert _read_control_value(control) == "Legacy status"
+
+
 @pytest.mark.skipif(
     platform.system() != "Windows",
-    reason="raw AutomationElement pattern access requires Windows COM",
+    reason="raw AutomationElement pattern access imports Windows COM (uia_defines)",
 )
-def test_read_control_value_via_element_get_current_pattern():
-    pattern = SimpleNamespace(Current=SimpleNamespace(Value="Raw element status"))
+def test_read_control_value_via_element_info_get_current_pattern():
+    # API-faithful raw path: BaseWrapper.element_info -> UIAElementInfo.element
+    # -> GetCurrentPattern(ValuePatternId) -> comtypes .CurrentValue.
+    pattern = SimpleNamespace(CurrentValue="Raw element status")
     element = SimpleNamespace(GetCurrentPattern=lambda ptrn_id: pattern)
-    control = SimpleNamespace(element=element)
+    control = SimpleNamespace(element_info=SimpleNamespace(element=element))
     assert _read_control_value(control) == "Raw element status"
 
 
@@ -121,10 +137,27 @@ def test_read_control_value_wrapper_raises_returns_none():
     assert _read_control_value(control) is None
 
 
-def test_read_control_value_element_raises_returns_none():
+def test_read_control_value_iface_value_raising_falls_through_to_legacy():
+    # Unsupported pattern (NoPatternInterfaceError in real pywinauto) on the
+    # iface_value path must not drop the value when a later path can read it.
+
+    class _RaisingPattern:
+        @property
+        def CurrentValue(self):
+            raise RuntimeError("NoPatternInterfaceError")
+
+    control = SimpleNamespace(get_value=lambda: "")  # empty -> falsy -> fall through
+    control.iface_value = _RaisingPattern()
+    control.legacy_properties = lambda: {"Value": "Legacy fallback status"}
+    assert _read_control_value(control) == "Legacy fallback status"
+
+
+def test_read_control_value_element_info_raises_returns_none():
     control = SimpleNamespace(
-        element=SimpleNamespace(
-            GetCurrentPattern=lambda ptrn_id: (_ for _ in ()).throw(RuntimeError("boom"))
+        element_info=SimpleNamespace(
+            element=SimpleNamespace(
+                GetCurrentPattern=lambda ptrn_id: (_ for _ in ()).throw(RuntimeError("boom"))
+            )
         )
     )
     assert _read_control_value(control) is None
@@ -301,6 +334,25 @@ def test_discover_row_status_two_status_candidates_returns_none():
 
 def test_discover_row_status_descendants_raises_returns_none():
     row = SimpleNamespace(descendants=lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+    assert _discover_row_status(row) is None
+
+
+def test_discover_row_status_hidden_non_status_ignored_returns_status():
+    hidden_nickname = _status_control(name="Nickname", visible=False)
+    status = _status_control(name="Visible status", automation_id="statusValue")
+    row = SimpleNamespace(descendants=lambda: [hidden_nickname, status])
+    assert _discover_row_status(row) == "Visible status"
+
+
+def test_discover_row_status_hidden_status_only_returns_none():
+    hidden_status = _status_control(name="Custom status text", visible=False)
+    row = SimpleNamespace(descendants=lambda: [hidden_status])
+    assert _discover_row_status(row) is None
+
+
+def test_discover_row_status_disabled_status_only_returns_none():
+    disabled_status = _status_control(name="Custom status text", enabled=False)
+    row = SimpleNamespace(descendants=lambda: [disabled_status])
     assert _discover_row_status(row) is None
 
 

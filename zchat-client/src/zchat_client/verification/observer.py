@@ -228,16 +228,26 @@ def _process_identity(process: Any) -> dict[str, str]:
 def _read_control_value(control: Any) -> str | None:
     """Read a UIA control's value via supported pywinauto accessors, fail-closed.
 
-    Supported paths on pywinauto 0.6.9:
-      1. wrapper.get_value() (e.g. EditWrapper.iface_value.CurrentValue)
-      2. element.GetCurrentPattern(Value pattern id) -> .Current.Value
+    Supported paths on pywinauto 0.6.9 (verified against the installed source:
+    ``controls/uia_controls.py``, ``controls/uiawrapper.py``, ``uia_defines.py``):
+      1. ``EditWrapper.get_value()`` — Edit controls only (it returns
+         ``self.iface_value.CurrentValue`` internally).
+      2. ``UIAWrapper.iface_value.CurrentValue`` — any element that supports the
+         UIA Value pattern; raises ``NoPatternInterfaceError`` when unsupported.
+      3. ``UIAWrapper.legacy_properties()["Value"]`` — LegacyIAccessible pattern
+         fallback (dict keys are the ``Current*`` property names, e.g. Value).
+      4. Raw pattern access: ``effect_info.element.GetCurrentPattern(
+         uia_defines.pattern_ids["Value"][0]).CurrentValue`` — the raw COM
+         element lives on ``element_info.element`` (``BaseWrapper.element_info``
+         property); a UIAWrapper itself does not expose ``.element``.
 
-    Only values exposed through a UIA value pattern are treated as real status
-    text. `window_text()`/`name` labels are intentionally not returned as
+    Only values exposed through a UIA Value pattern are treated as real status
+    text. ``window_text()``/``name`` labels are intentionally not returned as
     status values, because they may be control names rather than user-entered
-    text. Every path fails closed: COM/disconnected/stale errors yield None.
+    text. Every path fails closed: COM errors, NoPatternInterfaceError,
+    stale/disconnected elements and missing helpers all yield None.
     """
-    # Path 1: wrapper-level accessor (pywinauto EditWrapper.get_value, etc.)
+    # Path 1: EditWrapper accessor (pywinauto EditWrapper.get_value).
     try:
         value = control.get_value()
     except Exception:  # noqa: BLE001 - fail-closed: wrapper accessor unavailable.
@@ -245,10 +255,29 @@ def _read_control_value(control: Any) -> str | None:
     if value:
         return str(value).strip()
 
-    # Path 2: raw AutomationElement pattern access (pywinauto 0.6.9 supported).
+    # Path 2: UIAWrapper Value-pattern property (iface_value -> CurrentValue).
     try:
-        element = control.element
-    except Exception:  # noqa: BLE001 - control exposes no raw element.
+        value = control.iface_value.CurrentValue
+    except Exception:  # noqa: BLE001 - fail-closed: pattern unsupported or stale.
+        value = None
+    if value:
+        return str(value).strip()
+
+    # Path 3: LegacyIAccessible properties (legacy_properties() returns e.g.
+    # {"Value": ..., "DefaultAction": ...}).
+    try:
+        value = control.legacy_properties().get("Value")
+    except Exception:  # noqa: BLE001 - fail-closed: legacy pattern unsupported.
+        value = None
+    if value:
+        return str(value).strip()
+
+    # Path 4: raw AutomationElement pattern access via element_info. The value
+    # of a comtypes UIA Value pattern is exposed as CurrentValue (the same
+    # shape pywinauto's EditWrapper reads through iface_value).
+    try:
+        element = control.element_info.element
+    except Exception:  # noqa: BLE001 - fail-closed: control exposes no raw element.
         element = None
     if element is not None:
         try:
@@ -256,9 +285,8 @@ def _read_control_value(control: Any) -> str | None:
 
             ptrn_id, _ = uia_defines.pattern_ids["Value"]
             pattern = element.GetCurrentPattern(ptrn_id)
-            current = getattr(pattern, "Current", None)
-            value = getattr(current, "Value", None) if current is not None else None
-        except Exception:  # noqa: BLE001 - fail-closed: Value pattern unsupported or stale.
+            value = pattern.CurrentValue
+        except Exception:  # noqa: BLE001 - fail-closed: pattern unsupported or stale.
             value = None
         if value:
             return str(value).strip()
