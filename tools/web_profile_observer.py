@@ -3,6 +3,7 @@
 Web text equality is a browser observation, not proof of a Camfrog desktop
 Friend List status or an external side effect. No cookies are exported.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -44,9 +45,13 @@ def profile_url(nickname: str) -> str:
 def allowed_url(value: str, nickname: str) -> bool:
     try:
         p = urlsplit(value)
-        return (p.scheme == "https" and p.netloc == "profiles.camfrog.com"
-                and p.path.rstrip("/") == urlsplit(profile_url(nickname)).path
-                and not p.username and not p.password)
+        return (
+            p.scheme == "https"
+            and p.netloc == "profiles.camfrog.com"
+            and p.path.rstrip("/") == urlsplit(profile_url(nickname)).path
+            and not p.username
+            and not p.password
+        )
     except (ValueError, TypeError):
         return False
 
@@ -62,7 +67,8 @@ def _validate_optional_text(value: str | None, max_len: int, label: str) -> str:
         return ""
     if len(value) > max_len or any(ord(c) < 32 or ord(c) == 127 for c in value):
         raise ValueError(
-            f"{label} must be 1..{max_len} printable characters without control characters")
+            f"{label} must be 1..{max_len} printable characters without control characters"
+        )
     return value
 
 
@@ -116,11 +122,13 @@ def write_manifest(output: Path, run_id: str, generated_at: str) -> dict:
     for path in sorted(output.iterdir()):
         if path.is_file():
             data = path.read_bytes()
-            entries.append({
-                "file": path.name,
-                "sha256": hashlib.sha256(data).hexdigest(),
-                "size_bytes": len(data),
-            })
+            entries.append(
+                {
+                    "file": path.name,
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                    "size_bytes": len(data),
+                }
+            )
     manifest = {
         "run_id": run_id,
         "generated_at": generated_at,
@@ -128,7 +136,8 @@ def write_manifest(output: Path, run_id: str, generated_at: str) -> dict:
     }
     manifest_path = output / "manifest.json"
     manifest_path.write_text(
-        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     if os.name != "nt":
         manifest_path.chmod(0o600)
     return manifest
@@ -146,17 +155,31 @@ def observe(page, nickname: str, expected: str, selector: str) -> dict:
         raise ValueError("Expected status contains control characters")
     if not isinstance(selector, str) or len(selector) > MAX_SELECTOR:
         raise ValueError("Status CSS selector exceeds safety limits")
-    if selector.strip().lower() in {"body", "html", "#profiles-pages",
-                                    ".nav-popover-username", ".nickname-info"}:
-        raise ValueError("Generic profile or logged-in navigation selectors are not status evidence")
+    if selector.strip().lower() in {
+        "body",
+        "html",
+        "#profiles-pages",
+        ".nav-popover-username",
+        ".nickname-info",
+    }:
+        raise ValueError(
+            "Generic profile or logged-in navigation selectors are not status evidence"
+        )
     if not allowed_url(page.url, nickname):
         return {"state": "UNVERIFIED", "reason": "unexpected_profile_url"}
     # Restrict text-based discovery to the profile content; never search the global header.
-    nodes = (page.locator(selector) if selector
-             else page.locator("#content-inner").get_by_text(expected, exact=True))
+    nodes = (
+        page.locator(selector)
+        if selector
+        else page.locator("#content-inner").get_by_text(expected, exact=True)
+    )
     count = nodes.count()
     if count != 1:
-        return {"state": "UNVERIFIED", "reason": "selector_not_unique", "matched_nodes": count}
+        return {
+            "state": "UNVERIFIED",
+            "reason": "selector_not_unique",
+            "matched_nodes": count,
+        }
     node = nodes.first
     if not node.is_visible():
         return {"state": "UNVERIFIED", "reason": "status_element_not_visible"}
@@ -164,10 +187,12 @@ def observe(page, nickname: str, expected: str, selector: str) -> dict:
     if not actual:
         return {"state": "UNVERIFIED", "reason": "empty_status_element"}
     matched = actual == expected
-    return {"state": "WEB_PROFILE_MATCH" if matched else "WEB_PROFILE_MISMATCH",
-            "reason": "visible_element_text_comparison",
-            "observed_text_sha256": hashlib.sha256(actual.encode("utf-8")).hexdigest(),
-            "expected_text_sha256": hashlib.sha256(expected.encode("utf-8")).hexdigest()}
+    return {
+        "state": "WEB_PROFILE_MATCH" if matched else "WEB_PROFILE_MISMATCH",
+        "reason": "visible_element_text_comparison",
+        "observed_text_sha256": hashlib.sha256(actual.encode("utf-8")).hexdigest(),
+        "expected_text_sha256": hashlib.sha256(expected.encode("utf-8")).hexdigest(),
+    }
 
 
 def run(args) -> int:
@@ -181,28 +206,48 @@ def run(args) -> int:
     output.mkdir(mode=0o700, parents=True, exist_ok=True)
     if os.name != "nt":
         output.chmod(0o700)
-    command_id = _validate_optional_text(getattr(args, "command_id", None) or None,
-                                         MAX_COMMAND_ID, "command_id")
+    command_id = _validate_optional_text(
+        getattr(args, "command_id", None) or None, MAX_COMMAND_ID, "command_id"
+    )
     account_b_reference = _validate_optional_text(
         getattr(args, "account_b_reference", None) or None,
-        MAX_ACCOUNT_B_REFERENCE, "account_b_reference")
-    result = {"run_id": uuid4().hex,
-              "observed_at": datetime.now(timezone.utc).isoformat(),
-              "nickname": args.nickname, "source": "authenticated_web_profile",
-              "command_id": command_id, "account_b_reference": account_b_reference,
-              "desktop_status_verified": False, "state": "UNVERIFIED",
-              "screenshot_files": [], "top_states": {},
-              "first_observed_text_sha256": None,
-              "last_observed_text_sha256": None}
+        MAX_ACCOUNT_B_REFERENCE,
+        "account_b_reference",
+    )
+    result = {
+        "run_id": uuid4().hex,
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "nickname": args.nickname,
+        "source": "authenticated_web_profile",
+        "command_id": command_id,
+        "account_b_reference": account_b_reference,
+        "desktop_status_verified": False,
+        "state": "UNVERIFIED",
+        "screenshot_files": [],
+        "top_states": {},
+        "first_observed_text_sha256": None,
+        "last_observed_text_sha256": None,
+    }
     with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            user_data_dir=str(profile), channel="chrome", headless=args.headless,
-            accept_downloads=False, service_workers="block")
+        launch_options = {
+            "user_data_dir": str(profile),
+            "headless": args.headless,
+            "accept_downloads": False,
+            "service_workers": "block",
+        }
+        if args.browser_executable:
+            launch_options["executable_path"] = str(args.browser_executable)
+        else:
+            launch_options["channel"] = "chrome"
+        context = p.chromium.launch_persistent_context(**launch_options)
         try:
             page = context.new_page()
             page.goto(url, wait_until="domcontentloaded", timeout=30000)
             if args.login:
-                print("Complete Account B login in Chrome, then press Enter.", file=sys.stderr)
+                print(
+                    "Complete Account B login in Chrome, then press Enter.",
+                    file=sys.stderr,
+                )
                 input()
                 page.goto(url, wait_until="domcontentloaded", timeout=30000)
             previous_fingerprint = None
@@ -224,21 +269,32 @@ def run(args) -> int:
                     "desktop_status_verified": False,
                 }
                 try:
-                    sample.update(observe(page, args.nickname, args.expected, args.selector))
+                    sample.update(
+                        observe(page, args.nickname, args.expected, args.selector)
+                    )
                 except Exception as exc:
-                    sample.update(state="UNVERIFIED", reason="observer_error",
-                                  error_type=type(exc).__name__)
-                fingerprint = (sample["state"], sample.get("observed_text_sha256"),
-                               sample.get("reason"))
+                    sample.update(
+                        state="UNVERIFIED",
+                        reason="observer_error",
+                        error_type=type(exc).__name__,
+                    )
+                fingerprint = (
+                    sample["state"],
+                    sample.get("observed_text_sha256"),
+                    sample.get("reason"),
+                )
                 observed_hash = sample.get("observed_text_sha256")
                 if observed_hash:
                     if result["first_observed_text_sha256"] is None:
                         result["first_observed_text_sha256"] = observed_hash
                     result["last_observed_text_sha256"] = observed_hash
                 result["top_states"][sample["state"]] = (
-                    result["top_states"].get(sample["state"], 0) + 1)
+                    result["top_states"].get(sample["state"], 0) + 1
+                )
                 if sample_index == 0 or fingerprint != previous_fingerprint:
-                    screenshot = output / f"{result['run_id']}-{sample_index + 1:04d}.png"
+                    screenshot = (
+                        output / f"{result['run_id']}-{sample_index + 1:04d}.png"
+                    )
                     page.screenshot(path=str(screenshot), full_page=False)
                     if os.name != "nt":
                         screenshot.chmod(0o600)
@@ -260,13 +316,16 @@ def run(args) -> int:
         finally:
             context.close()
     evidence = output / f"{result['run_id']}.json"
-    evidence.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    evidence.write_text(
+        json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     if os.name != "nt":
         evidence.chmod(0o600)
     summary = build_summary(result, result["sample_log"])
     summary_path = output / "summary.json"
-    summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n",
-                            encoding="utf-8")
+    summary_path.write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
     if os.name != "nt":
         summary_path.chmod(0o600)
     write_manifest(output, result["run_id"], result["finished_at"])
@@ -278,29 +337,59 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--nickname", default="Seaza")
     parser.add_argument("--expected", required=True)
-    parser.add_argument("--selector", default="",
-                        help="Optional unique Custom Status selector; default checks exact visible text in #content-inner")
-    parser.add_argument("--browser-profile", required=True,
-                        help="Dedicated local Chrome profile; sign in interactively")
+    parser.add_argument(
+        "--selector",
+        default="",
+        help="Optional unique Custom Status selector; default checks exact visible text in #content-inner",
+    )
+    parser.add_argument(
+        "--browser-profile",
+        required=True,
+        help="Dedicated local Chrome profile; sign in interactively",
+    )
+    parser.add_argument(
+        "--browser-executable",
+        default="",
+        help="Optional Chromium executable for Playwright (for example a "
+        "playwright-installed chromium); default uses branded Chrome",
+    )
     parser.add_argument("--output", default="reports/web-profile-observer")
     parser.add_argument("--headless", action="store_true")
-    parser.add_argument("--refresh-seconds", type=int, default=30,
-                        help="Interval between page reloads (10..300 seconds)")
-    parser.add_argument("--samples", type=int, default=10,
-                        help="Bounded number of observations (1..1000)")
-    parser.add_argument("--login", action="store_true", help="Pause for interactive login")
-    parser.add_argument("--command-id", default="",
-                        help=f"Optional Windows-side command linkage this run corroborates "
-                             f"(1..{MAX_COMMAND_ID} printable characters)")
-    parser.add_argument("--account-b-reference", default="",
-                        help=f"Optional opaque Account B identity reference for the evidence "
-                             f"bundle (1..{MAX_ACCOUNT_B_REFERENCE} characters); never "
-                             f"auto-captured from the browser session")
+    parser.add_argument(
+        "--refresh-seconds",
+        type=int,
+        default=30,
+        help="Interval between page reloads (10..300 seconds)",
+    )
+    parser.add_argument(
+        "--samples",
+        type=int,
+        default=10,
+        help="Bounded number of observations (1..1000)",
+    )
+    parser.add_argument(
+        "--login", action="store_true", help="Pause for interactive login"
+    )
+    parser.add_argument(
+        "--command-id",
+        default="",
+        help=f"Optional Windows-side command linkage this run corroborates "
+        f"(1..{MAX_COMMAND_ID} printable characters)",
+    )
+    parser.add_argument(
+        "--account-b-reference",
+        default="",
+        help=f"Optional opaque Account B identity reference for the evidence "
+        f"bundle (1..{MAX_ACCOUNT_B_REFERENCE} characters); never "
+        f"auto-captured from the browser session",
+    )
     args = parser.parse_args(argv)
     if not 10 <= args.refresh_seconds <= 300:
         parser.error("--refresh-seconds must be 10..300")
     if not 1 <= args.samples <= 1000:
         parser.error("--samples must be 1..1000")
+    if args.browser_executable and not Path(args.browser_executable).is_file():
+        parser.error("--browser-executable does not point to an executable file")
     try:
         return run(args)
     except (ValueError, OSError, RuntimeError, ImportError) as exc:
