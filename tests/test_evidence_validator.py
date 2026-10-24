@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from tools.evidence_validator import validate_bundle
@@ -33,6 +34,10 @@ def _write_bundle(tmp_path: Path, *, tamper: str | None = None) -> Path:
     out = tmp_path / "evidence"
     out.mkdir()
 
+    now = datetime.now(UTC)
+    t1 = now.isoformat()
+    t2 = (now + timedelta(seconds=30)).isoformat()
+
     # manifest covers every non-manifest file
     def _entry(name: str) -> dict[str, object]:
         data = (out / name).read_bytes() if (out / name).exists() else b""
@@ -50,7 +55,7 @@ def _write_bundle(tmp_path: Path, *, tamper: str | None = None) -> Path:
         {
             "run_id": "RUN-0001",
             "sample_index": 1,
-            "observed_at": "2026-10-25T09:00:00+00:00",
+            "observed_at": t1,
             "nickname": "Seaza",
             "source": "authenticated_web_profile",
             "command_id": "CMD-0001",
@@ -68,7 +73,7 @@ def _write_bundle(tmp_path: Path, *, tamper: str | None = None) -> Path:
         {
             "run_id": "RUN-0001",
             "sample_index": 2,
-            "observed_at": "2026-10-25T09:00:30+00:00",
+            "observed_at": t2,
             "nickname": "Seaza",
             "source": "authenticated_web_profile",
             "command_id": "CMD-0001",
@@ -95,7 +100,7 @@ def _write_bundle(tmp_path: Path, *, tamper: str | None = None) -> Path:
     )
     manifest = {
         "run_id": "RUN-0001",
-        "generated_at": "2026-10-25T09:00:00+00:00",
+        "generated_at": now.isoformat(),
         "files": [_entry(name) for name in files],
     }
     (out / "manifest.json").write_text(
