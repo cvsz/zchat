@@ -7,7 +7,7 @@ This repository contains ZChat application code: Camfrog Windows automation, sta
 - Read README.md, CONTRIBUTING.md, SECURITY.md, ROADMAP.md, and the closest AGENTS.md before editing.
 - Keep code, configuration, filenames, commit messages, and technical documentation in English.
 - Prefer the smallest reviewable change that satisfies the requested scope.
-- Never weaken CI, security scanning, dependency review, branch protections, or release controls merely to make a check pass.
+- Never weaken CI, security scanning, dependency review, branch protections, or release controls merely to make a check pass. NOTE (2026-10-24, owner decision): this repository operates without GitHub-enforced branch protection (verified: `GET /branches/main/protection` → 404, no rulesets). CI workflows still run on every push and PR and remain the enforced quality gate; CI status must be green at the exact merge head before any merge.
 - Never commit credentials, tokens, private keys, production endpoints, personal data, or realistic secrets. Use documented placeholders.
 - Do not invent project-specific owners, domains, deployment providers, package registries, cloud accounts, or credentials.
 - Preserve standalone-executable isolation, control-server tenant/account scoping, and Windows foreground/background safety; do not make a simulated Camfrog action appear externally successful.

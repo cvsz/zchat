@@ -2,6 +2,8 @@
 
 UI Automation accessibility varies by Camfrog version. A missing or ambiguous
 control is INCONCLUSIVE, never proof of a successful provider-side mutation.
+A friend row that is visible but exposes no readable Custom Status control is
+reported as low-confidence identity-only, never as a verified status.
 """
 
 from __future__ import annotations
@@ -9,8 +11,30 @@ from __future__ import annotations
 import platform
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from .comparison import normalize_text
+
+_CAMFROG_PROCESS_NAMES = frozenset({"camfrog.exe", "camfrog video chat.exe"})
+
+
+# UIA automation-id/name hints that indicate identity, presence, flair,
+# avatar, or tooltip controls rather than a user-entered Custom Status.
+# Controls matching these hints are rejected during status-field discovery.
+_NON_STATUS_NAME_HINTS = frozenset(
+    {
+        "name",
+        "nick",
+        "nickname",
+        "display",
+        "presence",
+        "flair",
+        "avatar",
+        "statusicon",
+        "tooltip",
+        "mood",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -20,6 +44,10 @@ class Observation:
     display_name: str | None
     confidence: str
     method: str
+    account_identity: str | None = None
+    process_identity: dict[str, str] | None = None
+    screenshot: str | None = None
+    error_reason: str | None = None
 
 
 class FriendListObserver:
@@ -33,20 +61,75 @@ class FriendListObserver:
 
     def observe(self) -> Observation:
         if not self.target_account:
-            return Observation(False, None, None, "low", "missing_target_account")
-        if platform.system() != "Windows" and self._reader == self._read_windows_uia:
-            return Observation(False, None, None, "low", "unsupported_platform")
+            return Observation(
+                False,
+                None,
+                None,
+                "low",
+                "missing_target_account",
+                error_reason="missing_target_account",
+            )
+        if platform.system() != "Windows" and self._reader is self._read_windows_uia:
+            return Observation(
+                False,
+                None,
+                None,
+                "low",
+                "unsupported_platform",
+                error_reason="unsupported_platform",
+            )
         try:
             result = self._reader(self.target_account)
-        except (OSError, RuntimeError, ImportError, AttributeError):
-            return Observation(False, None, None, "low", "observer_unavailable")
+        except (
+            OSError,
+            RuntimeError,
+            ImportError,
+            AttributeError,
+            TimeoutError,
+            LookupError,
+        ):
+            return Observation(
+                False,
+                None,
+                None,
+                "low",
+                "observer_unavailable",
+                error_reason="observer_unavailable",
+            )
         if not isinstance(result, Observation):
-            return Observation(False, None, None, "low", "invalid_observation")
+            return Observation(
+                False,
+                None,
+                None,
+                "low",
+                "invalid_observation",
+                error_reason="invalid_observation",
+            )
         if not result.visible or result.confidence != "high":
-            return Observation(False, None, None, "low", result.method)
+            return Observation(
+                False,
+                None,
+                None,
+                "low",
+                result.method,
+                account_identity=result.account_identity,
+                process_identity=result.process_identity,
+                screenshot=result.screenshot,
+                error_reason=result.error_reason or result.method,
+            )
         # Seeing a matching friend alone cannot establish an external status.
         if not result.status:
-            return Observation(True, None, result.display_name, "low", result.method)
+            return Observation(
+                True,
+                None,
+                result.display_name,
+                "low",
+                result.method,
+                account_identity=result.account_identity,
+                process_identity=result.process_identity,
+                screenshot=result.screenshot,
+                error_reason="status_field_not_accessible",
+            )
         return result
 
     @staticmethod
@@ -59,27 +142,209 @@ class FriendListObserver:
             try:
                 pid = window.process_id()
                 process = psutil.Process(pid)
-                if process.name().casefold() not in {
-                    "camfrog.exe",
-                    "camfrog video chat.exe",
-                }:
+                if not _is_verified_camfrog_process(process):
                     continue
-                # An exact accessible friend identity is required. Window titles,
-                # substrings and free-form text must not qualify as identity.
+                # Window ownership: window must belong to the verified process.
+                if window.process_id() != process.pid:
+                    continue
                 for item in window.descendants(control_type="ListItem"):
-                    if normalize_text(item.window_text()).casefold() != target.casefold():
+                    row_text = normalize_text(item.window_text())
+                    if row_text.casefold() != target.casefold():
                         continue
-                    # Status/name controls differ between Camfrog builds and cannot
-                    # be inferred from row position or visible labels alone.
-                    matches.append(Observation(True, None, None, "low", "uia_identity_only"))
+                    # Discover any Custom Status control within this row.
+                    status_value = _discover_row_status(item)
+                    matches.append(
+                        Observation(
+                            True,
+                            status_value,
+                            row_text or None,
+                            "high" if status_value is not None else "low",
+                            "uia_status_field" if status_value is not None else "uia_identity_only",
+                            account_identity=target,
+                            process_identity=_process_identity(process),
+                            error_reason=None
+                            if status_value is not None
+                            else "status_field_not_accessible",
+                        )
+                    )
             except (OSError, RuntimeError, AttributeError, ValueError, psutil.Error):
                 continue
         if len(matches) == 1:
             return matches[0]
+        if len(matches) > 1:
+            return Observation(
+                False,
+                None,
+                None,
+                "low",
+                "ambiguous_identity",
+                error_reason="multiple_matching_rows",
+            )
         return Observation(
             False,
             None,
             None,
             "low",
-            "ambiguous_identity" if matches else "friend_not_observed",
+            "friend_not_observed",
+            error_reason="friend_not_observed",
         )
+
+
+# ---------- Mockable helpers (testable without pywinauto / Windows) ----------
+
+
+def _is_verified_camfrog_process(process: Any) -> bool:
+    """Exact process identity: Camfrog process name plus plausible exe path.
+
+    A missing executable path is inconclusive and rejected; process names
+    alone are not sufficient to verify the target application.
+    """
+    try:
+        name = (process.name() or "").casefold()
+    except Exception:  # noqa: BLE001 - fail-closed: an untrusted process object must not abort discovery.
+        return False
+    if name not in _CAMFROG_PROCESS_NAMES:
+        return False
+    try:
+        exe = (process.exe() or "").casefold()
+    except Exception:  # noqa: BLE001 - fail-closed: an untrusted process object must not abort discovery.
+        return False
+    return bool(exe) and "camfrog" in exe
+
+
+def _process_identity(process: Any) -> dict[str, str]:
+    identity: dict[str, str] = {"pid": str(getattr(process, "pid", 0))}
+    try:
+        identity["name"] = process.name() or ""
+    except Exception:  # noqa: BLE001, S110 - fail-closed: an untrusted process object must not abort identity capture.
+        pass
+    try:
+        identity["exe"] = process.exe() or ""
+    except Exception:  # noqa: BLE001, S110 - fail-closed: an untrusted process object must not abort identity capture.
+        pass
+    return identity
+
+
+def _read_control_value(control: Any) -> str | None:
+    """Read a UIA control's value via supported pywinauto accessors, fail-closed.
+
+    Supported paths on pywinauto 0.6.9 (verified against the installed source:
+    ``controls/uia_controls.py``, ``controls/uiawrapper.py``, ``uia_defines.py``):
+      1. ``EditWrapper.get_value()`` — Edit controls only (it returns
+         ``self.iface_value.CurrentValue`` internally).
+      2. ``UIAWrapper.iface_value.CurrentValue`` — any element that supports the
+         UIA Value pattern; raises ``NoPatternInterfaceError`` when unsupported.
+      3. ``UIAWrapper.legacy_properties()["Value"]`` — LegacyIAccessible pattern
+         fallback (dict keys are the ``Current*`` property names, e.g. Value).
+      4. Raw pattern access: ``element_info.element.GetCurrentPattern(
+         uia_defines.pattern_ids["Value"][0]).CurrentValue`` — the raw COM
+         element lives on ``element_info.element`` (``BaseWrapper.element_info``
+         property); a UIAWrapper itself does not expose ``.element``.
+
+    Only values exposed through a UIA Value pattern are treated as real status
+    text. ``window_text()``/``name`` labels are intentionally not returned as
+    status values, because they may be control names rather than user-entered
+    text. Every path fails closed: COM errors, NoPatternInterfaceError,
+    stale/disconnected elements and missing helpers all yield None.
+    """
+    # Path 1: EditWrapper accessor (pywinauto EditWrapper.get_value).
+    try:
+        value = control.get_value()
+    except Exception:  # noqa: BLE001 - fail-closed: wrapper accessor unavailable.
+        value = None
+    if value:
+        return str(value).strip()
+
+    # Path 2: UIAWrapper Value-pattern property (iface_value -> CurrentValue).
+    try:
+        value = control.iface_value.CurrentValue
+    except Exception:  # noqa: BLE001 - fail-closed: pattern unsupported or stale.
+        value = None
+    if value:
+        return str(value).strip()
+
+    # Path 3: LegacyIAccessible properties (legacy_properties() returns e.g.
+    # {"Value": ..., "DefaultAction": ...}).
+    try:
+        value = control.legacy_properties().get("Value")
+    except Exception:  # noqa: BLE001 - fail-closed: legacy pattern unsupported.
+        value = None
+    if value:
+        return str(value).strip()
+
+    # Path 4: raw AutomationElement pattern access via element_info. The value
+    # of a comtypes UIA Value pattern is exposed as CurrentValue (the same
+    # shape pywinauto's EditWrapper reads through iface_value).
+    try:
+        element = control.element_info.element
+    except Exception:  # noqa: BLE001 - fail-closed: control exposes no raw element.
+        element = None
+    if element is not None:
+        try:
+            from pywinauto import uia_defines  # Windows-only import; guarded.
+
+            ptrn_id, _ = uia_defines.pattern_ids["Value"]
+            pattern = element.GetCurrentPattern(ptrn_id)
+            value = pattern.CurrentValue
+        except Exception:  # noqa: BLE001 - fail-closed: pattern unsupported or stale.
+            value = None
+        if value:
+            return str(value).strip()
+    return None
+
+
+def _is_custom_status_control(control: Any) -> bool:
+    """Identify a Custom Status UIA control using the real pywinauto API.
+
+    UIAWrapper exposes metadata through element_info and visibility through
+    is_enabled()/is_visible(). Plain attribute fixtures are supported only
+    when element_info is absent, so broken real wrappers fail closed.
+    """
+    try:
+        info = getattr(control, "element_info", None)
+        if info is not None:
+            ctype = str(info.control_type or "")
+            name = str(info.name or "").strip()
+            aid = str(info.automation_id or "")
+            enabled = control.is_enabled()
+            visible = control.is_visible()
+        else:
+            ctype = str(control.control_type or "")
+            name = str(control.name or "").strip()
+            aid = str(getattr(control, "automation_id", "") or "")
+            enabled = control.enabled
+            visible = control.visible
+    except Exception:  # noqa: BLE001 - stale or inaccessible UIA controls fail closed.
+        return False
+    if ctype not in ("Text", "Edit") or not enabled or not visible or not name:
+        return False
+    combined = f"{aid} {name}".casefold()
+    return "status" in combined and not any(hint in combined for hint in _NON_STATUS_NAME_HINTS)
+
+
+def _discover_row_status(row_item: Any) -> str | None:
+    """Inspect UIA children of a friend-list row for the Custom Status field.
+
+    Positively identifies candidate Custom Status controls via verified UIA
+    properties (control type, enabled/visible state, non-empty name, and
+    rejection of identity/presence/flair/avatar/tooltip hints). Rejects
+    multiple candidates. Returns the status text if exactly one candidate is
+    readable, otherwise None (fail closed / INCONCLUSIVE).
+    """
+    try:
+        descendants = row_item.descendants()
+    except Exception:  # noqa: BLE001 - fail-closed: treat an undescendable row as having no status field.
+        return None
+    candidates: list[str] = []
+    for control in descendants:
+        try:
+            if not _is_custom_status_control(control):
+                continue
+            value = _read_control_value(control)
+        except Exception:  # noqa: BLE001, S112 - fail-closed: skip a control whose value cannot be read.
+            continue
+        if value:
+            candidates.append(value)
+    if len(candidates) == 1:
+        return candidates[0]
+    return None

@@ -3,7 +3,11 @@
 ## Prerequisites
 - Two Windows 11 machines (Primary + Secondary)
 
-> **Not yet executable end-to-end:** `FriendListObserver.observe()` is a fail-closed placeholder. Discovery in the unified client warns that the Camfrog friend list cannot yet be read. Do not treat UI input, command dispatch, or log records as external provider verification.
+> **End-to-end provider acceptance is NOT yet verifiable from CI:** the observer uses the real pywinauto
+> 0.6.9 UIA contract (fail-closed value access, positive Custom Status identification, INCONCLUSIVE when
+> the friend list is not exposed) and must still be validated on a real Windows 11 machine with a genuine
+> Camfrog friend list. Do not treat UI input, command dispatch, or log records as external provider
+> verification.
 - Two authorized Camfrog accounts (Account A and Account B)
 - zchat-client built on both machines
 - `.env` configured with verification settings
