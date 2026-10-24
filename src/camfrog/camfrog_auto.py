@@ -784,9 +784,12 @@ def get_window(cfg: dict):
                 return w
             except Exception:
                 continue
+        # No visible window exposes the status edit control — fail closed so the
+        # caller (resolve()) can trigger auto-detect / re-discovery instead of
+        # silently targeting a window that cannot receive the status text.
+        raise LookupError(t("no_ctrl", spec=st_edit_spec, n=0))
 
-    # Fallback: return first window if status edit not found in any (for detect/initial setup)
-    log.warning("Status edit control not found in any matching window; using first window")
+    # No status edit control configured: return first window for detect/setup only.
     return wins[0]
 
 
@@ -2386,9 +2389,27 @@ class Runner:
         st, ar = cfg["status"], cfg["autoreply"]
         self.win = get_window(cfg)
         self.status_edit, self.apply_btn = None, None
-        self.status_edit = find(self.win, st["edit"]) if st["enabled"] else None
-        self.apply_btn = find(self.win, st["apply_button"]) \
-            if st["enabled"] and st["apply_button"] else None
+        if st["enabled"]:
+            try:
+                self.status_edit = find(self.win, st["edit"])
+            except LookupError:
+                # The window returned by get_window() no longer exposes the
+                # control (Camfrog may have recreated the buddy list window).
+                # Search all windows of the same process before giving up.
+                from pywinauto import Desktop
+                pid = self.win.process_id()
+                for w in Desktop(backend="uia").windows(process=pid, visible_only=True):
+                    if w is self.win:
+                        continue
+                    try:
+                        self.status_edit = find(w, st["edit"])
+                        if self.status_edit is not None:
+                            self.win = w
+                            break
+                    except Exception:
+                        continue
+            self.apply_btn = find(self.win, st["apply_button"]) \
+                if st["enabled"] and st["apply_button"] else None
         self.history = self.input = self.chat_win = None
         self.prev = []
         self.next_attach = 0.0
@@ -2603,10 +2624,16 @@ class Runner:
     def do_status(self, now):
         st = self.cfg["status"]
         if not self.status_edit:
-            if st["enabled"] and now >= getattr(self, "_next_status_warn", 0):
-                log.warning(t("no_ctrl", spec={"section": "status.edit"}, n=0))
-                self._next_status_warn = now + 60
-            return
+            if st["enabled"]:
+                try:
+                    self.resolve()
+                except Exception:
+                    pass
+                if not self.status_edit:
+                    if now >= getattr(self, "_next_status_warn", 0):
+                        log.warning(t("no_ctrl", spec={"section": "status.edit"}, n=0))
+                        self._next_status_warn = now + 60
+                    return
         active = self.marq
         if active is not None and active.get("loop") and now >= active["deadline"]:
             self.marq = None
