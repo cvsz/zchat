@@ -35,8 +35,6 @@ def _resolve_src(name: str) -> Path:
         if candidate.is_file():
             return candidate
     raise AssertionError(f"module file not found: {name}")
-
-
 sys.path.insert(0, str(ROOT))
 
 import camfrog_emergency_stop as es
@@ -52,22 +50,19 @@ from camfrog_emergency_stop import (
 def test_local_emergency_stop_cli_activates_lists_and_deactivates(capsys):
     scope = EmergencyStopScope.FEATURE.value
     resource = "camfrog.status-random"
-    assert (
-        es.main(
-            [
-                "activate",
-                "--scope",
-                scope,
-                "--reason",
-                "OPERATOR_HALT",
-                "--operator",
-                "operator-test",
-                "--resource",
-                resource,
-            ]
-        )
-        == 0
-    )
+    assert es.main(
+        [
+            "activate",
+            "--scope",
+            scope,
+            "--reason",
+            "OPERATOR_HALT",
+            "--operator",
+            "operator-test",
+            "--resource",
+            resource,
+        ]
+    ) == 0
     activated = json.loads(capsys.readouterr().out)
     assert activated["activated"] is True
     assert activated["stop"]["affected_resources"] == [resource]
@@ -112,13 +107,11 @@ def _observe_and_deactivate_in_child(database_path: str, result_queue) -> None:
 
 # ---------- Singleton ----------
 
-
 def test_registry_is_singleton():
     assert EmergencyStopRegistry() is EmergencyStopRegistry()
 
 
 # ---------- Scope hierarchy ----------
-
 
 def test_global_stop_covers_every_scope():
     _reg().activate(EmergencyStopScope.GLOBAL, "OPERATOR_HALT", "op-1")
@@ -152,7 +145,6 @@ def test_no_stop_means_not_stopped():
 
 # ---------- Resource-scoped stops ----------
 
-
 def test_resource_scoped_stop_covers_only_listed_key():
     _reg().activate(
         EmergencyStopScope.ACCOUNT,
@@ -175,7 +167,6 @@ def test_scope_wide_stop_covers_any_key():
 
 
 # ---------- Deactivation and audit permanence ----------
-
 
 def test_deactivate_removes_stop_and_reports():
     _reg().activate(EmergencyStopScope.FEATURE, "OPERATOR_HALT", "op-1")
@@ -259,7 +250,6 @@ def test_stop_ids_are_unique():
 
 # ---------- Guard ----------
 
-
 def test_guard_passes_when_clear():
     with EmergencyStopGuard(EmergencyStopScope.FEATURE, "feat-1"):
         pass
@@ -294,7 +284,6 @@ def test_guard_message_identifies_scope_and_resource():
 
 
 # ---------- Hook mixin ----------
-
 
 class _HookHarness(EmergencyStopHook):
     def __init__(self):
@@ -363,7 +352,6 @@ def test_hook_make_guard_uses_instance_defaults():
 
 # ---------- Thread safety ----------
 
-
 def test_concurrent_activate_and_check_is_consistent():
     errors: list[BaseException] = []
 
@@ -387,7 +375,6 @@ def test_concurrent_activate_and_check_is_consistent():
 
 
 # ---------- Static safety: no destructive primitives in code ----------
-
 
 def _code_nodes():
     source = _resolve_src("camfrog_emergency_stop.py").read_text(encoding="utf-8")

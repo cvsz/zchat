@@ -3,7 +3,6 @@
 Provides a fast, lightweight JSON-RPC / REST client using Python's standard library
 to offload LLM inference workloads to a zGPU accelerated backend.
 """
-
 from __future__ import annotations
 
 import json
@@ -24,7 +23,6 @@ DEFAULT_TIMEOUT_SECONDS = 15.0
 @dataclass
 class ZGPUResponse:
     """Structured response from zGPU LLM inference."""
-
     text: str
     tokens_used: int = 0
     latency_ms: float = 0.0
@@ -61,13 +59,9 @@ class ZGPUClient:
         }
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        return urllib.request.Request(
-            self.endpoint_url, data=data, headers=headers, method="POST"
-        )
+        return urllib.request.Request(self.endpoint_url, data=data, headers=headers, method="POST")
 
-    def call_rpc(
-        self, method: str, params: Dict[str, Any], req_id: int = 1
-    ) -> Dict[str, Any]:
+    def call_rpc(self, method: str, params: Dict[str, Any], req_id: int = 1) -> Dict[str, Any]:
         """Execute a standard JSON-RPC 2.0 call against the zGPU endpoint."""
         payload = {
             "jsonrpc": "2.0",
@@ -108,11 +102,7 @@ class ZGPUClient:
             elapsed_ms = (time.perf_counter() - start_t) * 1000.0
 
             if "error" in res and res["error"]:
-                err_msg = (
-                    res["error"].get("message")
-                    if isinstance(res["error"], dict)
-                    else str(res["error"])
-                )
+                err_msg = res["error"].get("message") if isinstance(res["error"], dict) else str(res["error"])
                 return ZGPUResponse(
                     text="",
                     latency_ms=elapsed_ms,
@@ -133,8 +123,7 @@ class ZGPUClient:
 
             return ZGPUResponse(
                 text=result_data.get("text", "") or result_data.get("reply", "") or "",
-                tokens_used=result_data.get("tokens_used", 0)
-                or result_data.get("usage", {}).get("total_tokens", 0),
+                tokens_used=result_data.get("tokens_used", 0) or result_data.get("usage", {}).get("total_tokens", 0),
                 latency_ms=result_data.get("latency_ms", elapsed_ms),
                 model=result_data.get("model", target_model),
                 finish_reason=result_data.get("finish_reason", "stop"),

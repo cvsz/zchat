@@ -1,5 +1,4 @@
 """Release-integrity regression tests."""
-
 import hashlib
 import json
 from pathlib import Path
@@ -26,28 +25,14 @@ def test_verify_feature_hashes_accepts_all_expected_files(tmp_path, monkeypatch)
     dist.mkdir()
     files = {}
     lines = []
-    for name in (
-        "room-control",
-        "chat-im-private",
-        "status-random",
-        "status-marquee",
-        "status-changer",
-        "im-autoreply",
-        "music-dj",
-        "web-status",
-    ):
+    for name in ("room-control", "chat-im-private", "status-random",
+                 "status-marquee", "status-changer", "im-autoreply", "music-dj", "web-status"):
         path = dist / name / (name + ".exe")
         path.parent.mkdir()
         path.write_bytes(("test-" + name).encode())
         files[name + ".exe"] = path
-        lines.append(
-            hashlib.sha256(path.read_bytes()).hexdigest()
-            + "  "
-            + name
-            + "/"
-            + name
-            + ".exe"
-        )
+        lines.append(hashlib.sha256(path.read_bytes()).hexdigest()
+                     + "  " + name + "/" + name + ".exe")
     (dist / "SHA256SUMS.txt").write_text("\n".join(lines) + "\n")
     monkeypatch.setattr(release, "DIST", dist)
     monkeypatch.setattr(release, "FEATURE_EXES", files)
@@ -104,6 +89,8 @@ def test_full_build_checks_and_lists_every_release_executable():
     assert "dist\\zchat-client\\sha256sums.txt" in checks
 
 
+
+
 def test_windows_build_uses_fresh_pytest_basetemp_per_invocation():
     root = Path(__file__).resolve().parents[1]
     script = (root / "build.bat").read_text(encoding="utf-8")
@@ -114,12 +101,11 @@ def test_windows_build_uses_fresh_pytest_basetemp_per_invocation():
     assert '--basetemp="%PYTEST_TMP_DIR%"' in script
     assert '--basetemp="%PYTEST_TMP_DIR%_private"' in script
 
-
 def test_music_dj_packages_zeazdev_room_mascot_with_the_executable():
     root = Path(__file__).resolve().parents[1]
     build = (root / "build.bat").read_text(encoding="utf-8")
     artwork = root / "assets" / "zeazdev-room.png"
-    assert "assets\\zeazdev-room.png;assets" in build
+    assert 'assets\\zeazdev-room.png;assets' in build
     assert artwork.is_file()
     assert artwork.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
@@ -136,16 +122,12 @@ def test_release_rejects_existing_tag_without_upload(monkeypatch, tmp_path):
     monkeypatch.setattr(release, "verify_build_source", lambda target: None)
     monkeypatch.setattr(release, "verify_remote_tag", lambda tag, target: None)
     monkeypatch.setattr(release, "gh_ready", lambda: True)
-
     class Completed:
         returncode = 0
-
     calls = []
-
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         return Completed()
-
     monkeypatch.setattr(release.subprocess, "run", fake_run)
     assert release.main([]) == 3
     assert calls == [["gh", "release", "view", "v2.99.0"]]
@@ -172,17 +154,13 @@ def test_release_pins_tag_to_verified_commit(monkeypatch, tmp_path):
             self.returncode = returncode
 
     calls = []
-
     def fake_run(cmd, **kwargs):
         calls.append(cmd)
         return Completed(1 if cmd[:3] == ["gh", "release", "view"] else 0)
-
     monkeypatch.setattr(release.subprocess, "run", fake_run)
 
     assert release.main([]) == 0
-    create = next(
-        command for command in calls if command[:3] == ["gh", "release", "create"]
-    )
+    create = next(command for command in calls if command[:3] == ["gh", "release", "create"])
     target_index = create.index("--target")
     assert create[target_index + 1] == target
     checksum_assets = [
@@ -200,20 +178,17 @@ def test_verify_build_source_requires_clean_matching_commit(tmp_path, monkeypatc
         release.verify_build_source(target)
 
     release.BUILD_SOURCE.write_text(
-        "commit={0}\nclean=false\n".format(target), encoding="utf-8"
-    )
+        "commit={0}\nclean=false\n".format(target), encoding="utf-8")
     with pytest.raises(SystemExit, match="built from a dirty working tree"):
         release.verify_build_source(target)
 
     release.BUILD_SOURCE.write_text(
-        "commit={0}\nclean=true\n".format("b" * 40), encoding="utf-8"
-    )
+        "commit={0}\nclean=true\n".format("b" * 40), encoding="utf-8")
     with pytest.raises(SystemExit, match="does not match release HEAD"):
         release.verify_build_source(target)
 
     release.BUILD_SOURCE.write_text(
-        "commit={0}\nclean=true\n".format(target), encoding="utf-8"
-    )
+        "commit={0}\nclean=true\n".format(target), encoding="utf-8")
     assert release.verify_build_source(target) is None
 
 
@@ -225,14 +200,10 @@ def test_remote_tag_check_uses_peeled_annotated_target(monkeypatch):
     class Completed:
         returncode = 0
         stdout = "{0}\trefs/tags/v2.19.2\n{1}\trefs/tags/v2.19.2^{{}}\n".format(
-            annotated, target
-        )
+            annotated, target)
 
-    monkeypatch.setattr(
-        release.subprocess,
-        "run",
-        lambda command, **kwargs: calls.append(command) or Completed(),
-    )
+    monkeypatch.setattr(release.subprocess, "run",
+                        lambda command, **kwargs: calls.append(command) or Completed())
 
     assert release.remote_tag_target("v2.19.2") == target
     release.verify_remote_tag("v2.19.2", target)
@@ -257,9 +228,8 @@ def test_release_rejects_mismatched_remote_tag_before_gh(monkeypatch, tmp_path):
     monkeypatch.setattr(release, "gh_ready", lambda: True)
 
     calls = []
-    monkeypatch.setattr(
-        release.subprocess, "run", lambda command, **kwargs: calls.append(command)
-    )
+    monkeypatch.setattr(release.subprocess, "run",
+                        lambda command, **kwargs: calls.append(command))
 
     with pytest.raises(SystemExit, match="remote tag v2.19.2 points to"):
         release.main([])

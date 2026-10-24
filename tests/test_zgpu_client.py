@@ -7,9 +7,7 @@ from src.camfrog.zgpu_client import ZGPUClient, ZGPUResponse
 
 
 def test_zgpu_client_init():
-    client = ZGPUClient(
-        endpoint_url="http://localhost:9999/rpc", timeout=5.0, default_model="fast-llm"
-    )
+    client = ZGPUClient(endpoint_url="http://localhost:9999/rpc", timeout=5.0, default_model="fast-llm")
     assert client.endpoint_url == "http://localhost:9999/rpc"
     assert client.timeout == 5.0
     assert client.default_model == "fast-llm"
@@ -18,9 +16,11 @@ def test_zgpu_client_init():
 def test_zgpu_call_rpc_success():
     client = ZGPUClient()
     mock_resp = MagicMock()
-    mock_resp.read.return_value = json.dumps(
-        {"jsonrpc": "2.0", "id": 1, "result": {"status": "ok", "gpu": "zGPU-1"}}
-    ).encode("utf-8")
+    mock_resp.read.return_value = json.dumps({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {"status": "ok", "gpu": "zGPU-1"}
+    }).encode("utf-8")
     mock_resp.__enter__.return_value = mock_resp
 
     with patch("urllib.request.urlopen", return_value=mock_resp):
@@ -32,18 +32,16 @@ def test_zgpu_call_rpc_success():
 def test_zgpu_generate_success_dict():
     client = ZGPUClient()
     mock_resp = MagicMock()
-    mock_resp.read.return_value = json.dumps(
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "result": {
-                "text": "Hello from zGPU accelerated LLM!",
-                "tokens_used": 42,
-                "latency_ms": 12.5,
-                "model": "zgpu-llama-3",
-            },
+    mock_resp.read.return_value = json.dumps({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "text": "Hello from zGPU accelerated LLM!",
+            "tokens_used": 42,
+            "latency_ms": 12.5,
+            "model": "zgpu-llama-3"
         }
-    ).encode("utf-8")
+    }).encode("utf-8")
     mock_resp.__enter__.return_value = mock_resp
 
     with patch("urllib.request.urlopen", return_value=mock_resp):
@@ -58,9 +56,11 @@ def test_zgpu_generate_success_dict():
 def test_zgpu_generate_success_str():
     client = ZGPUClient()
     mock_resp = MagicMock()
-    mock_resp.read.return_value = json.dumps(
-        {"jsonrpc": "2.0", "id": 1, "result": "Raw text response"}
-    ).encode("utf-8")
+    mock_resp.read.return_value = json.dumps({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": "Raw text response"
+    }).encode("utf-8")
     mock_resp.__enter__.return_value = mock_resp
 
     with patch("urllib.request.urlopen", return_value=mock_resp):
@@ -72,9 +72,11 @@ def test_zgpu_generate_success_str():
 def test_zgpu_generate_rpc_error():
     client = ZGPUClient()
     mock_resp = MagicMock()
-    mock_resp.read.return_value = json.dumps(
-        {"jsonrpc": "2.0", "id": 1, "error": {"code": -32603, "message": "GPU OOM"}}
-    ).encode("utf-8")
+    mock_resp.read.return_value = json.dumps({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "error": {"code": -32603, "message": "GPU OOM"}
+    }).encode("utf-8")
     mock_resp.__enter__.return_value = mock_resp
 
     with patch("urllib.request.urlopen", return_value=mock_resp):
@@ -85,10 +87,7 @@ def test_zgpu_generate_rpc_error():
 
 def test_zgpu_generate_network_error():
     client = ZGPUClient()
-    with patch(
-        "urllib.request.urlopen",
-        side_effect=urllib.error.URLError("Connection refused"),
-    ):
+    with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("Connection refused")):
         resp = client.generate(prompt="Hi")
         assert resp.ok is False
         assert "Connection refused" in resp.error
@@ -98,9 +97,11 @@ def test_zgpu_generate_network_error():
 def test_zgpu_health_check():
     client = ZGPUClient()
     mock_resp = MagicMock()
-    mock_resp.read.return_value = json.dumps(
-        {"jsonrpc": "2.0", "id": 0, "result": {"healthy": True}}
-    ).encode("utf-8")
+    mock_resp.read.return_value = json.dumps({
+        "jsonrpc": "2.0",
+        "id": 0,
+        "result": {"healthy": True}
+    }).encode("utf-8")
     mock_resp.__enter__.return_value = mock_resp
 
     with patch("urllib.request.urlopen", return_value=mock_resp):

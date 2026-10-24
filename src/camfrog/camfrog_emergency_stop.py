@@ -35,7 +35,6 @@ from typing import Any, Callable, Dict, List, Optional
 # Scope enumeration
 # ---------------------------------------------------------------------------
 
-
 class EmergencyStopScope(str, Enum):
     """Hierarchical scopes for emergency stop coverage.
 
@@ -43,7 +42,6 @@ class EmergencyStopScope(str, Enum):
         GLOBAL > MACHINE > AGENT > ACCOUNT > FEATURE
     Activating a broader scope implicitly stops all narrower scopes.
     """
-
     GLOBAL = "GLOBAL"
     MACHINE = "MACHINE"
     AGENT = "AGENT"
@@ -70,7 +68,6 @@ def _scope_rank(scope: EmergencyStopScope) -> int:
 # Stop reason record
 # ---------------------------------------------------------------------------
 
-
 @dataclass
 class EmergencyStopReason:
     """Immutable record describing a single emergency stop activation.
@@ -95,7 +92,6 @@ class EmergencyStopReason:
     deactivated_at:
         UNIX epoch timestamp when the stop was explicitly deactivated, or ``None``.
     """
-
     scope: EmergencyStopScope
     reason_code: str
     operator_id: str
@@ -122,7 +118,6 @@ class EmergencyStopReason:
 # ---------------------------------------------------------------------------
 # Registry — process singleton backed by local SQLite
 # ---------------------------------------------------------------------------
-
 
 class EmergencyStopRegistry:
     """Singleton view of a persistent, process-shared local stop registry.
@@ -440,7 +435,6 @@ class EmergencyStopRegistry:
 # EmergencyStopGuard — context manager
 # ---------------------------------------------------------------------------
 
-
 class EmergencyStopGuard:
     """Context manager that gates execution on the current stop state.
 
@@ -490,7 +484,9 @@ class EmergencyStopGuard:
     def __enter__(self) -> "EmergencyStopGuard":
         if self.registry.is_stopped(self.scope, self.resource_key):
             active = self.registry.get_active_stops()
-            detail = "; ".join(f"[{s.scope.value}/{s.reason_code}]" for s in active)
+            detail = "; ".join(
+                f"[{s.scope.value}/{s.reason_code}]" for s in active
+            )
             msg = (
                 f"Emergency stop active for scope={self.scope.value}"
                 + (f" resource={self.resource_key!r}" if self.resource_key else "")
@@ -513,7 +509,6 @@ class EmergencyStopGuard:
 # ---------------------------------------------------------------------------
 # EmergencyStopHook — mixin for StatusScheduler / BackgroundStatusExecutor
 # ---------------------------------------------------------------------------
-
 
 class EmergencyStopHook:
     """Mixin that integrates emergency stop awareness into executor/scheduler classes.
@@ -567,12 +562,12 @@ class EmergencyStopHook:
         defaults when the caller does not provide explicit values.
         """
         effective_scope = scope or self.emergency_scope
-        effective_key = (
-            resource_key if resource_key is not None else self.emergency_resource_key
-        )
+        effective_key = resource_key if resource_key is not None else self.emergency_resource_key
         if self.stop_registry.is_stopped(effective_scope, effective_key):
             active = self.stop_registry.get_active_stops()
-            detail = "; ".join(f"[{s.scope.value}/{s.reason_code}]" for s in active)
+            detail = "; ".join(
+                f"[{s.scope.value}/{s.reason_code}]" for s in active
+            )
             raise StopIteration(
                 f"Emergency stop active for {effective_scope.value}"
                 + (f"/{effective_key}" if effective_key else "")
@@ -633,9 +628,7 @@ class EmergencyStopHook:
         """Return an :class:`EmergencyStopGuard` configured for this instance."""
         return EmergencyStopGuard(
             scope=scope or self.emergency_scope,
-            resource_key=resource_key
-            if resource_key is not None
-            else self.emergency_resource_key,
+            resource_key=resource_key if resource_key is not None else self.emergency_resource_key,
             registry=self.stop_registry,
             description=description,
         )
@@ -668,21 +661,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             args.operator,
             affected_resources=args.resource,
         )
-        print(
-            json.dumps(
-                {"activated": True, "stop": reason.as_dict()}, ensure_ascii=False
-            )
-        )
+        print(json.dumps({"activated": True, "stop": reason.as_dict()}, ensure_ascii=False))
         return 0
     if args.command == "deactivate":
         changed = registry.deactivate(
             EmergencyStopScope(args.scope), resource_key=args.resource
         )
-        print(
-            json.dumps(
-                {"deactivated": changed, "scope": args.scope}, ensure_ascii=False
-            )
-        )
+        print(json.dumps({"deactivated": changed, "scope": args.scope}, ensure_ascii=False))
         return 0 if changed else 1
 
     active = [reason.as_dict() for reason in registry.get_active_stops()]

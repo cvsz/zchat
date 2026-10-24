@@ -70,27 +70,25 @@ def build_profile_opener(raw_cookie: str):
     """Build a session opener scoped only to profiles.camfrog.com."""
     name, value = parse_profile_cookie(raw_cookie)
     jar = http.cookiejar.CookieJar()
-    jar.set_cookie(
-        http.cookiejar.Cookie(
-            version=0,
-            name=name,
-            value=value,
-            port=None,
-            port_specified=False,
-            domain="profiles.camfrog.com",
-            domain_specified=False,
-            domain_initial_dot=False,
-            path="/",
-            path_specified=True,
-            secure=True,
-            expires=None,
-            discard=True,
-            comment=None,
-            comment_url=None,
-            rest={"HttpOnly": None},
-            rfc2109=False,
-        )
-    )
+    jar.set_cookie(http.cookiejar.Cookie(
+        version=0,
+        name=name,
+        value=value,
+        port=None,
+        port_specified=False,
+        domain="profiles.camfrog.com",
+        domain_specified=False,
+        domain_initial_dot=False,
+        path="/",
+        path_specified=True,
+        secure=True,
+        expires=None,
+        discard=True,
+        comment=None,
+        comment_url=None,
+        rest={"HttpOnly": None},
+        rfc2109=False,
+    ))
     return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
 
 
@@ -110,15 +108,11 @@ def submit_profile_status(
     text = str(status)
     expected = str(expected_nickname or "").strip()
     if not confirmed:
-        return ProfileStatusResult(
-            ProfileStatusOutcome.REFUSED, "CONFIRMATION_REQUIRED"
-        )
+        return ProfileStatusResult(ProfileStatusOutcome.REFUSED, "CONFIRMATION_REQUIRED")
     if not expected:
         return ProfileStatusResult(ProfileStatusOutcome.REFUSED, "ACCOUNT_REQUIRED")
-    if (
-        not text.strip()
-        or len(text) > MAX_STATUS_LENGTH
-        or any(ord(char) < 32 or ord(char) == 127 for char in text)
+    if not text.strip() or len(text) > MAX_STATUS_LENGTH or any(
+        ord(char) < 32 or ord(char) == 127 for char in text
     ):
         return ProfileStatusResult(ProfileStatusOutcome.REFUSED, "INVALID_STATUS")
     if timeout <= 0:
@@ -130,9 +124,7 @@ def submit_profile_status(
         return ProfileStatusResult(ProfileStatusOutcome.REJECTED, "PROFILE_READ_FAILED")
     identity = extract_profile_identity(html)
     if identity is None:
-        return ProfileStatusResult(
-            ProfileStatusOutcome.REJECTED, "IDENTITY_UNAVAILABLE"
-        )
+        return ProfileStatusResult(ProfileStatusOutcome.REJECTED, "IDENTITY_UNAVAILABLE")
     if identity["nickname"].casefold() != expected.casefold():
         return ProfileStatusResult(ProfileStatusOutcome.REJECTED, "ACCOUNT_MISMATCH")
     csrf = extract_csrf(html)
@@ -187,15 +179,11 @@ def submit_profile_status(
         payload = json.loads(reply)
     except (TypeError, ValueError):
         return ProfileStatusResult(
-            ProfileStatusOutcome.EFFECT_UNKNOWN,
-            "ACKNOWLEDGEMENT_UNPARSEABLE",
-            status_code,
+            ProfileStatusOutcome.EFFECT_UNKNOWN, "ACKNOWLEDGEMENT_UNPARSEABLE", status_code
         )
     if not isinstance(payload, dict):
         return ProfileStatusResult(
-            ProfileStatusOutcome.EFFECT_UNKNOWN,
-            "ACKNOWLEDGEMENT_UNPARSEABLE",
-            status_code,
+            ProfileStatusOutcome.EFFECT_UNKNOWN, "ACKNOWLEDGEMENT_UNPARSEABLE", status_code
         )
     if payload.get("error"):
         return ProfileStatusResult(
@@ -253,9 +241,7 @@ def extract_csrf(html: str) -> str:
     return match.group(1) if match else ""
 
 
-def post_profile_status(
-    opener, status: str, csrf: str, timeout: float
-) -> ProfileStatusReply:
+def post_profile_status(opener, status: str, csrf: str, timeout: float) -> ProfileStatusReply:
     """Submit one profile text update using the session-owned CSRF token."""
     data = urllib.parse.urlencode({"status": status, "csrf": csrf}).encode("utf-8")
     request = urllib.request.Request(

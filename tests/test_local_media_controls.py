@@ -1,5 +1,4 @@
 """Local Web Status integrations for Music DJ and vMix."""
-
 import json
 import sys
 import time
@@ -24,13 +23,12 @@ def test_music_dj_control_request_uses_protocol_and_cleans_up(tmp_path):
             "current": {"title": "Song", "user": "Ann"},
             "queue": [],
         }
-        (
-            tmp_path / "dj-control" / (request["request_id"] + ".response.json")
-        ).write_text(json.dumps(response), encoding="utf-8")
+        (tmp_path / "dj-control" /
+         (request["request_id"] + ".response.json")).write_text(
+            json.dumps(response), encoding="utf-8")
 
     result = wsg.music_dj_control_request(
-        executable, "status", timeout=1, sleep=simulate_worker
-    )
+        executable, "status", timeout=1, sleep=simulate_worker)
 
     assert result["current"] == {"title": "Song", "user": "Ann"}
     assert list((tmp_path / "dj-control").iterdir()) == []
@@ -51,13 +49,12 @@ def test_music_dj_control_request_sends_bounded_voice_text(tmp_path):
             "current": None,
             "queue": [],
         }
-        (
-            tmp_path / "dj-control" / (request["request_id"] + ".response.json")
-        ).write_text(json.dumps(response), encoding="utf-8")
+        (tmp_path / "dj-control" /
+         (request["request_id"] + ".response.json")).write_text(
+            json.dumps(response), encoding="utf-8")
 
     result = wsg.music_dj_control_request(
-        executable, "speak", timeout=1, sleep=simulate_worker, text="สวัสดีครับ"
-    )
+        executable, "speak", timeout=1, sleep=simulate_worker, text="สวัสดีครับ")
 
     assert result["ok"] is True
     assert seen["action"] == "speak"
@@ -68,15 +65,12 @@ def test_music_dj_control_request_sends_bounded_voice_text(tmp_path):
 
 
 def test_music_dj_voice_summary_includes_requester_time_and_next_song():
-    summary = wsg.music_dj_speech_summary(
-        {
-            "current": {"title": "Current song", "user": "Ann"},
-            "queue": [{"title": "Next song", "user": "Bob"}],
-            "updated_at": 1000,
-            "playback": {"elapsed_seconds": 75, "duration_seconds": 180},
-        },
-        now=1000,
-    )
+    summary = wsg.music_dj_speech_summary({
+        "current": {"title": "Current song", "user": "Ann"},
+        "queue": [{"title": "Next song", "user": "Bob"}],
+        "updated_at": 1000,
+        "playback": {"elapsed_seconds": 75, "duration_seconds": 180},
+    }, now=1000)
     assert "Current song" in summary
     assert "requested by Ann" in summary
     assert "playback 1:15 of 3:00" in summary
@@ -112,27 +106,21 @@ def test_music_dj_state_requires_a_fresh_valid_snapshot(tmp_path, monkeypatch):
     assert wsg.music_dj_worker_state(executable) is None
 
 
-@pytest.mark.parametrize(
-    "address",
-    [
-        "http://127.0.0.1:8088",
-        "http://localhost:8088/api/",
-        "https://[::1]:8443/",
-    ],
-)
+@pytest.mark.parametrize("address", [
+    "http://127.0.0.1:8088",
+    "http://localhost:8088/api/",
+    "https://[::1]:8443/",
+])
 def test_vmix_api_origin_accepts_only_local_origins(address):
     assert wsg.normalize_vmix_api_url(address).endswith("/api/")
 
 
-@pytest.mark.parametrize(
-    "address",
-    [
-        "http://192.168.1.20:8088",
-        "http://vmix.example:8088",
-        "http://user:password@127.0.0.1:8088",
-        "http://127.0.0.1:8088/?Function=CutDirect",
-    ],
-)
+@pytest.mark.parametrize("address", [
+    "http://192.168.1.20:8088",
+    "http://vmix.example:8088",
+    "http://user:password@127.0.0.1:8088",
+    "http://127.0.0.1:8088/?Function=CutDirect",
+])
 def test_vmix_api_origin_rejects_remote_hosts_and_embedded_parameters(address):
     with pytest.raises(ValueError):
         wsg.normalize_vmix_api_url(address)
@@ -153,13 +141,11 @@ class _Response:
 
 
 def test_fetch_vmix_inputs_parses_only_valid_input_records(monkeypatch):
-    response = (
-        b"<vmix><inputs>"
-        b'<input key="00000000-0000-0000-0000-000000000001" '
-        b'number="1" title="Camera 1" type="VideoCapture" />'
-        b'<input key="bad" number="x" title="bad" />'
-        b"</inputs></vmix>"
-    )
+    response = (b'<vmix><inputs>'
+                b'<input key="00000000-0000-0000-0000-000000000001" '
+                b'number="1" title="Camera 1" type="VideoCapture" />'
+                b'<input key="bad" number="x" title="bad" />'
+                b'</inputs></vmix>')
     requested = []
 
     class _Opener:
@@ -167,19 +153,16 @@ def test_fetch_vmix_inputs_parses_only_valid_input_records(monkeypatch):
             requested.append((request.full_url, timeout))
             return _Response(response)
 
-    monkeypatch.setattr(
-        wsg.urllib.request, "build_opener", lambda *_handlers: _Opener()
-    )
+    monkeypatch.setattr(wsg.urllib.request, "build_opener",
+                        lambda *_handlers: _Opener())
     inputs = wsg.fetch_vmix_inputs("http://127.0.0.1:8088")
 
-    assert inputs == [
-        {
-            "key": "00000000-0000-0000-0000-000000000001",
-            "number": 1,
-            "title": "Camera 1",
-            "type": "VideoCapture",
-        }
-    ]
+    assert inputs == [{
+        "key": "00000000-0000-0000-0000-000000000001",
+        "number": 1,
+        "title": "Camera 1",
+        "type": "VideoCapture",
+    }]
     assert requested[0][0] == "http://127.0.0.1:8088/api/"
 
 

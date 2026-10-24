@@ -40,7 +40,6 @@ from camfrog_windows_runtime import (
 
 class StatusResultState(str, Enum):
     """Evidence states for a status request; none assert external provider state."""
-
     PENDING = "PENDING"
     PROCESS_VERIFIED = "PROCESS_VERIFIED"
     WINDOW_VERIFIED = "WINDOW_VERIFIED"
@@ -54,7 +53,6 @@ class StatusResultState(str, Enum):
 
 class ExecutionMode(str, Enum):
     """Execution mode distinguishing strict background from interactive."""
-
     STRICT_BACKGROUND = "strict_background"
     INTERACTIVE = "interactive"
 
@@ -71,7 +69,6 @@ def strict_background_submit_supported() -> bool:
 @dataclass
 class StatusExecutionEvidence:
     """Sanitized evidence log of a status execution operation."""
-
     request_id: str
     operation_id: str
     client_version: str
@@ -92,7 +89,6 @@ class StatusExecutionEvidence:
 
 
 # ---------- Status Control Adapter ----------
-
 
 class StatusControlAdapter:
     """Low-level interface to Camfrog's CComboBoxTS and Edit controls."""
@@ -168,7 +164,6 @@ class StatusControlAdapter:
 
         try:
             import win32con
-
             # Fail closed on stale/dangling handles: never report success
             # for a control that does not exist.
             import win32gui
@@ -191,16 +186,13 @@ class StatusControlAdapter:
 
             # 2. Notify parent CComboBoxTS of EN_CHANGE
             wparam = (win32con.EN_CHANGE << 16) | 1001
-            if (
-                _send_message_timeout(
-                    self.combo_hwnd,
-                    win32con.WM_COMMAND,
-                    wparam,
-                    self.edit_hwnd,
-                    self.MESSAGE_TIMEOUT_MS,
-                )
-                is None
-            ):
+            if _send_message_timeout(
+                self.combo_hwnd,
+                win32con.WM_COMMAND,
+                wparam,
+                self.edit_hwnd,
+                self.MESSAGE_TIMEOUT_MS,
+            ) is None:
                 return False
 
             return True
@@ -216,7 +208,6 @@ class StatusControlAdapter:
             if not self.controls_are_current():
                 return ""
             import win32con
-
             buf = ctypes.create_unicode_buffer(512)
             result = _send_message_timeout(
                 self.edit_hwnd,
@@ -240,7 +231,6 @@ class StatusControlAdapter:
             if not self.controls_are_current():
                 return ""
             import win32con
-
             count = _send_message_timeout(
                 self.combo_hwnd, win32con.CB_GETCOUNT, 0, 0, self.MESSAGE_TIMEOUT_MS
             )
@@ -347,7 +337,6 @@ def _foreground_window_handle() -> Optional[int]:
 
 # ---------- Camfrog Window Resolver ----------
 
-
 class CamfrogWindowResolver:
     """Discovers and validates the status controls under verified Camfrog process."""
 
@@ -360,7 +349,8 @@ class CamfrogWindowResolver:
         self.classifier = window_classifier or WindowsCamfrogWindowClassifier()
 
     def resolve_status_controls(
-        self, pid: Optional[int] = None
+        self,
+        pid: Optional[int] = None
     ) -> Tuple[ProcessIdentity, ClassifiedWindow, StatusControlAdapter]:
         """Resolve verified process, main directory window, and status control adapter.
 
@@ -373,15 +363,11 @@ class CamfrogWindowResolver:
 
         main_windows = [w for w in windows if w.role == WindowRole.MAIN_DIRECTORY]
         if not main_windows:
-            raise LookupError(
-                f"No verified MAIN_DIRECTORY window found for Camfrog PID {proc.pid}."
-            )
+            raise LookupError(f"No verified MAIN_DIRECTORY window found for Camfrog PID {proc.pid}.")
 
         main_win = main_windows[0]
         if not revalidate_window_identity(main_win, proc):
-            raise LookupError(
-                f"Main directory window hwnd={main_win.hwnd} failed identity revalidation."
-            )
+            raise LookupError(f"Main directory window hwnd={main_win.hwnd} failed identity revalidation.")
 
         # Discover CComboBoxTS (automation ID 1436) and its child Edit (ID 1001).
         # Control IDs take precedence over class names: on windows with
@@ -395,7 +381,6 @@ class CamfrogWindowResolver:
         if sys.platform == "win32":
             try:
                 import win32gui
-
                 def _cb(ch, _):
                     nonlocal combo_hwnd, edit_hwnd, combo_by_id, edit_by_id
                     cid = win32gui.GetDlgCtrlID(ch)
@@ -409,7 +394,6 @@ class CamfrogWindowResolver:
                     elif cid == 1001:
                         edit_by_id = ch
                     return True
-
                 win32gui.EnumChildWindows(main_win.hwnd, _cb, None)
                 if combo_by_id and edit_by_id:
                     try:
@@ -436,7 +420,6 @@ class CamfrogWindowResolver:
 
 
 # ---------- Resource-Scoped Status Lock ----------
-
 
 class StatusResourceLock:
     """Inter-process and intra-process resource-scoped synchronization for status writes.
@@ -507,10 +490,7 @@ class StatusResourceLock:
 
                 rem_ms = max(10, int(max(0.01, deadline - time.monotonic()) * 1000))
                 wait_res = wait_for_single_object(handle, rem_ms)
-                if wait_res not in (
-                    0x00000000,
-                    0x00000080,
-                ):  # WAIT_OBJECT_0 or WAIT_ABANDONED
+                if wait_res not in (0x00000000, 0x00000080):  # WAIT_OBJECT_0 or WAIT_ABANDONED
                     close_handle(handle)
                     self._mutex_handle = None
                     self._kernel32 = None
@@ -536,11 +516,7 @@ class StatusResourceLock:
 
     def release(self) -> None:
         """Release the scoped lock."""
-        if (
-            sys.platform == "win32"
-            and self._mutex_handle
-            and self._kernel32 is not None
-        ):
+        if sys.platform == "win32" and self._mutex_handle and self._kernel32 is not None:
             try:
                 if self._acquired_mutex:
                     self._kernel32.ReleaseMutex(self._mutex_handle)
@@ -572,7 +548,6 @@ class StatusResourceLock:
 
 
 # ---------- Background Status Executor ----------
-
 
 class BackgroundStatusExecutor(EmergencyStopHook):
     """Executes a status change only when strict desktop isolation is supported.
@@ -715,9 +690,7 @@ class BackgroundStatusExecutor(EmergencyStopHook):
                     request_id=req_id,
                     operation_id=op_id,
                     client_version=getattr(locals().get("proc"), "version", ""),
-                    process_identity=locals()["proc"].as_dict()
-                    if locals().get("proc")
-                    else {},
+                    process_identity=locals()["proc"].as_dict() if locals().get("proc") else {},
                     window_role=WindowRole.MAIN_DIRECTORY.value,
                     execution_mode=mode.value,
                     result_state=StatusResultState.BACKGROUND_UNSUPPORTED.value,
@@ -744,9 +717,7 @@ class BackgroundStatusExecutor(EmergencyStopHook):
             # Resource-scoped synchronization across processes targeting this Camfrog client
             lock_resource = f"pid_{proc.pid}"
             try:
-                with StatusResourceLock(
-                    resource_key=lock_resource, timeout_seconds=timeout_seconds
-                ):
+                with StatusResourceLock(resource_key=lock_resource, timeout_seconds=timeout_seconds):
                     # Snapshot foreground before and after; this detects endpoint changes,
                     # but cannot rule out a transient focus change between samples.
                     fg_before = _foreground_window_handle()
@@ -877,9 +848,7 @@ class BackgroundStatusExecutor(EmergencyStopHook):
                     deadline = time.monotonic() + timeout_seconds
                     while time.monotonic() < deadline:
                         time.sleep(0.05)
-                        if not self._target_identity_is_current(
-                            proc, main_win, adapter
-                        ):
+                        if not self._target_identity_is_current(proc, main_win, adapter):
                             return target_identity_evidence(
                                 proc,
                                 main_win,
@@ -972,7 +941,6 @@ class BackgroundStatusExecutor(EmergencyStopHook):
 
 # ---------- Shared Status Scheduler ----------
 
-
 class StatusScheduler:
     """Manages scheduled, random, or marquee status rotations safely."""
 
@@ -1002,9 +970,7 @@ class StatusScheduler:
             if len(self._history) > 200:
                 self._history.pop(0)
 
-    def set_single_status(
-        self, text: str, pid: Optional[int] = None
-    ) -> StatusExecutionEvidence:
+    def set_single_status(self, text: str, pid: Optional[int] = None) -> StatusExecutionEvidence:
         """Set a single status update immediately in background."""
         ev = self.executor.execute_status_change(text, pid=pid)
         self.record_evidence(ev)
@@ -1033,9 +999,7 @@ DEFAULT_CONFIG_CONTRACT = {
 }
 
 
-def validate_status_config(
-    cfg: Dict[str, Any],
-) -> Tuple[bool, List[str], Dict[str, Any]]:
+def validate_status_config(cfg: Dict[str, Any]) -> Tuple[bool, List[str], Dict[str, Any]]:
     """Validate status configuration against safety contract and supply safe defaults."""
     errors = []
     normalized = dict(cfg)
@@ -1068,8 +1032,6 @@ def validate_status_config(
 
     target = status_sec.get("background_enter_target")
     if target not in ("combo", "edit"):
-        errors.append(
-            f"Invalid status.background_enter_target: {target!r} (must be 'combo' or 'edit')"
-        )
+        errors.append(f"Invalid status.background_enter_target: {target!r} (must be 'combo' or 'edit')")
 
     return len(errors) == 0, errors, normalized

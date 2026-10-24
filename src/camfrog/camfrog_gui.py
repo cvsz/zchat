@@ -3,7 +3,6 @@
 Each packaged entrypoint selects a feature profile and stores its own config
 beside its executable. Running this module directly keeps the combined source UI.
 """
-
 import ctypes
 import os
 import contextlib
@@ -23,8 +22,7 @@ from clipboard_support import ClipboardController
 
 APP_PROFILE = os.environ.get("CAMFROG_APP_PROFILE", "full").lower()
 APP_NAME = {"room": "Room Control", "im_reply": "IM Auto-reply"}.get(
-    APP_PROFILE, "Camfrog Auto"
-)
+    APP_PROFILE, "Camfrog Auto")
 
 
 def apply_app_profile(cfg):
@@ -40,27 +38,9 @@ def apply_app_profile(cfg):
     return cfg
 
 
-CLI_COMMANDS = {
-    "check",
-    "discover",
-    "detect",
-    "chat-probe",
-    "im-probe",
-    "windows",
-    "run",
-    "start",
-    "stop",
-    "state",
-    "status",
-    "autostart-on",
-    "autostart-off",
-    "init",
-    "marquee",
-    "history",
-    "history-add",
-    "history-import",
-    "test-rules",
-}
+CLI_COMMANDS = {"check", "discover", "detect", "chat-probe", "im-probe", "windows", "run", "start", "stop", "state", "status",
+                "autostart-on", "autostart-off", "init", "marquee", "history", "history-add",
+                "history-import", "test-rules"}
 
 
 def has_cli_command(argv):
@@ -79,33 +59,25 @@ def has_cli_command(argv):
 
 def parse_gui_args(argv):
     parser = argparse.ArgumentParser(description="Camfrog feature app")
-    parser.add_argument(
-        "--config", default=None, help="use an alternate app-local config"
-    )
+    parser.add_argument("--config", default=None, help="use an alternate app-local config")
     args = parser.parse_args(argv)
     if args.config is not None and not args.config.strip():
         parser.error("argument --config: expected a path")
     return args
-
-
 SEL_FIELDS = ("control_type", "auto_id", "class_name", "title", "title_re", "index")
 
 
 def bi(s):
     """'English|ไทย' -> text for the current language."""
     en, _, th = s.partition("|")
-    return (th if (ca.LANG == "th" and th) else en).replace(
-        "{pipe}", "||"
-    )  # {pipe}: literal ||
+    return (th if (ca.LANG == "th" and th) else en).replace("{pipe}", "||")  # {pipe}: literal ||
 
 
 # ---------------------------------------------------------------- Tk-free logic
 def msgs_to_text(msgs):
     """status.messages -> editor text: one per line, `ไทย || English` for pairs."""
-    return "\n".join(
-        m if isinstance(m, str) else f"{m.get('th', '')} || {m.get('en', '')}"
-        for m in msgs
-    )
+    return "\n".join(m if isinstance(m, str) else f"{m.get('th', '')} || {m.get('en', '')}"
+                     for m in msgs)
 
 
 def text_to_msgs(text):
@@ -180,10 +152,8 @@ def apply_proposal_to_vars(sel_vars, proposal):
 
 def reply_to_fields(spec):
     """rule reply (str | list | {th,en}) -> (th_text, en_text, any_text), one variant per line."""
-
     def lines(x):
         return "\n".join([x] if isinstance(x, str) else (x or []))
-
     if isinstance(spec, dict):
         return lines(spec.get("th")), lines(spec.get("en")), ""
     return "", "", lines(spec)
@@ -193,7 +163,6 @@ def fields_to_reply(th, en, anyl):
     def pool(x):
         v = [ln.strip() for ln in x.splitlines() if ln.strip()]
         return v[0] if len(v) == 1 else v
-
     th_p, en_p, any_p = pool(th), pool(en), pool(anyl)
     if not (th_p or en_p or any_p):
         return None
@@ -211,9 +180,7 @@ class ConfigModel:
             try:
                 self.path.relative_to(ca.BASE.resolve())
             except ValueError as exc:
-                raise ValueError(
-                    "This app's config must stay inside its own folder."
-                ) from exc
+                raise ValueError("This app's config must stay inside its own folder.") from exc
         self.cfg = None
 
     def load(self):
@@ -227,12 +194,8 @@ class ConfigModel:
     def check(cfg):
         errs, warns = ca.validate(cfg)
         ar = cfg["autoreply"]
-        if (
-            not cfg["dry_run"]
-            and ar["enabled"]
-            and not ar["own_nickname"].strip()
-            and ca.t("refuse_live") not in errs
-        ):
+        if (not cfg["dry_run"] and ar["enabled"] and not ar["own_nickname"].strip()
+                and ca.t("refuse_live") not in errs):
             errs.append(ca.t("refuse_live"))
         return errs, warns
 
@@ -272,11 +235,8 @@ def explain(cfg, nick, msg, im=False):
         return head + "\n" + ca.t("tr_skip", why=ca.t("why_" + r["skip"]))
     if r["rule"] is None:
         return head + "\n" + ca.t("tr_none")
-    return (
-        head
-        + "\n"
-        + ca.t("tr_match", i=r["rule"]["idx"], reply=r["reply"] or ca.t("tr_blocked"))
-    )
+    return head + "\n" + ca.t("tr_match", i=r["rule"]["idx"],
+                              reply=r["reply"] or ca.t("tr_blocked"))
 
 
 def autosave_needs_confirmation(cfg, bot_running):
@@ -303,65 +263,34 @@ def build_app():
             self.enabled = tk.BooleanVar(value=rule.get("enabled", True))
             f = ttk.Frame(self, padding=10)
             f.pack(fill="both", expand=True)
-            ttk.Label(f, text=bi("Pattern (regex)|รูปแบบ (regex)")).grid(
-                row=0, column=0, sticky="w"
-            )
-            ttk.Entry(f, textvariable=self.pat, width=60).grid(
-                row=0, column=1, columnspan=3, sticky="we"
-            )
+            ttk.Label(f, text=bi("Pattern (regex)|รูปแบบ (regex)")).grid(row=0, column=0, sticky="w")
+            ttk.Entry(f, textvariable=self.pat, width=60).grid(row=0, column=1, columnspan=3, sticky="we")
             th, en, anyl = reply_to_fields(rule.get("reply"))
             self.boxes = []
-            for r, (lab, val) in enumerate(
-                (
-                    (bi("Reply TH (one per line = random)|ตอบไทย (บรรทัดละแบบ สุ่ม)"), th),
-                    (bi("Reply EN|ตอบอังกฤษ"), en),
-                    (bi("Reply any language|ตอบทุกภาษา"), anyl),
-                ),
-                1,
-            ):
+            for r, (lab, val) in enumerate(((bi("Reply TH (one per line = random)|ตอบไทย (บรรทัดละแบบ สุ่ม)"), th),
+                                            (bi("Reply EN|ตอบอังกฤษ"), en),
+                                            (bi("Reply any language|ตอบทุกภาษา"), anyl)), 1):
                 ttk.Label(f, text=lab).grid(row=r, column=0, sticky="nw", pady=2)
                 box = tk.Text(f, width=60, height=3)
                 box.insert("1.0", val)
                 box.grid(row=r, column=1, columnspan=3, sticky="we", pady=2)
                 self.boxes.append(box)
-            ttk.Label(f, text=bi("Only language|เฉพาะภาษา")).grid(
-                row=4, column=0, sticky="w"
-            )
-            ttk.Combobox(
-                f,
-                textvariable=self.lang,
-                values=("", "th", "en"),
-                width=6,
-                state="readonly",
-            ).grid(row=4, column=1, sticky="w")
-            ttk.Label(f, text=bi("Cooldown (s)|คูลดาวน์ (วินาที)")).grid(
-                row=4, column=2, sticky="e"
-            )
-            ttk.Entry(f, textvariable=self.cool, width=8).grid(
-                row=4, column=3, sticky="w"
-            )
-            ttk.Checkbutton(
-                f,
-                text=bi("Only when my nick is mentioned|ตอบเมื่อมีคนพิมพ์นิคเรา"),
-                variable=self.mention,
-            ).grid(row=5, column=0, columnspan=2, sticky="w")
+            ttk.Label(f, text=bi("Only language|เฉพาะภาษา")).grid(row=4, column=0, sticky="w")
+            ttk.Combobox(f, textvariable=self.lang, values=("", "th", "en"), width=6,
+                         state="readonly").grid(row=4, column=1, sticky="w")
+            ttk.Label(f, text=bi("Cooldown (s)|คูลดาวน์ (วินาที)")).grid(row=4, column=2, sticky="e")
+            ttk.Entry(f, textvariable=self.cool, width=8).grid(row=4, column=3, sticky="w")
+            ttk.Checkbutton(f, text=bi("Only when my nick is mentioned|ตอบเมื่อมีคนพิมพ์นิคเรา"),
+                            variable=self.mention).grid(row=5, column=0, columnspan=2, sticky="w")
             ttk.Checkbutton(f, text=bi("Enabled|เปิดใช้"), variable=self.enabled).grid(
-                row=5, column=2, columnspan=2, sticky="w"
-            )
-            ttk.Label(
-                f,
-                text=bi(
-                    "Variables: {sender} {me} {time} {date}. Replies starting with / are blocked.|"
-                    "ตัวแปร: {sender} {me} {time} {date} คำตอบที่ขึ้นต้นด้วย / จะถูกบล็อก"
-                ),
-                foreground="#626d7a",
-            ).grid(row=6, column=0, columnspan=4, sticky="w", pady=4)
+                row=5, column=2, columnspan=2, sticky="w")
+            ttk.Label(f, text=bi("Variables: {sender} {me} {time} {date}. Replies starting with / are blocked.|"
+                                 "ตัวแปร: {sender} {me} {time} {date} คำตอบที่ขึ้นต้นด้วย / จะถูกบล็อก"),
+                      foreground="#626d7a").grid(row=6, column=0, columnspan=4, sticky="w", pady=4)
             bar = ttk.Frame(f)
             bar.grid(row=7, column=0, columnspan=4, sticky="e")
             ttk.Button(bar, text="OK", command=self.ok).pack(side="left", padx=4)
-            ttk.Button(bar, text=bi("Cancel|ยกเลิก"), command=self.destroy).pack(
-                side="left"
-            )
+            ttk.Button(bar, text=bi("Cancel|ยกเลิก"), command=self.destroy).pack(side="left")
             app.install_clipboard_support(self, remember=False)
             self.grab_set()
             self.wait_window()
@@ -373,9 +302,7 @@ def build_app():
                 reply = fields_to_reply(*(b.get("1.0", "end") for b in self.boxes))
                 cool = float(self.cool.get() or 0)
                 if not pat or reply is None or cool < 0:
-                    raise ValueError(
-                        bi("pattern and reply are required|ต้องมี pattern และ reply")
-                    )
+                    raise ValueError(bi("pattern and reply are required|ต้องมี pattern และ reply"))
             except (re.error, ValueError) as e:
                 messagebox.showerror(bi("Rule|กฎ"), str(e), parent=self)
                 return
@@ -401,44 +328,21 @@ def build_app():
             except tk.TclError:
                 pass
             style.configure("TFrame", background="#f4f1e8")
-            style.configure(
-                "TLabel",
-                background="#f4f1e8",
-                foreground="#283648",
-                font=("Segoe UI", 9),
-            )
+            style.configure("TLabel", background="#f4f1e8", foreground="#283648", font=("Segoe UI", 9))
             style.configure("TCheckbutton", background="#f4f1e8", foreground="#283648")
             style.configure("TRadiobutton", background="#f4f1e8", foreground="#283648")
             style.configure("TLabelframe", background="#f4f1e8", bordercolor="#d5c8ac")
-            style.configure(
-                "TLabelframe.Label",
-                background="#f4f1e8",
-                foreground="#8b672b",
-                font=("Segoe UI", 9, "bold"),
-            )
-            style.configure(
-                "TButton",
-                padding=(7, 4),
-                font=("Segoe UI", 9),
-                background="#ebe5d9",
-                foreground="#283648",
-            )
-            style.map(
-                "TButton", background=[("active", "#d6e9e8"), ("pressed", "#d5c8ac")]
-            )
-            style.configure(
-                "TEntry",
-                padding=(4, 4),
-                fieldbackground="#ffffff",
-                foreground="#283648",
-            )
+            style.configure("TLabelframe.Label", background="#f4f1e8", foreground="#8b672b",
+                            font=("Segoe UI", 9, "bold"))
+            style.configure("TButton", padding=(7, 4), font=("Segoe UI", 9),
+                            background="#ebe5d9", foreground="#283648")
+            style.map("TButton", background=[("active", "#d6e9e8"), ("pressed", "#d5c8ac")])
+            style.configure("TEntry", padding=(4, 4), fieldbackground="#ffffff",
+                            foreground="#283648")
             style.configure("TNotebook", background="#f4f1e8")
             style.configure("TNotebook.Tab", padding=(11, 6), font=("Segoe UI", 9))
-            style.map(
-                "TNotebook.Tab",
-                background=[("selected", "#fffdfa")],
-                foreground=[("selected", "#8b672b")],
-            )
+            style.map("TNotebook.Tab", background=[("selected", "#fffdfa")],
+                      foreground=[("selected", "#8b672b")])
             self.root.geometry("800x560")
             self.root.minsize(660, 460)
             self.model = ConfigModel(cfg_path)
@@ -502,45 +406,28 @@ def build_app():
             self.state_lbl.pack(side="left")
             self.mode_lbl = ttk.Label(top, text="", font=("Segoe UI", 11, "bold"))
             self.mode_lbl.pack(side="left", padx=14)
-            ttk.Button(top, text="TH / EN", width=8, command=self.switch_lang).pack(
-                side="right"
-            )
+            ttk.Button(top, text="TH / EN", width=8, command=self.switch_lang).pack(side="right")
             bar = ttk.Frame(self.root, padding=(8, 6))
             bar.pack(side="bottom", fill="x")
-            ttk.Button(
-                bar, text=bi("Save (Ctrl+S)|บันทึก (Ctrl+S)"), command=self.save
-            ).pack(side="left")
-            ttk.Button(
-                bar, text=bi("Reload from disk|โหลดจากไฟล์ใหม่"), command=self.reload
-            ).pack(side="left", padx=6)
-            ttk.Button(
-                bar, text=bi("Check config|ตรวจคอนฟิก"), command=self.check_cfg
-            ).pack(side="left")
+            ttk.Button(bar, text=bi("Save (Ctrl+S)|บันทึก (Ctrl+S)"), command=self.save).pack(side="left")
+            ttk.Button(bar, text=bi("Reload from disk|โหลดจากไฟล์ใหม่"), command=self.reload).pack(side="left", padx=6)
+            ttk.Button(bar, text=bi("Check config|ตรวจคอนฟิก"), command=self.check_cfg).pack(side="left")
             if not hasattr(self, "auto_apply_var"):
                 self.auto_apply_var = tk.BooleanVar(master=self.root, value=True)
-            ttk.Checkbutton(
-                bar,
-                text=bi("Auto-apply valid changes|ใช้ค่าที่ถูกต้องอัตโนมัติ"),
-                variable=self.auto_apply_var,
-                command=self.auto_apply_toggled,
-            ).pack(side="right")
+            ttk.Checkbutton(bar, text=bi("Auto-apply valid changes|ใช้ค่าที่ถูกต้องอัตโนมัติ"),
+                            variable=self.auto_apply_var, command=self.auto_apply_toggled).pack(side="right")
             self.msg = ttk.Label(bar, text="", foreground="#626d7a")
             self.msg.pack(side="left", padx=12)
             self.nb = ttk.Notebook(self.root)
             self.nb.pack(fill="both", expand=True, padx=8)
-            tab_specs = (
-                ("Dashboard|แดชบอร์ด", "Dashboard", self.tab_dashboard),
-                ("Setup|ตั้งค่าเริ่มต้น", "Setup", self.tab_setup),
-                ("Status|สถานะ", "Status", self.tab_status),
-                ("Auto-reply|ตอบอัตโนมัติ", "Auto-reply", self.tab_reply),
-                ("History|ประวัติ", "History", self.tab_history),
-                ("Advanced|ขั้นสูง", "Advanced", self.tab_advanced),
-            )
-            visible_tabs = (
-                {"Dashboard", "Setup", "Auto-reply"}
-                if APP_PROFILE in ("room", "im_reply")
-                else None
-            )
+            tab_specs = (("Dashboard|แดชบอร์ด", "Dashboard", self.tab_dashboard),
+                         ("Setup|ตั้งค่าเริ่มต้น", "Setup", self.tab_setup),
+                         ("Status|สถานะ", "Status", self.tab_status),
+                         ("Auto-reply|ตอบอัตโนมัติ", "Auto-reply", self.tab_reply),
+                         ("History|ประวัติ", "History", self.tab_history),
+                         ("Advanced|ขั้นสูง", "Advanced", self.tab_advanced))
+            visible_tabs = ({"Dashboard", "Setup", "Auto-reply"}
+                            if APP_PROFILE in ("room", "im_reply") else None)
             for name, key, fn in tab_specs:
                 f = ttk.Frame(self.nb, padding=8)
                 fn(f)
@@ -559,8 +446,7 @@ def build_app():
                 except tk.TclError:
                     pass
             self.clipboard_controller = ClipboardController(
-                self.root, translate=bi, on_error=self.clipboard_error
-            )
+                self.root, translate=bi, on_error=self.clipboard_error)
             self.clipboard_menu = self.clipboard_controller.menu
             self.clipboard_target = None
 
@@ -573,28 +459,21 @@ def build_app():
         def clipboard_error(self, exc):
             if hasattr(self, "msg"):
                 try:
-                    self.msg.configure(
-                        text=bi(
-                            "Clipboard error: {error}|คลิปบอร์ดผิดพลาด: {error}"
-                        ).format(error=exc)
-                    )
+                    self.msg.configure(text=bi("Clipboard error: {error}|คลิปบอร์ดผิดพลาด: {error}").format(
+                        error=exc))
                 except tk.TclError:
                     pass
 
         def clipboard_virtual(self, event, virtual):
             self.clipboard_target = event.widget
-            action = {"<<Copy>>": "copy", "<<Cut>>": "cut", "<<Paste>>": "paste"}.get(
-                virtual
-            )
+            action = {"<<Copy>>": "copy", "<<Cut>>": "cut", "<<Paste>>": "paste"}.get(virtual)
             if action:
                 self.clipboard_controller.perform(event.widget, action)
             return "break"
 
         def clipboard_action(self, virtual):
             widget = self.clipboard_target
-            action = {"<<Copy>>": "copy", "<<Cut>>": "cut", "<<Paste>>": "paste"}.get(
-                virtual
-            )
+            action = {"<<Copy>>": "copy", "<<Cut>>": "cut", "<<Paste>>": "paste"}.get(virtual)
             if action:
                 self.clipboard_controller.perform(widget, action)
 
@@ -608,29 +487,19 @@ def build_app():
 
         def field(self, parent, label, path, kind="str", choices=(), width=26, hint=""):
             row = parent.grid_size()[1]
-            ttk.Label(parent, text=bi(label)).grid(
-                row=row, column=0, sticky="w", padx=4, pady=2
-            )
+            ttk.Label(parent, text=bi(label)).grid(row=row, column=0, sticky="w", padx=4, pady=2)
             if kind == "bool":
                 var = tk.BooleanVar()
                 w = ttk.Checkbutton(parent, variable=var)
             elif kind == "choice":
                 var = tk.StringVar()
-                w = ttk.Combobox(
-                    parent,
-                    textvariable=var,
-                    values=choices,
-                    state="readonly",
-                    width=width - 3,
-                )
+                w = ttk.Combobox(parent, textvariable=var, values=choices, state="readonly", width=width - 3)
             else:
                 var = tk.StringVar()
                 w = ttk.Entry(parent, textvariable=var, width=width)
             w.grid(row=row, column=1, sticky="w", padx=4, pady=2)
             if hint:
-                ttk.Label(parent, text=bi(hint), foreground="#626d7a").grid(
-                    row=row, column=2, sticky="w"
-                )
+                ttk.Label(parent, text=bi(hint), foreground="#626d7a").grid(row=row, column=2, sticky="w")
             self.binds.append((path, kind, var, label))
             return var
 
@@ -643,46 +512,25 @@ def build_app():
         def tab_dashboard(self, f):
             row = ttk.Frame(f)
             row.pack(fill="x")
-            self.btn_start = ttk.Button(
-                row,
-                text=bi("Save & Start (background)|บันทึกและเริ่ม (เบื้องหลัง)"),
-                command=self.start,
-            )
+            self.btn_start = ttk.Button(row, text=bi("Save & Start (background)|บันทึกและเริ่ม (เบื้องหลัง)"), command=self.start)
             self.btn_start.pack(side="left")
-            self.btn_bg = ttk.Button(
-                row,
-                text=bi("Start & close window|เริ่มเบื้องหลังแล้วปิดหน้าต่าง"),
-                command=lambda: self.start(close=True),
-            )
+            self.btn_bg = ttk.Button(row, text=bi("Start & close window|เริ่มเบื้องหลังแล้วปิดหน้าต่าง"),
+                                     command=lambda: self.start(close=True))
             self.btn_bg.pack(side="left", padx=6)
             self.btn_stop = ttk.Button(row, text=bi("Stop|หยุด"), command=self.stop)
             self.btn_stop.pack(side="left", padx=6)
-            ttk.Button(
-                row, text=bi("EMERGENCY STOP|หยุดฉุกเฉิน"), command=self.emergency
-            ).pack(side="left", padx=6)
+            ttk.Button(row, text=bi("EMERGENCY STOP|หยุดฉุกเฉิน"), command=self.emergency).pack(side="left", padx=6)
             self.live_var = tk.BooleanVar()
             self.binds.append((("dry_run",), "live", self.live_var, "dry_run"))
-            ttk.Checkbutton(
-                row,
-                text=bi("LIVE: really send messages|โหมดจริง: ส่งข้อความจริง"),
-                variable=self.live_var,
-                command=self.live_toggled,
-            ).pack(side="right")
+            ttk.Checkbutton(row, text=bi("LIVE: really send messages|โหมดจริง: ส่งข้อความจริง"), variable=self.live_var,
+                            command=self.live_toggled).pack(side="right")
             self.stats_lbl = ttk.Label(f, text="")
             self.stats_lbl.pack(anchor="w", pady=6)
-            ttk.Label(
-                f,
-                text=bi(
-                    "Closing this window does not stop the bot. Dry-run only logs what it would send.|"
-                    "ปิดหน้าต่างนี้ไม่หยุดบอท โหมดทดลองแค่บันทึกว่าจะส่งอะไร"
-                ),
-                foreground="#626d7a",
-            ).pack(anchor="w")
+            ttk.Label(f, text=bi("Closing this window does not stop the bot. Dry-run only logs what it would send.|"
+                                 "ปิดหน้าต่างนี้ไม่หยุดบอท โหมดทดลองแค่บันทึกว่าจะส่งอะไร"), foreground="#626d7a").pack(anchor="w")
             lf = ttk.Frame(f)
             lf.pack(fill="both", expand=True, pady=6)
-            self.log = tk.Text(
-                lf, state="disabled", wrap="none", height=18, font=("Consolas", 9)
-            )
+            self.log = tk.Text(lf, state="disabled", wrap="none", height=18, font=("Consolas", 9))
             sb = ttk.Scrollbar(lf, command=self.log.yview)
             self.log.configure(yscrollcommand=sb.set)
             sb.pack(side="right", fill="y")
@@ -703,60 +551,23 @@ def build_app():
             self.sel_vars = {}
             g = ttk.Frame(f)
             g.pack(fill="x")
-            self.field(
-                g,
-                "Window title regex|regex ชื่อหน้าต่าง",
-                ("window_title_regex",),
-                width=40,
-            )
-            self.field(
-                g,
-                "My nickname|นิคของฉัน",
-                ("autoreply", "own_nickname"),
-                width=40,
-                hint="required for live mode|จำเป็นเมื่อรันจริง",
-            )
+            self.field(g, "Window title regex|regex ชื่อหน้าต่าง", ("window_title_regex",), width=40)
+            self.field(g, "My nickname|นิคของฉัน", ("autoreply", "own_nickname"), width=40,
+                       hint="required for live mode|จำเป็นเมื่อรันจริง")
             row = ttk.Frame(f)
             row.pack(fill="x", pady=4)
-            ttk.Button(
-                row,
-                text=bi("List windows|แสดงหน้าต่าง"),
-                command=lambda: self.helper("windows"),
-            ).pack(side="left")
-            ttk.Button(
-                row,
-                text=bi("Auto-detect (Camfrog 8.x)|ตรวจหา control อัตโนมัติ"),
-                command=self.detect,
-            ).pack(side="left", padx=6)
-            ttk.Button(
-                row,
-                text=bi("Discover controls -> controls.txt|ดึง control -> controls.txt"),
-                command=lambda: self.helper("discover"),
-            ).pack(side="left", padx=6)
-            ttk.Label(
-                row,
-                text=bi(
-                    "Windows only. Copy values from controls.txt into the boxes below.|"
-                    "เฉพาะ Windows คัดลอกค่าจาก controls.txt มาใส่ช่องด้านล่าง"
-                ),
-                foreground="#626d7a",
-            ).pack(side="left")
+            ttk.Button(row, text=bi("List windows|แสดงหน้าต่าง"), command=lambda: self.helper("windows")).pack(side="left")
+            ttk.Button(row, text=bi("Auto-detect (Camfrog 8.x)|ตรวจหา control อัตโนมัติ"),
+                       command=self.detect).pack(side="left", padx=6)
+            ttk.Button(row, text=bi("Discover controls -> controls.txt|ดึง control -> controls.txt"),
+                       command=lambda: self.helper("discover")).pack(side="left", padx=6)
+            ttk.Label(row, text=bi("Windows only. Copy values from controls.txt into the boxes below.|"
+                                   "เฉพาะ Windows คัดลอกค่าจาก controls.txt มาใส่ช่องด้านล่าง"), foreground="#626d7a").pack(side="left")
             if APP_PROFILE == "full":
-                self.selector_group(
-                    f, "Status box selector|selector ช่องสถานะ", ("status", "edit")
-                )
-                self.selector_group(
-                    f,
-                    "Status apply button (optional)|ปุ่มยืนยันสถานะ (ไม่จำเป็น)",
-                    ("status", "apply_button"),
-                    True,
-                )
-            self.selector_group(
-                f, "Chat history selector|selector ประวัติแชท", ("autoreply", "history")
-            )
-            self.selector_group(
-                f, "Chat input selector|selector ช่องพิมพ์แชท", ("autoreply", "input")
-            )
+                self.selector_group(f, "Status box selector|selector ช่องสถานะ", ("status", "edit"))
+                self.selector_group(f, "Status apply button (optional)|ปุ่มยืนยันสถานะ (ไม่จำเป็น)", ("status", "apply_button"), True)
+            self.selector_group(f, "Chat history selector|selector ประวัติแชท", ("autoreply", "history"))
+            self.selector_group(f, "Chat input selector|selector ช่องพิมพ์แชท", ("autoreply", "input"))
             self.helper_out = tk.Text(f, height=8, state="disabled")
             self.helper_out.pack(fill="both", expand=True, pady=4)
 
@@ -765,66 +576,24 @@ def build_app():
             top.pack(fill="x")
             g = ttk.Frame(top)
             g.pack(side="left", anchor="n")
-            lf = ttk.LabelFrame(
-                top, text=bi("History as source|ใช้ประวัติเป็นแหล่งข้อความ"), padding=6
-            )
+            lf = ttk.LabelFrame(top, text=bi("History as source|ใช้ประวัติเป็นแหล่งข้อความ"), padding=6)
             lf.pack(side="left", anchor="n", padx=30)
             h = ("status", "history")
             self.field(lf, "Record statuses|บันทึกสถานะ", h + ("record",), "bool")
-            self.field(
-                lf, "Use as source|ใช้เป็นแหล่งสถานะ", h + ("use_as_source",), "bool"
-            )
-            self.field(
-                lf,
-                "Mode|โหมด",
-                h + ("mode",),
-                "choice",
-                ("rotate", "random", "most_used"),
-                12,
-            )
+            self.field(lf, "Use as source|ใช้เป็นแหล่งสถานะ", h + ("use_as_source",), "bool")
+            self.field(lf, "Mode|โหมด", h + ("mode",), "choice", ("rotate", "random", "most_used"), 12)
             self.field(lf, "Max items|จำนวนสูงสุด", h + ("max_items",), "int", width=6)
             self.field(g, "Enabled|เปิดใช้", ("status", "enabled"), "bool")
-            self.field(
-                g,
-                "Interval (s, min 0.3)|ช่วงเวลา (วินาที ขั้นต่ำ 0.3)",
-                ("status", "interval_seconds"),
-                "float",
-                width=8,
-            )
+            self.field(g, "Interval (s, min 0.3)|ช่วงเวลา (วินาที ขั้นต่ำ 0.3)", ("status", "interval_seconds"), "float", width=8)
             self.field(g, "Random order|สุ่มลำดับ", ("status", "random"), "bool")
-            self.field(
-                g,
-                "Language mode|โหมดภาษา",
-                ("status", "language_mode"),
-                "choice",
-                ("th", "en", "both", "alternate"),
-                12,
-            )
-            self.field(
-                g,
-                "Language cycle|สลับภาษา",
-                ("status", "language_cycle"),
-                "list",
-                width=12,
-                hint="e.g. th, en",
-            )
-            self.field(
-                g, "Max length|ความยาวสูงสุด", ("status", "max_length"), "int", width=8
-            )
-            self.field(
-                g, "Set on start|ตั้งทันทีตอนเริ่ม", ("status", "set_on_start"), "bool"
-            )
-            ttk.Label(
-                f,
-                text=bi(
-                    "Messages: one per line. Pair = Thai {pipe} English. Variables {time} {date} {me}|"
-                    "ข้อความ: บรรทัดละอัน คู่ภาษา = ไทย {pipe} English ตัวแปร {time} {date} {me}"
-                ),
-            ).pack(anchor="w", pady=(8, 0))
+            self.field(g, "Language mode|โหมดภาษา", ("status", "language_mode"), "choice", ("th", "en", "both", "alternate"), 12)
+            self.field(g, "Language cycle|สลับภาษา", ("status", "language_cycle"), "list", width=12, hint="e.g. th, en")
+            self.field(g, "Max length|ความยาวสูงสุด", ("status", "max_length"), "int", width=8)
+            self.field(g, "Set on start|ตั้งทันทีตอนเริ่ม", ("status", "set_on_start"), "bool")
+            ttk.Label(f, text=bi("Messages: one per line. Pair = Thai {pipe} English. Variables {time} {date} {me}|"
+                                 "ข้อความ: บรรทัดละอัน คู่ภาษา = ไทย {pipe} English ตัวแปร {time} {date} {me}")).pack(anchor="w", pady=(8, 0))
             self.textbox(f, 5, "t_msgs").pack(fill="x")
-            lf = ttk.LabelFrame(
-                f, text=bi("Scrolling status (marquee)|สถานะเลื่อน"), padding=6
-            )
+            lf = ttk.LabelFrame(f, text=bi("Scrolling status (marquee)|สถานะเลื่อน"), padding=6)
             lf.pack(fill="x", pady=6)
             g1, g2 = ttk.Frame(lf), ttk.Frame(lf)
             g1.pack(side="left", anchor="n")
@@ -834,22 +603,12 @@ def build_app():
             self.field(g1, "Scroll frames|เลื่อนเฟรม", m + ("scroll",), "bool")
             self.field(g1, "Width (8-80)|ความกว้าง", m + ("width",), "int", width=6)
             self.field(g1, "Stride|เลื่อนต่อเฟรม", m + ("stride",), "int", width=6)
-            self.field(
-                g1,
-                "Step seconds (min 0.3)|วินาทีต่อเฟรม",
-                m + ("step_seconds",),
-                "float",
-                width=6,
-            )
+            self.field(g1, "Step seconds (min 0.3)|วินาทีต่อเฟรม", m + ("step_seconds",), "float", width=6)
             self.field(g1, "Cycles (1-5)|จำนวนรอบ", m + ("cycles",), "int", width=6)
             self.field(g1, "Max frames|เฟรมสูงสุด", m + ("max_frames",), "int", width=6)
-            self.mq_in = tk.StringVar(
-                value="ข้อความยาว ๆ ที่อยากให้เลื่อน / a long status that scrolls"
-            )
+            self.mq_in = tk.StringVar(value="ข้อความยาว ๆ ที่อยากให้เลื่อน / a long status that scrolls")
             ttk.Entry(g2, textvariable=self.mq_in).pack(fill="x")
-            ttk.Button(
-                g2, text=bi("Preview frames|ดูตัวอย่างเฟรม"), command=self.preview_marquee
-            ).pack(anchor="w", pady=3)
+            ttk.Button(g2, text=bi("Preview frames|ดูตัวอย่างเฟรม"), command=self.preview_marquee).pack(anchor="w", pady=3)
             self.mq_out = tk.Text(g2, height=6, state="disabled")
             self.mq_out.pack(fill="x")
 
@@ -868,107 +627,33 @@ def build_app():
         def tab_room_reply(self, f):
             top = ttk.Frame(f)
             top.pack(fill="x")
-            self.field(
-                top, "Auto-reply enabled|เปิดตอบอัตโนมัติ", ("autoreply", "enabled"), "bool"
-            )
-            self.field(
-                top,
-                "Ignore links|ไม่ตอบข้อความที่มีลิงก์",
-                ("autoreply", "ignore_links"),
-                "bool",
-            )
-            self.field(
-                top,
-                "Per-sender cooldown (s)|คูลดาวน์ต่อคน",
-                ("autoreply", "per_sender_cooldown_seconds"),
-                "int",
-                width=8,
-            )
-            self.field(
-                top,
-                "Global gap (s)|ระยะห่างทุกคำตอบ",
-                ("autoreply", "global_min_gap_seconds"),
-                "int",
-                width=8,
-            )
-            self.field(
-                top,
-                "Max per hour|สูงสุดต่อชั่วโมง",
-                ("autoreply", "max_per_hour"),
-                "int",
-                width=8,
-            )
-            self.field(
-                top,
-                "Delay range s (min, max)|หน่วงสุ่ม",
-                ("autoreply", "delay_range_seconds"),
-                "pair",
-                width=12,
-            )
-            self.field(
-                top,
-                "Ignore nicks|ข้ามนิค",
-                ("autoreply", "ignore_nicknames"),
-                "list",
-                width=40,
-                hint="comma separated|คั่นด้วย ,",
-            )
-            self.field(
-                top,
-                "Only nicks|ตอบเฉพาะนิค",
-                ("autoreply", "only_nicknames"),
-                "list",
-                width=40,
-                hint="empty = everyone|ว่าง = ทุกคน",
-            )
-            ttk.Label(
-                f,
-                text=bi(
-                    "Rules (first match wins - put specific rules first)|กฎ (ตัวแรกที่ตรงชนะ วางกฎเฉพาะไว้ก่อน)"
-                ),
-            ).pack(anchor="w", pady=(8, 0))
+            self.field(top, "Auto-reply enabled|เปิดตอบอัตโนมัติ", ("autoreply", "enabled"), "bool")
+            self.field(top, "Ignore links|ไม่ตอบข้อความที่มีลิงก์", ("autoreply", "ignore_links"), "bool")
+            self.field(top, "Per-sender cooldown (s)|คูลดาวน์ต่อคน", ("autoreply", "per_sender_cooldown_seconds"), "int", width=8)
+            self.field(top, "Global gap (s)|ระยะห่างทุกคำตอบ", ("autoreply", "global_min_gap_seconds"), "int", width=8)
+            self.field(top, "Max per hour|สูงสุดต่อชั่วโมง", ("autoreply", "max_per_hour"), "int", width=8)
+            self.field(top, "Delay range s (min, max)|หน่วงสุ่ม", ("autoreply", "delay_range_seconds"), "pair", width=12)
+            self.field(top, "Ignore nicks|ข้ามนิค", ("autoreply", "ignore_nicknames"), "list", width=40, hint="comma separated|คั่นด้วย ,")
+            self.field(top, "Only nicks|ตอบเฉพาะนิค", ("autoreply", "only_nicknames"), "list", width=40, hint="empty = everyone|ว่าง = ทุกคน")
+            ttk.Label(f, text=bi("Rules (first match wins - put specific rules first)|กฎ (ตัวแรกที่ตรงชนะ วางกฎเฉพาะไว้ก่อน)")).pack(anchor="w", pady=(8, 0))
             tf = ttk.Frame(f)
             tf.pack(fill="both", expand=True)
             cols = ("n", "on", "lang", "men", "pat", "rep")
-            self.tree = ttk.Treeview(
-                tf, columns=cols, show="headings", height=7, selectmode="browse"
-            )
-            for c, w, h in (
-                ("n", 30, "#"),
-                ("on", 40, "on"),
-                ("lang", 45, "lang"),
-                ("men", 50, "@me"),
-                ("pat", 300, "pattern"),
-                ("rep", 380, "reply"),
-            ):
+            self.tree = ttk.Treeview(tf, columns=cols, show="headings", height=7, selectmode="browse")
+            for c, w, h in (("n", 30, "#"), ("on", 40, "on"), ("lang", 45, "lang"), ("men", 50, "@me"),
+                            ("pat", 300, "pattern"), ("rep", 380, "reply")):
                 self.tree.heading(c, text=h)
                 self.tree.column(c, width=w, anchor="w")
             self.tree.pack(side="left", fill="both", expand=True)
             self.tree.bind("<Double-1>", lambda _e: self.rule_edit())
             bf = ttk.Frame(tf)
             bf.pack(side="left", padx=6, anchor="n")
-            for txt, fn in (
-                ("Add|เพิ่ม", self.rule_add),
-                ("Edit|แก้", self.rule_edit),
-                ("Delete|ลบ", self.rule_del),
-                ("Up|ขึ้น", lambda: self.rule_move(-1)),
-                ("Down|ลง", lambda: self.rule_move(1)),
-            ):
+            for txt, fn in (("Add|เพิ่ม", self.rule_add), ("Edit|แก้", self.rule_edit), ("Delete|ลบ", self.rule_del),
+                            ("Up|ขึ้น", lambda: self.rule_move(-1)), ("Down|ลง", lambda: self.rule_move(1))):
                 ttk.Button(bf, text=bi(txt), command=fn, width=8).pack(pady=1)
-            ttk.Label(
-                f,
-                text=bi(
-                    "Skip patterns (regex, one per line)|skip patterns (regex บรรทัดละอัน)"
-                ),
-            ).pack(anchor="w")
+            ttk.Label(f, text=bi("Skip patterns (regex, one per line)|skip patterns (regex บรรทัดละอัน)")).pack(anchor="w")
             self.textbox(f, 2, "t_skips").pack(fill="x")
-            lf = ttk.LabelFrame(
-                f,
-                text=bi(
-                    "Rule tester (offline, nothing is sent)|ทดสอบกฎ (ออฟไลน์ ไม่ส่งจริง)"
-                ),
-                padding=6,
-            )
+            lf = ttk.LabelFrame(f, text=bi("Rule tester (offline, nothing is sent)|ทดสอบกฎ (ออฟไลน์ ไม่ส่งจริง)"), padding=6)
             lf.pack(fill="x", pady=6)
             self.tn = tk.StringVar(value="TestUser")
             self.tm = tk.StringVar(value="สวัสดีครับ")
@@ -976,222 +661,87 @@ def build_app():
             e = ttk.Entry(lf, textvariable=self.tm, width=44)
             e.pack(side="left", padx=4)
             e.bind("<Return>", lambda _e: self.test_rule())
-            ttk.Button(lf, text=bi("Test|ทดสอบ"), command=self.test_rule).pack(
-                side="left"
-            )
+            ttk.Button(lf, text=bi("Test|ทดสอบ"), command=self.test_rule).pack(side="left")
             self.tout = ttk.Label(lf, text="", foreground="#28744c")
             self.tout.pack(side="left", padx=8)
 
         def tab_im_reply(self, f):
-            ttk.Label(
-                f,
-                text=bi(
-                    "IM shares your own nickname and chat selectors from Setup; only listed nicks can be answered.|"
-                    "IM ใช้นิคของคุณและ selector จากหน้า Setup ร่วมกัน และตอบได้เฉพาะนิคในรายการ"
-                ),
-                foreground="#626d7a",
-                wraplength=900,
-            ).pack(anchor="w", pady=(0, 4))
+            ttk.Label(f, text=bi(
+                "IM shares your own nickname and chat selectors from Setup; only listed nicks can be answered.|"
+                "IM ใช้นิคของคุณและ selector จากหน้า Setup ร่วมกัน และตอบได้เฉพาะนิคในรายการ"),
+                foreground="#626d7a", wraplength=900).pack(anchor="w", pady=(0, 4))
             columns = ttk.Frame(f)
             columns.pack(fill="x")
             left = ttk.LabelFrame(columns, text=bi("Private IM|แชทส่วนตัว"), padding=4)
             left.pack(side="left", fill="x", expand=True, padx=(0, 6))
-            right = ttk.LabelFrame(
-                columns, text=bi("Limits and safety|เพดานและความปลอดภัย"), padding=4
-            )
+            right = ttk.LabelFrame(columns, text=bi("Limits and safety|เพดานและความปลอดภัย"), padding=4)
             right.pack(side="left", fill="x", expand=True)
             self.field(left, "Enabled|เปิดใช้", ("autoreply_im", "enabled"), "bool")
-            self.field(
-                left, "IM dry-run|ทดลองส่ง IM", ("autoreply_im", "dry_run"), "bool"
-            )
-            self.field(
-                left,
-                "Window title regex|regex ชื่อหน้าต่าง",
-                ("autoreply_im", "window_title_regex"),
-                width=30,
-            )
-            self.field(
-                left,
-                "Window kinds|ชนิดหน้าต่าง",
-                ("autoreply_im", "log_kinds"),
-                "list",
-                width=20,
-            )
-            self.field(
-                left,
-                "Allowed nicknames|นิคที่อนุญาต",
-                ("autoreply_im", "only_nicknames"),
-                "list",
-                width=30,
-            )
-            self.field(
-                left,
-                "Reply prefix|ข้อความนำหน้าคำตอบ",
-                ("autoreply_im", "prefix"),
-                width=24,
-            )
-            self.field(
-                left,
-                "Answer first new message|ตอบข้อความแรกของหน้าต่างใหม่",
-                ("autoreply_im", "answer_first_message"),
-                "bool",
-            )
-            self.field(
-                left,
-                "Ignore links|ข้ามข้อความที่มีลิงก์",
-                ("autoreply_im", "ignore_links"),
-                "bool",
-            )
-            self.field(
-                right,
-                "Max tracked windows (1-20)|จำนวนหน้าต่างสูงสุด",
-                ("autoreply_im", "max_windows"),
-                "int",
-                width=7,
-            )
-            self.field(
-                right,
-                "Per-sender cooldown (s)|คูลดาวน์ต่อคน (วินาที)",
-                ("autoreply_im", "per_sender_cooldown_seconds"),
-                "int",
-                width=8,
-            )
-            self.field(
-                right,
-                "Per-sender daily cap|เพดานต่อคนต่อวัน",
-                ("autoreply_im", "max_per_sender_per_day"),
-                "int",
-                width=7,
-            )
-            self.field(
-                right,
-                "Global gap (s)|ระยะห่างทุกคำตอบ (วินาที)",
-                ("autoreply_im", "global_min_gap_seconds"),
-                "int",
-                width=7,
-            )
-            self.field(
-                right,
-                "Max per hour|สูงสุดต่อชั่วโมง",
-                ("autoreply_im", "max_per_hour"),
-                "int",
-                width=7,
-            )
-            self.field(
-                right,
-                "Delay range s (min, max)|หน่วงสุ่ม (ต่ำสุด, สูงสุด)",
-                ("autoreply_im", "delay_range_seconds"),
-                "pair",
-                width=12,
-            )
-            self.field(
-                right,
-                "Max reply length|ความยาวคำตอบสูงสุด",
-                ("autoreply_im", "max_reply_length"),
-                "int",
-                width=7,
-            )
-            self.field(
-                right,
-                "Max incoming length|ความยาวข้อความขาเข้าสูงสุด",
-                ("autoreply_im", "max_incoming_length"),
-                "int",
-                width=7,
-            )
-            ttk.Label(
-                f,
-                text=bi(
-                    "When IM is enabled, allow at least one nickname. Keep window kinds at im unless im-probe confirms mtim.|"
-                    "เมื่อเปิด IM ต้องใส่นิคอย่างน้อยหนึ่งชื่อ ใช้ชนิดหน้าต่าง im จนกว่า im-probe จะยืนยัน mtim"
-                ),
-                foreground="#626d7a",
-                wraplength=900,
-            ).pack(anchor="w", pady=(2, 0))
-            rule_box = ttk.LabelFrame(
-                f,
-                text=bi("IM rules (first match wins)|กฎ IM (กฎแรกที่ตรงจะทำงาน)"),
-                padding=4,
-            )
+            self.field(left, "IM dry-run|ทดลองส่ง IM", ("autoreply_im", "dry_run"), "bool")
+            self.field(left, "Window title regex|regex ชื่อหน้าต่าง", ("autoreply_im", "window_title_regex"), width=30)
+            self.field(left, "Window kinds|ชนิดหน้าต่าง", ("autoreply_im", "log_kinds"), "list", width=20)
+            self.field(left, "Allowed nicknames|นิคที่อนุญาต", ("autoreply_im", "only_nicknames"), "list", width=30)
+            self.field(left, "Reply prefix|ข้อความนำหน้าคำตอบ", ("autoreply_im", "prefix"), width=24)
+            self.field(left, "Answer first new message|ตอบข้อความแรกของหน้าต่างใหม่", ("autoreply_im", "answer_first_message"), "bool")
+            self.field(left, "Ignore links|ข้ามข้อความที่มีลิงก์", ("autoreply_im", "ignore_links"), "bool")
+            self.field(right, "Max tracked windows (1-20)|จำนวนหน้าต่างสูงสุด", ("autoreply_im", "max_windows"), "int", width=7)
+            self.field(right, "Per-sender cooldown (s)|คูลดาวน์ต่อคน (วินาที)", ("autoreply_im", "per_sender_cooldown_seconds"), "int", width=8)
+            self.field(right, "Per-sender daily cap|เพดานต่อคนต่อวัน", ("autoreply_im", "max_per_sender_per_day"), "int", width=7)
+            self.field(right, "Global gap (s)|ระยะห่างทุกคำตอบ (วินาที)", ("autoreply_im", "global_min_gap_seconds"), "int", width=7)
+            self.field(right, "Max per hour|สูงสุดต่อชั่วโมง", ("autoreply_im", "max_per_hour"), "int", width=7)
+            self.field(right, "Delay range s (min, max)|หน่วงสุ่ม (ต่ำสุด, สูงสุด)", ("autoreply_im", "delay_range_seconds"), "pair", width=12)
+            self.field(right, "Max reply length|ความยาวคำตอบสูงสุด", ("autoreply_im", "max_reply_length"), "int", width=7)
+            self.field(right, "Max incoming length|ความยาวข้อความขาเข้าสูงสุด", ("autoreply_im", "max_incoming_length"), "int", width=7)
+            ttk.Label(f, text=bi(
+                "When IM is enabled, allow at least one nickname. Keep window kinds at im unless im-probe confirms mtim.|"
+                "เมื่อเปิด IM ต้องใส่นิคอย่างน้อยหนึ่งชื่อ ใช้ชนิดหน้าต่าง im จนกว่า im-probe จะยืนยัน mtim"),
+                foreground="#626d7a", wraplength=900).pack(anchor="w", pady=(2, 0))
+            rule_box = ttk.LabelFrame(f, text=bi("IM rules (first match wins)|กฎ IM (กฎแรกที่ตรงจะทำงาน)"), padding=4)
             rule_box.pack(fill="both", expand=True, pady=(6, 2))
             tf = ttk.Frame(rule_box)
             tf.pack(fill="both", expand=True)
             cols = ("n", "on", "lang", "men", "pat", "rep")
-            self.im_tree = ttk.Treeview(
-                tf, columns=cols, show="headings", height=5, selectmode="browse"
-            )
-            for c, w, h in (
-                ("n", 30, "#"),
-                ("on", 40, "on"),
-                ("lang", 45, "lang"),
-                ("men", 50, "@me"),
-                ("pat", 300, "pattern"),
-                ("rep", 380, "reply"),
-            ):
+            self.im_tree = ttk.Treeview(tf, columns=cols, show="headings", height=5, selectmode="browse")
+            for c, w, h in (("n", 30, "#"), ("on", 40, "on"), ("lang", 45, "lang"), ("men", 50, "@me"),
+                            ("pat", 300, "pattern"), ("rep", 380, "reply")):
                 self.im_tree.heading(c, text=h)
                 self.im_tree.column(c, width=w, anchor="w")
             self.im_tree.pack(side="left", fill="both", expand=True)
             self.im_tree.bind("<Double-1>", lambda _e: self.rule_edit("im"))
             bf = ttk.Frame(tf)
             bf.pack(side="left", padx=6, anchor="n")
-            for txt, fn in (
-                ("Add|เพิ่ม", lambda: self.rule_add("im")),
-                ("Edit|แก้", lambda: self.rule_edit("im")),
-                ("Delete|ลบ", lambda: self.rule_del("im")),
-                ("Up|ขึ้น", lambda: self.rule_move(-1, "im")),
-                ("Down|ลง", lambda: self.rule_move(1, "im")),
-            ):
+            for txt, fn in (("Add|เพิ่ม", lambda: self.rule_add("im")), ("Edit|แก้", lambda: self.rule_edit("im")),
+                            ("Delete|ลบ", lambda: self.rule_del("im")), ("Up|ขึ้น", lambda: self.rule_move(-1, "im")),
+                            ("Down|ลง", lambda: self.rule_move(1, "im"))):
                 ttk.Button(bf, text=bi(txt), command=fn, width=8).pack(pady=1)
-            ttk.Label(
-                f,
-                text=bi(
-                    "IM skip patterns (regex, one per line)|รูปแบบที่ข้ามใน IM (regex บรรทัดละอัน)"
-                ),
-            ).pack(anchor="w")
+            ttk.Label(f, text=bi("IM skip patterns (regex, one per line)|รูปแบบที่ข้ามใน IM (regex บรรทัดละอัน)")).pack(anchor="w")
             self.textbox(f, 2, "t_im_skips").pack(fill="x")
-            tester = ttk.LabelFrame(
-                f,
-                text=bi("Private IM rule tester (offline)|ทดสอบกฎ IM (ออฟไลน์)"),
-                padding=4,
-            )
+            tester = ttk.LabelFrame(f, text=bi("Private IM rule tester (offline)|ทดสอบกฎ IM (ออฟไลน์)"), padding=4)
             tester.pack(fill="x", pady=(4, 0))
             self.tin = tk.StringVar(value="zdevz")
             self.tim = tk.StringVar(value="สวัสดีครับ")
-            self.im_tester_sender_entry = ttk.Entry(
-                tester, textvariable=self.tin, width=14
-            )
+            self.im_tester_sender_entry = ttk.Entry(tester, textvariable=self.tin, width=14)
             self.im_tester_sender_entry.pack(side="left")
             entry = ttk.Entry(tester, textvariable=self.tim, width=42)
             entry.pack(side="left", padx=4)
             entry.bind("<Return>", lambda _e: self.test_im_rule())
-            ttk.Button(
-                tester, text=bi("Test IM|ทดสอบ IM"), command=self.test_im_rule
-            ).pack(side="left")
+            ttk.Button(tester, text=bi("Test IM|ทดสอบ IM"), command=self.test_im_rule).pack(side="left")
             self.tiout = ttk.Label(tester, text="", foreground="#28744c")
             self.tiout.pack(side="left", padx=8)
 
         def tab_history(self, f):
             self.hist_note = ttk.Label(f, text="", foreground="#8b672b")
             self.hist_note.pack(anchor="w")
-            self.htree = ttk.Treeview(
-                f, columns=("lang", "n", "text"), show="headings", height=14
-            )
-            for c, w, h in (
-                ("lang", 50, "lang"),
-                ("n", 60, "uses"),
-                ("text", 700, "text"),
-            ):
+            self.htree = ttk.Treeview(f, columns=("lang", "n", "text"), show="headings", height=14)
+            for c, w, h in (("lang", 50, "lang"), ("n", 60, "uses"), ("text", 700, "text")):
                 self.htree.heading(c, text=h)
                 self.htree.column(c, width=w, anchor="w")
             self.htree.pack(fill="both", expand=True)
             row = ttk.Frame(f)
             row.pack(fill="x", pady=4)
             self.hist_btns = []
-            for txt, fn in (
-                ("Refresh|รีเฟรช", self.hist_refresh),
-                ("Add...|เพิ่ม...", self.hist_add),
-                ("Import file...|นำเข้าไฟล์...", self.hist_import),
-                ("Delete selected|ลบที่เลือก", self.hist_del),
-            ):
+            for txt, fn in (("Refresh|รีเฟรช", self.hist_refresh), ("Add...|เพิ่ม...", self.hist_add),
+                            ("Import file...|นำเข้าไฟล์...", self.hist_import), ("Delete selected|ลบที่เลือก", self.hist_del)):
                 b = ttk.Button(row, text=bi(txt), command=fn)
                 b.pack(side="left", padx=3)
                 self.hist_btns.append(b)
@@ -1202,70 +752,23 @@ def build_app():
         def tab_advanced(self, f):
             g = ttk.Frame(f)
             g.pack(fill="x")
-            self.field(
-                g, "Language|ภาษา", ("language",), "choice", ("auto", "th", "en"), 8
-            )
-            self.field(
-                g, "Poll seconds (0.2-60)|ความถี่ลูป", ("poll_seconds",), "float", width=8
-            )
-            self.field(
-                g, "Hot reload config|โหลดคอนฟิกใหม่เอง", ("reload_config",), "bool"
-            )
-            self.field(
-                g,
-                "Active hours only|ทำงานเฉพาะช่วงเวลา",
-                ("active_hours", "enabled"),
-                "bool",
-            )
+            self.field(g, "Language|ภาษา", ("language",), "choice", ("auto", "th", "en"), 8)
+            self.field(g, "Poll seconds (0.2-60)|ความถี่ลูป", ("poll_seconds",), "float", width=8)
+            self.field(g, "Hot reload config|โหลดคอนฟิกใหม่เอง", ("reload_config",), "bool")
+            self.field(g, "Active hours only|ทำงานเฉพาะช่วงเวลา", ("active_hours", "enabled"), "bool")
             self.field(g, "  start (HH:MM)|  เริ่ม", ("active_hours", "start"), width=8)
             self.field(g, "  end (HH:MM)|  สิ้นสุด", ("active_hours", "end"), width=8)
-            self.field(
-                g,
-                "Require Camfrog foreground|ต้องอยู่หน้าสุดก่อนส่ง",
-                ("safety", "require_foreground"),
-                "bool",
-            )
-            self.field(
-                g,
-                "Restore previous window|คืนโฟกัสหลังส่ง",
-                ("safety", "restore_previous_window"),
-                "bool",
-            )
-            self.field(
-                g,
-                "Max consecutive failures|ล้มเหลวติดกันสูงสุด",
-                ("safety", "max_consecutive_failures"),
-                "int",
-                width=6,
-            )
-            self.field(
-                g,
-                "Log level|ระดับล็อก",
-                ("log", "level"),
-                "choice",
-                ("DEBUG", "INFO", "WARNING", "ERROR"),
-                10,
-            )
-            self.field(
-                g,
-                "Log chat text|เก็บเนื้อข้อความใน log",
-                ("log", "log_message_text"),
-                "bool",
-                hint="off = privacy|ปิด = ความเป็นส่วนตัว",
-            )
+            self.field(g, "Require Camfrog foreground|ต้องอยู่หน้าสุดก่อนส่ง", ("safety", "require_foreground"), "bool")
+            self.field(g, "Restore previous window|คืนโฟกัสหลังส่ง", ("safety", "restore_previous_window"), "bool")
+            self.field(g, "Max consecutive failures|ล้มเหลวติดกันสูงสุด", ("safety", "max_consecutive_failures"), "int", width=6)
+            self.field(g, "Log level|ระดับล็อก", ("log", "level"), "choice", ("DEBUG", "INFO", "WARNING", "ERROR"), 10)
+            self.field(g, "Log chat text|เก็บเนื้อข้อความใน log", ("log", "log_message_text"), "bool",
+                       hint="off = privacy|ปิด = ความเป็นส่วนตัว")
             self.field(g, "Stats enabled|เก็บสถิติ", ("stats", "enabled"), "bool")
             row = ttk.Frame(f)
             row.pack(fill="x", pady=10)
-            ttk.Button(
-                row,
-                text=bi("Start at Windows login|เริ่มเมื่อเข้า Windows"),
-                command=lambda: self.helper("autostart-on"),
-            ).pack(side="left")
-            ttk.Button(
-                row,
-                text=bi("Remove autostart|ยกเลิก autostart"),
-                command=lambda: self.helper("autostart-off"),
-            ).pack(side="left", padx=6)
+            ttk.Button(row, text=bi("Start at Windows login|เริ่มเมื่อเข้า Windows"), command=lambda: self.helper("autostart-on")).pack(side="left")
+            ttk.Button(row, text=bi("Remove autostart|ยกเลิก autostart"), command=lambda: self.helper("autostart-off")).pack(side="left", padx=6)
 
         # ---- config <-> widgets
         @staticmethod
@@ -1333,25 +836,14 @@ def build_app():
                     errs.append(f"{bi(lab)}: {bi('invalid value|ค่าไม่ถูกต้อง')}")
             for key, (vars_, optional) in self.sel_vars.items():
                 try:
-                    self._set(
-                        d,
-                        key,
-                        strs_to_sel({k: v.get() for k, v in vars_.items()}, optional),
-                    )
+                    self._set(d, key, strs_to_sel({k: v.get() for k, v in vars_.items()}, optional))
                 except ValueError:
                     errs.append(f"{'.'.join(key)}: index")
             d["status"]["messages"] = text_to_msgs(self.t_msgs.get("1.0", "end"))
-            d["autoreply"]["skip_patterns"] = [
-                x.strip()
-                for x in self.t_skips.get("1.0", "end").splitlines()
-                if x.strip()
-            ]
+            d["autoreply"]["skip_patterns"] = [x.strip() for x in self.t_skips.get("1.0", "end").splitlines() if x.strip()]
             d["autoreply"]["rules"] = copy.deepcopy(self.rules)
             d["autoreply_im"]["skip_patterns"] = [
-                x.strip()
-                for x in self.t_im_skips.get("1.0", "end").splitlines()
-                if x.strip()
-            ]
+                x.strip() for x in self.t_im_skips.get("1.0", "end").splitlines() if x.strip()]
             d["autoreply_im"]["rules"] = copy.deepcopy(self.im_rules)
             return d, errs
 
@@ -1361,9 +853,7 @@ def build_app():
 
         def attach_autosave_hooks(self):
             vars_ = [var for _path, _kind, var, _label in self.binds]
-            vars_.extend(
-                v for group, _optional in self.sel_vars.values() for v in group.values()
-            )
+            vars_.extend(v for group, _optional in self.sel_vars.values() for v in group.values())
             for var in vars_:
                 trace_id = var.trace_add("write", self.schedule_autosave)
                 self._autosave_traces.append((var, trace_id))
@@ -1385,10 +875,7 @@ def build_app():
                 self._autosave_after = None
 
         def schedule_autosave(self, *_args):
-            if (
-                not getattr(self, "auto_apply_var", None)
-                or not self.auto_apply_var.get()
-            ):
+            if not getattr(self, "auto_apply_var", None) or not self.auto_apply_var.get():
                 return
             self.cancel_autosave()
             self._autosave_after = self.root.after(700, self.auto_apply)
@@ -1408,21 +895,11 @@ def build_app():
             if not errs:
                 errs, _warns = ConfigModel.check(cfg)
             if errs:
-                self.say(
-                    bi("auto-apply waiting for valid config|รอคอนฟิกที่ถูกต้อง")
-                    + ": "
-                    + errs[0],
-                    True,
-                )
+                self.say(bi("auto-apply waiting for valid config|รอคอนฟิกที่ถูกต้อง") + ": " + errs[0], True)
                 return
             running = bool(ca.running_pid(self.model.cfg))
             if autosave_needs_confirmation(cfg, running):
-                self.say(
-                    bi(
-                        "LIVE bot running: press Save to confirm changes|บอทโหมดจริงกำลังทำงาน: กด Save เพื่อยืนยัน"
-                    ),
-                    True,
-                )
+                self.say(bi("LIVE bot running: press Save to confirm changes|บอทโหมดจริงกำลังทำงาน: กด Save เพื่อยืนยัน"), True)
                 return
             if cfg == self.model.cfg:
                 return
@@ -1432,18 +909,10 @@ def build_app():
                 self.say(bi("auto-apply failed|ใช้ค่าอัตโนมัติไม่สำเร็จ") + f": {e}", True)
                 return
             if errs:
-                self.say(
-                    bi("auto-apply waiting for valid config|รอคอนฟิกที่ถูกต้อง")
-                    + ": "
-                    + errs[0],
-                    True,
-                )
+                self.say(bi("auto-apply waiting for valid config|รอคอนฟิกที่ถูกต้อง") + ": " + errs[0], True)
                 return
             self.draft = copy.deepcopy(cfg)
-            self.say(
-                bi("auto-applied|ใช้ค่าและบันทึกแล้ว")
-                + (f"  ({len(warns)} warning)" if warns else "")
-            )
+            self.say(bi("auto-applied|ใช้ค่าและบันทึกแล้ว") + (f"  ({len(warns)} warning)" if warns else ""))
             self.refresh_state()
 
         def save(self):
@@ -1454,11 +923,8 @@ def build_app():
                 if autosave_needs_confirmation(cfg, running) and cfg != self.model.cfg:
                     ok = messagebox.askyesno(
                         bi("Apply LIVE changes?|ใช้การเปลี่ยนแปลงในโหมดจริง?"),
-                        bi(
-                            "The running bot may hot-reload these settings and send real messages. Apply them now?|"
-                            "บอทที่กำลังทำงานอาจโหลดค่านี้แล้วส่งข้อความจริง ต้องการใช้ค่าตอนนี้หรือไม่?"
-                        ),
-                    )
+                        bi("The running bot may hot-reload these settings and send real messages. Apply them now?|"
+                           "บอทที่กำลังทำงานอาจโหลดค่านี้แล้วส่งข้อความจริง ต้องการใช้ค่าตอนนี้หรือไม่?"))
                     if not ok:
                         self.say(bi("not saved|ไม่ได้บันทึก"), True)
                         return False
@@ -1468,9 +934,7 @@ def build_app():
                 self.say(bi("not saved|ไม่ได้บันทึก"), True)
                 return False
             self.draft = copy.deepcopy(cfg)
-            self.say(
-                bi("saved|บันทึกแล้ว") + (f"  ({len(warns)} warning)" if warns else "")
-            )
+            self.say(bi("saved|บันทึกแล้ว") + (f"  ({len(warns)} warning)" if warns else ""))
             self.refresh_state()
             return True
 
@@ -1501,13 +965,9 @@ def build_app():
         def live_toggled(self):
             if not self.live_var.get():
                 return
-            ok = messagebox.askyesno(
-                bi("Go LIVE?|เปลี่ยนเป็นโหมดจริง?"),
-                bi(
-                    "Messages WILL be sent to Camfrog. Check your room rules and Camfrog terms first.\nContinue?|"
-                    "จะส่งข้อความไปยัง Camfrog จริง ตรวจกฎห้องและเงื่อนไข Camfrog ก่อน\nดำเนินการต่อ?"
-                ),
-            )
+            ok = messagebox.askyesno(bi("Go LIVE?|เปลี่ยนเป็นโหมดจริง?"), bi(
+                "Messages WILL be sent to Camfrog. Check your room rules and Camfrog terms first.\nContinue?|"
+                "จะส่งข้อความไปยัง Camfrog จริง ตรวจกฎห้องและเงื่อนไข Camfrog ก่อน\nดำเนินการต่อ?"))
             if not ok:
                 self.live_var.set(False)
             self.refresh_state()
@@ -1518,9 +978,7 @@ def build_app():
                 return
             cfg = self.model.cfg
             if not cfg["dry_run"] and not messagebox.askyesno(
-                bi("LIVE|โหมดจริง"),
-                bi("Start in LIVE mode (real messages)?|เริ่มโหมดจริง (ส่งข้อความจริง)?"),
-            ):
+                    bi("LIVE|โหมดจริง"), bi("Start in LIVE mode (real messages)?|เริ่มโหมดจริง (ส่งข้อความจริง)?")):
                 return
             args = SimpleNamespace(config=str(self.model.path), lang=None)
             self.run_bg(lambda: ca.cmd_start(cfg, args), "start")
@@ -1538,35 +996,22 @@ def build_app():
         def helper(self, cmd):
             cfg, errs = self.collect()
             if errs or ConfigModel.check(cfg)[0]:
-                messagebox.showerror(
-                    APP_NAME, "\n".join(errs or ConfigModel.check(cfg)[0])
-                )
+                messagebox.showerror(APP_NAME, "\n".join(errs or ConfigModel.check(cfg)[0]))
                 return
             ca.setup_logging(cfg)
-            fn = {
-                "windows": lambda: ca.cmd_windows(cfg),
-                "discover": lambda: ca.cmd_discover(cfg),
-                "autostart-on": lambda: ca.cmd_autostart(
-                    SimpleNamespace(config=str(self.model.path), lang=None), True
-                ),
-                "autostart-off": lambda: ca.cmd_autostart(
-                    SimpleNamespace(config=None, lang=None), False
-                ),
-            }[cmd]
+            fn = {"windows": lambda: ca.cmd_windows(cfg), "discover": lambda: ca.cmd_discover(cfg),
+                  "autostart-on": lambda: ca.cmd_autostart(SimpleNamespace(config=str(self.model.path), lang=None), True),
+                  "autostart-off": lambda: ca.cmd_autostart(SimpleNamespace(config=None, lang=None), False)}[cmd]
             self.run_bg(fn, "helper")
 
         def detect(self):
             """Run detection and fill selectors; auto-apply saves valid proposals."""
             cfg, errs = self.collect()
             if errs or ConfigModel.check(cfg)[0]:
-                messagebox.showerror(
-                    APP_NAME, "\n".join(errs or ConfigModel.check(cfg)[0])
-                )
+                messagebox.showerror(APP_NAME, "\n".join(errs or ConfigModel.check(cfg)[0]))
                 return
             ca.setup_logging(cfg)
-            self.run_bg(
-                lambda: ca.cmd_detect(cfg, self.model.path, False, True), "detect"
-            )
+            self.run_bg(lambda: ca.cmd_detect(cfg, self.model.path, False, True), "detect")
 
         def apply_proposal(self, out):
             skipped = []
@@ -1595,7 +1040,6 @@ def build_app():
                 except Exception as e:  # shown in the GUI, never a traceback window
                     rc, _ = 1, buf.write(f"{type(e).__name__}: {e}")
                 self.q.put((kind, rc, buf.getvalue().strip()))
-
             self.say("...")
             threading.Thread(target=work, daemon=True).start()
 
@@ -1606,14 +1050,8 @@ def build_app():
                 while True:
                     kind, rc, out = self.q.get_nowait()
                     self.busy = False
-                    self.say(
-                        out.splitlines()[-1] if out else ca.t("ok"), rc not in (0, None)
-                    )
-                    if (
-                        kind == "start"
-                        and rc == 0
-                        and getattr(self, "_close_after", False)
-                    ):
+                    self.say(out.splitlines()[-1] if out else ca.t("ok"), rc not in (0, None))
+                    if kind == "start" and rc == 0 and getattr(self, "_close_after", False):
                         self.close_app()  # bot keeps running hidden; reopen the GUI any time
                         return
                     if kind in ("helper", "detect") and out:
@@ -1622,21 +1060,11 @@ def build_app():
                             skipped = self.apply_proposal(out)
                             if skipped:
                                 extra = "\n" + "\n".join(
-                                    bi(
-                                        "kept in config (no box in this app): {0}|"
-                                        "อยู่ใน config แล้ว (ไม่มีช่องในแอปนี้): {0}"
-                                    ).format(k)
-                                    for k in skipped
-                                )
-                        self.set_text(
-                            self.helper_out,
-                            "\n".join(
-                                ln
-                                for ln in out.splitlines()
-                                if not ln.startswith("PROPOSAL ")
-                            )
-                            + extra,
-                        )
+                                    bi("kept in config (no box in this app): {0}|"
+                                       "อยู่ใน config แล้ว (ไม่มีช่องในแอปนี้): {0}").format(k)
+                                    for k in skipped)
+                        self.set_text(self.helper_out, "\n".join(
+                            ln for ln in out.splitlines() if not ln.startswith("PROPOSAL ")) + extra)
                     self.refresh_state()
             except queue.Empty:
                 pass
@@ -1667,75 +1095,31 @@ def build_app():
         def refresh_state(self):
             cfg = self.model.cfg
             pid = ca.running_pid(cfg)
-            self.state_lbl.configure(
-                text=(ca.t("state_running", pid=pid) if pid else ca.t("state_stopped")),
-                foreground="#28744c" if pid else "#a3303a",
-            )
-            live = (
-                (not cfg["dry_run"])
-                if not hasattr(self, "live_var")
-                else self.live_var.get()
-            )
-            self.mode_lbl.configure(
-                text=bi("LIVE|โหมดจริง") if live else bi("DRY-RUN|โหมดทดลอง"),
-                foreground="#9f3740" if live else "#8b672b",
-            )
+            self.state_lbl.configure(text=(ca.t("state_running", pid=pid) if pid else ca.t("state_stopped")),
+                                     foreground="#28744c" if pid else "#a3303a")
+            live = (not cfg["dry_run"]) if not hasattr(self, "live_var") else self.live_var.get()
+            self.mode_lbl.configure(text=bi("LIVE|โหมดจริง") if live else bi("DRY-RUN|โหมดทดลอง"),
+                                    foreground="#9f3740" if live else "#8b672b")
             self.btn_start.state(["disabled"] if pid else ["!disabled"])
             self.btn_stop.state(["!disabled"] if pid else ["disabled"])
             s = read_stats(cfg)
-            self.stats_lbl.configure(
-                text=ca.t(
-                    "stats_line",
-                    started=s.get("started", "?"),
-                    st=s.get("statuses", 0),
-                    rp=s.get("replies", 0),
-                    fl=s.get("failures", 0),
-                )
-                if s
-                else ""
-            )
+            self.stats_lbl.configure(text=ca.t("stats_line", started=s.get("started", "?"), st=s.get("statuses", 0),
+                                               rp=s.get("replies", 0), fl=s.get("failures", 0)) if s else "")
             for b in getattr(self, "hist_btns", []):
                 b.state(["disabled"] if pid else ["!disabled"])
-            self.hist_note.configure(
-                text=bi(
-                    "Stop the bot to edit history (it rewrites this file while running).|"
-                    "หยุดบอทก่อนแก้ประวัติ (บอทเขียนไฟล์นี้อยู่ตอนทำงาน)"
-                )
-                if pid
-                else ""
-            )
+            self.hist_note.configure(text=bi("Stop the bot to edit history (it rewrites this file while running).|"
+                                             "หยุดบอทก่อนแก้ประวัติ (บอทเขียนไฟล์นี้อยู่ตอนทำงาน)") if pid else "")
 
         # ---- status tab
         def preview_marquee(self):
             cfg, errs = self.collect()
             mq = cfg["status"]["marquee"]
             try:
-                fr = ca.marquee_frames(
-                    self.mq_in.get(),
-                    mq["width"],
-                    mq["stride"],
-                    mq["separator"],
-                    mq["cycles"],
-                    mq["max_frames"],
-                )
+                fr = ca.marquee_frames(self.mq_in.get(), mq["width"], mq["stride"], mq["separator"], mq["cycles"], mq["max_frames"])
             except Exception as e:
                 fr = [str(e)]
-            head = (
-                ca.t("mq_static")
-                if len(fr) <= 1
-                else ca.t(
-                    "mq_frames",
-                    n=len(fr),
-                    s=mq["step_seconds"],
-                    t=len(fr) * mq["step_seconds"],
-                )
-            )
-            self.set_text(
-                self.mq_out,
-                head
-                + "\n"
-                + "\n".join(f"{i:>3} |{x}" for i, x in enumerate(fr[:40], 1)),
-            )
+            head = ca.t("mq_static") if len(fr) <= 1 else ca.t("mq_frames", n=len(fr), s=mq["step_seconds"], t=len(fr) * mq["step_seconds"])
+            self.set_text(self.mq_out, head + "\n" + "\n".join(f"{i:>3} |{x}" for i, x in enumerate(fr[:40], 1)))
 
         # ---- rules
         def _rule_parts(self, scope):
@@ -1749,19 +1133,9 @@ def build_app():
             for i, r in enumerate(rules):
                 th, en, anyl = reply_to_fields(r.get("reply"))
                 prev = (th or en or anyl).replace("\n", " / ")
-                tree.insert(
-                    "",
-                    "end",
-                    iid=str(i),
-                    values=(
-                        i + 1,
-                        "" if r.get("enabled", True) else "off",
-                        r.get("lang", ""),
-                        "yes" if r.get("mention") else "",
-                        r.get("pattern", ""),
-                        prev,
-                    ),
-                )
+                tree.insert("", "end", iid=str(i), values=(
+                    i + 1, "" if r.get("enabled", True) else "off", r.get("lang", ""),
+                    "yes" if r.get("mention") else "", r.get("pattern", ""), prev))
             if select is not None and rules:
                 tree.selection_set(str(min(select, len(rules) - 1)))
 
@@ -1812,12 +1186,7 @@ def build_app():
                 self.tout.configure(text=errs[0], foreground="#a3303a")
                 return
             try:
-                self.tout.configure(
-                    text=explain(cfg, self.tn.get().strip(), self.tm.get()).replace(
-                        "\n", "  |  "
-                    ),
-                    foreground="#28744c",
-                )
+                self.tout.configure(text=explain(cfg, self.tn.get().strip(), self.tm.get()).replace("\n", "  |  "), foreground="#28744c")
             except re.error as e:
                 self.tout.configure(text=str(e), foreground="#a3303a")
 
@@ -1828,9 +1197,7 @@ def build_app():
                 return
             try:
                 result = explain(cfg, self.tin.get().strip(), self.tim.get(), im=True)
-                self.tiout.configure(
-                    text=result.replace("\n", "  |  "), foreground="#28744c"
-                )
+                self.tiout.configure(text=result.replace("\n", "  |  "), foreground="#28744c")
             except re.error as e:
                 self.tiout.configure(text=str(e), foreground="#a3303a")
 
@@ -1846,9 +1213,7 @@ def build_app():
                 return
             self.htree.delete(*self.htree.get_children())
             for i, it in enumerate(self.hist_obj().items):
-                self.htree.insert(
-                    "", "end", iid=str(i), values=(it["lang"], it["count"], it["text"])
-                )
+                self.htree.insert("", "end", iid=str(i), values=(it["lang"], it["count"], it["text"]))
 
         def hist_add(self):
             h = self.hist_obj()
@@ -1858,15 +1223,10 @@ def build_app():
             self.hist_refresh()
 
         def hist_import(self):
-            p = filedialog.askopenfilename(
-                filetypes=[("text", "*.txt"), ("all", "*.*")]
-            )
+            p = filedialog.askopenfilename(filetypes=[("text", "*.txt"), ("all", "*.*")])
             if p:
                 h = self.hist_obj()
-                n = sum(
-                    h.add(ln)
-                    for ln in Path(p).read_text(encoding="utf-8-sig").splitlines()
-                )
+                n = sum(h.add(ln) for ln in Path(p).read_text(encoding="utf-8-sig").splitlines())
                 h.save()
                 self.say(ca.t("hist_imported", n=n))
                 self.hist_refresh()

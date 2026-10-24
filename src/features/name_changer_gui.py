@@ -105,11 +105,7 @@ class NameManager:
     """Manages name switching sequence, manual triggers, and list management."""
 
     def __init__(self, names: list[str] | None = None):
-        self._names = [
-            validate_name(n)
-            for n in (names or DEFAULT_THAI_NAMES + DEFAULT_EN_NAMES)
-            if n.strip()
-        ]
+        self._names = [validate_name(n) for n in (names or DEFAULT_THAI_NAMES + DEFAULT_EN_NAMES) if n.strip()]
         self._index = 0
         self._lock = threading.Lock()
 
@@ -474,6 +470,7 @@ class ClipboardController:
         return "break"
 
 
+
 # ==============================================================================
 # Standalone GUI Implementation
 # ==============================================================================
@@ -564,9 +561,7 @@ class StandaloneNameChangerGUI:
         lbl_title.pack(side=self.tk.LEFT)
 
         # Current Name Banner
-        banner_frame = self.ttk.LabelFrame(
-            container, text=" ชื่อที่ใช้งานปัจจุบัน (Active Name) ", padding=10
-        )
+        banner_frame = self.ttk.LabelFrame(container, text=" ชื่อที่ใช้งานปัจจุบัน (Active Name) ", padding=10)
         banner_frame.pack(fill=self.tk.X, pady=(0, 10))
 
         self.lbl_active = self.tk.Label(
@@ -582,9 +577,7 @@ class StandaloneNameChangerGUI:
         self.lbl_active.pack(fill=self.tk.X)
 
         # Manual Switch Controls
-        ctrl_frame = self.ttk.LabelFrame(
-            container, text=" การควบคุมสลับชื่อ (Manual Switch) ", padding=10
-        )
+        ctrl_frame = self.ttk.LabelFrame(container, text=" การควบคุมสลับชื่อ (Manual Switch) ", padding=10)
         ctrl_frame.pack(fill=self.tk.X, pady=(0, 10))
 
         btn_row = self.ttk.Frame(ctrl_frame)
@@ -596,10 +589,7 @@ class StandaloneNameChangerGUI:
         btn_prev.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=(0, 4))
 
         btn_next = self.ttk.Button(
-            btn_row,
-            text="ชื่อถัดไป (Next) ▶",
-            style="Accent.TButton",
-            command=self.on_switch_next,
+            btn_row, text="ชื่อถัดไป (Next) ▶", style="Accent.TButton", command=self.on_switch_next
         )
         btn_next.pack(side=self.tk.LEFT, expand=True, fill=self.tk.X, padx=(4, 0))
 
@@ -607,15 +597,9 @@ class StandaloneNameChangerGUI:
         custom_row = self.ttk.Frame(ctrl_frame)
         custom_row.pack(fill=self.tk.X, pady=(4, 0))
 
-        self.ttk.Label(custom_row, text="เปลี่ยนเป็นชื่อ:").pack(
-            side=self.tk.LEFT, padx=(0, 6)
-        )
-        self.entry_custom = self.ttk.Entry(
-            custom_row, textvariable=self.custom_name_var, font=DEFAULT_FONT
-        )
-        self.entry_custom.pack(
-            side=self.tk.LEFT, fill=self.tk.X, expand=True, padx=(0, 6)
-        )
+        self.ttk.Label(custom_row, text="เปลี่ยนเป็นชื่อ:").pack(side=self.tk.LEFT, padx=(0, 6))
+        self.entry_custom = self.ttk.Entry(custom_row, textvariable=self.custom_name_var, font=DEFAULT_FONT)
+        self.entry_custom.pack(side=self.tk.LEFT, fill=self.tk.X, expand=True, padx=(0, 6))
         self.entry_custom.bind("<Return>", lambda e: self.on_switch_custom())
 
         btn_apply = self.ttk.Button(
@@ -624,9 +608,7 @@ class StandaloneNameChangerGUI:
         btn_apply.pack(side=self.tk.RIGHT)
 
         # Name Preset List Manager
-        list_frame = self.ttk.LabelFrame(
-            container, text=" รายการชื่อในระบบ (Preset Pool) ", padding=8
-        )
+        list_frame = self.ttk.LabelFrame(container, text=" รายการชื่อในระบบ (Preset Pool) ", padding=8)
         list_frame.pack(fill=self.tk.BOTH, expand=True, pady=(0, 8))
 
         self.names_text = self.tk.Text(

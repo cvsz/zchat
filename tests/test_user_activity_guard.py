@@ -1,5 +1,4 @@
 """The status/marquee senders must not take over the mouse/keyboard while the user is active."""
-
 import re
 import sys
 from pathlib import Path
@@ -28,7 +27,7 @@ BEGIN, END = "# --- user-activity guard", "# --- end user-activity guard ---"
 
 def _block(path):
     s = (ROOT / path).read_text(encoding="utf-8")
-    return s[s.index(BEGIN) : s.index(END)]
+    return s[s.index(BEGIN):s.index(END)]
 
 
 def test_guard_block_identical_in_every_module():
@@ -37,13 +36,9 @@ def test_guard_block_identical_in_every_module():
 
 
 def _load_guard_class():
-    ns = {
-        "os": __import__("os"),
-        "time": __import__("time"),
-        "ctypes": __import__("ctypes"),
-        "log": __import__("logging").getLogger("t"),
-        "is_web": lambda c: bool(getattr(c, "web", False)),
-    }
+    ns = {"os": __import__("os"), "time": __import__("time"),
+          "ctypes": __import__("ctypes"), "log": __import__("logging").getLogger("t"),
+          "is_web": lambda c: bool(getattr(c, "web", False))}
     exec(compile(_block(FILES[0]), "guard", "exec"), ns)  # noqa: S102 - trusted repo source
     return ns
 
@@ -56,7 +51,6 @@ def _stub(real, sink):
     def fake(*a, **k):
         sink.append((a, k))
         return True
-
     return fake
 
 
@@ -78,15 +72,8 @@ class Clock:
 
 def make(ns, last, idle_ms=2000, max_wait=5.0):
     c = Clock()
-    g = ns["UserActivityGuard"](
-        idle_ms=idle_ms,
-        poll=0.5,
-        max_wait=max_wait,
-        tick=c.tick,
-        last_input=lambda: last(c),
-        sleep=c.sleep,
-        clock=c.clock,
-    )
+    g = ns["UserActivityGuard"](idle_ms=idle_ms, poll=0.5, max_wait=max_wait, tick=c.tick,
+                                last_input=lambda: last(c), sleep=c.sleep, clock=c.clock)
     return g, c
 
 
@@ -153,7 +140,6 @@ def test_disabled_with_zero():
 @pytest.mark.parametrize("path", FILES)
 def test_commit_gates_only_global_input_paths(path):
     import importlib
-
     name = Path(path).stem
     try:
         mod = importlib.import_module(name)
@@ -190,7 +176,6 @@ def test_commit_gates_only_global_input_paths(path):
 
 def test_commit_refuses_when_user_stays_active(monkeypatch):
     import importlib
-
     try:
         mod = importlib.import_module("status_marquee_gui")
     except ModuleNotFoundError as exc:
@@ -206,9 +191,4 @@ def test_commit_refuses_when_user_stays_active(monkeypatch):
     assert mod.commit(None, object(), "x", False, True) is False
     assert not ran
     # background modes never need the desktop, so they are never deferred
-    assert (
-        mod.commit(
-            None, object(), "x", False, True, execution_mode="best_effort_background"
-        )
-        is True
-    )
+    assert mod.commit(None, object(), "x", False, True, execution_mode="best_effort_background") is True

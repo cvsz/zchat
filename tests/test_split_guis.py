@@ -3,7 +3,6 @@
 Each module must stand alone: no imports of sibling project modules, its own
 engine copy, and its own profile/mode pinning.
 """
-
 import copy
 import json
 import sys
@@ -37,29 +36,26 @@ def load(name):
 def test_im_reply_requires_new_outgoing_echo(name, monkeypatch):
     mod = load(name)
     previous = ["zdevz: hello", "Seaza: [auto] old reply"]
-    snapshots = iter(
-        [
-            "zdevz: hello\nSeaza: [auto] old reply\nSeaza: [auto] hello zdevz",
-        ]
-    )
+    snapshots = iter([
+        "zdevz: hello\nSeaza: [auto] old reply\nSeaza: [auto] hello zdevz",
+    ])
     monkeypatch.setattr(mod, "read_chat", lambda *_args: next(snapshots))
     monkeypatch.setattr(mod.time, "sleep", lambda _seconds: None)
 
     assert mod.confirm_im_reply_echo(
-        object(), previous, "Seaza", "[auto] hello zdevz", timeout=0.1
-    )
+        object(), previous, "Seaza", "[auto] hello zdevz", timeout=0.1)
 
 
 @pytest.mark.parametrize("name", ["camfrog_auto", "im_autoreply_gui"])
 def test_im_reply_does_not_confirm_old_echo(name, monkeypatch):
     mod = load(name)
     previous = ["zdevz: hello", "Seaza: [auto] hello zdevz"]
-    monkeypatch.setattr(mod, "read_chat", lambda *_args: "\n".join(previous))
+    monkeypatch.setattr(
+        mod, "read_chat", lambda *_args: "\n".join(previous))
     monkeypatch.setattr(mod.time, "sleep", lambda _seconds: None)
 
     assert not mod.confirm_im_reply_echo(
-        object(), previous, "Seaza", "[auto] hello zdevz", timeout=0.01
-    )
+        object(), previous, "Seaza", "[auto] hello zdevz", timeout=0.01)
 
 
 @pytest.mark.parametrize("name", ["camfrog_auto", "im_autoreply_gui"])
@@ -68,9 +64,8 @@ def test_im_worker_mutex_blocks_duplicate_instance(name, tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "BASE", tmp_path)
     monkeypatch.setattr(mod, "acquire_run_mutex", lambda: False)
     monkeypatch.setattr(mod, "running_pid", lambda _cfg: None)
-    monkeypatch.setattr(
-        mod, "Runner", lambda *_args: pytest.fail("duplicate worker must not start")
-    )
+    monkeypatch.setattr(mod, "Runner", lambda *_args: pytest.fail(
+        "duplicate worker must not start"))
 
     assert mod.run_guarded({}, None) == 3
 
@@ -83,16 +78,13 @@ def test_im_state_counts_im_replies(tmp_path, monkeypatch, capsys):
     config = copy.deepcopy(mod.DEFAULTS)
     config["stats"] = stats
     (tmp_path / "stats.json").write_text(
-        json.dumps({"replies": 0, "im_replies": 1}), encoding="utf-8"
-    )
+        json.dumps({"replies": 0, "im_replies": 1}), encoding="utf-8")
 
     assert mod.cmd_state(config) == 1
     assert "replies 1" in capsys.readouterr().out
 
 
-def test_im_activity_log_uses_app_log_path_and_redacts_credentials(
-    tmp_path, monkeypatch
-):
+def test_im_activity_log_uses_app_log_path_and_redacts_credentials(tmp_path, monkeypatch):
     mod = load("im_autoreply_gui")
     monkeypatch.setattr(mod, "BASE", tmp_path)
     cfg = copy.deepcopy(mod.DEFAULTS)
@@ -100,8 +92,7 @@ def test_im_activity_log_uses_app_log_path_and_redacts_credentials(
 
     assert mod.activity_log_path(cfg) == tmp_path / "im-autoreply.log"
     detail = mod.activity_detail(
-        'PHPSESSID=abc123 Cookie: session=private Authorization: Bearer abc.def token="xyz"'
-    )
+        'PHPSESSID=abc123 Cookie: session=private Authorization: Bearer abc.def token="xyz"')
     assert "abc123" not in detail
     assert "private" not in detail
     assert "abc.def" not in detail
@@ -114,8 +105,7 @@ def test_im_activity_log_uses_app_log_path_and_redacts_credentials(
 
 @pytest.mark.parametrize("name", ["camfrog_auto", "im_autoreply_gui"])
 def test_start_reports_success_only_after_worker_pid_is_registered(
-    name, tmp_path, monkeypatch, capsys
-):
+        name, tmp_path, monkeypatch, capsys):
     mod = load(name)
     monkeypatch.setattr(mod, "BASE", tmp_path)
     monkeypatch.setattr(mod, "os", SimpleNamespace(name="nt"))
@@ -143,9 +133,7 @@ def test_start_reports_success_only_after_worker_pid_is_registered(
 
 
 @pytest.mark.parametrize("name", ["camfrog_auto", "im_autoreply_gui"])
-def test_duplicate_start_terminates_unregistered_child(
-    name, tmp_path, monkeypatch, capsys
-):
+def test_duplicate_start_terminates_unregistered_child(name, tmp_path, monkeypatch, capsys):
     mod = load(name)
     monkeypatch.setattr(mod, "BASE", tmp_path)
     monkeypatch.setattr(mod.os, "name", "nt")
@@ -189,26 +177,18 @@ def test_module_has_no_project_imports(name):
             break
     else:
         raise AssertionError(f"{name}: module file not found under src/")
-    banned = (
-        "import camfrog_auto",
-        "import camfrog_gui",
-        "import camfrog_status_gui",
-        "import camfrog_private_chat_gui",
-        "import room_control_gui",
-        "import im_autoreply_gui",
-        "import camfrog_music_gui",
-        "import status_random_gui",
-        "import status_marquee_gui",
-        "import status_changer_gui",
-        "import chat_im_private_gui",
-        "import web_status_gui",
-        "from tools",
-        "import tools",
-        "import clipboard_support",
-        "from clipboard_support",
-    )
+    banned = ("import camfrog_auto", "import camfrog_gui", "import camfrog_status_gui",
+              "import camfrog_private_chat_gui", "import room_control_gui",
+              "import im_autoreply_gui", "import camfrog_music_gui",
+              "import status_random_gui", "import status_marquee_gui",
+              "import status_changer_gui",
+              "import chat_im_private_gui", "import web_status_gui",
+              "from tools", "import tools", "import clipboard_support",
+              "from clipboard_support")
     for bad in banned:
         assert bad not in src, f"{name}: {bad}"
+
+
 
 
 @pytest.mark.parametrize(
@@ -234,7 +214,6 @@ def test_standalone_engines_fail_closed_across_multiple_camfrog_processes(name):
     with pytest.raises(RuntimeError, match="processes match"):
         mod._require_single_window_process(windows)
 
-
 def test_profiles_and_modes_are_pinned():
     assert load("room_control_gui").APP_PROFILE == "room"
     assert load("im_autoreply_gui").APP_PROFILE == "im_reply"
@@ -242,52 +221,22 @@ def test_profiles_and_modes_are_pinned():
     assert load("status_random_gui").STATUS_MODE == "random"
     assert load("status_marquee_gui").STATUS_MODE == "marquee"
     assert load("status_changer_gui").STATUS_MODE == "both"
-    assert (
-        load("status_random_gui").runtime_config(load("status_random_gui").DEFAULTS)[
-            "status"
-        ]["random"]
-        is True
-    )
-    assert (
-        load("status_marquee_gui").runtime_config(load("status_marquee_gui").DEFAULTS)[
-            "status"
-        ]["marquee"]["enabled"]
-        is True
-    )
-    assert (
-        load("status_random_gui").runtime_config(load("status_random_gui").DEFAULTS)[
-            "status"
-        ]["execution_mode"]
-        == "strict_background"
-    )
-    assert (
-        load("status_marquee_gui").runtime_config(load("status_marquee_gui").DEFAULTS)[
-            "status"
-        ]["execution_mode"]
-        == "strict_background"
-    )
-    assert (
-        load("status_random_gui").SingleInstanceGuard().name
-        != load("status_marquee_gui").SingleInstanceGuard().name
-    )
-    assert (
-        load("status_random_gui").SingleInstanceGuard().window_title
-        == "ZChat Random Status"
-    )
-    assert (
-        load("status_marquee_gui").SingleInstanceGuard().window_title
-        == "ZChat Marquee Status"
-    )
+    assert load("status_random_gui").runtime_config(
+        load("status_random_gui").DEFAULTS)["status"]["random"] is True
+    assert load("status_marquee_gui").runtime_config(
+        load("status_marquee_gui").DEFAULTS)["status"]["marquee"]["enabled"] is True
+    assert load("status_random_gui").runtime_config(
+        load("status_random_gui").DEFAULTS)["status"]["execution_mode"] == "strict_background"
+    assert load("status_marquee_gui").runtime_config(
+        load("status_marquee_gui").DEFAULTS)["status"]["execution_mode"] == "strict_background"
+    assert load("status_random_gui").SingleInstanceGuard().name != load(
+        "status_marquee_gui").SingleInstanceGuard().name
+    assert load("status_random_gui").SingleInstanceGuard().window_title == "ZChat Random Status"
+    assert load("status_marquee_gui").SingleInstanceGuard().window_title == "ZChat Marquee Status"
     combined = load("status_changer_gui")
-    assert (
-        combined.runtime_config(combined.DEFAULTS, "random")["status"]["random"] is True
-    )
-    assert (
-        combined.runtime_config(combined.DEFAULTS, "marquee")["status"]["marquee"][
-            "enabled"
-        ]
-        is True
-    )
+    assert combined.runtime_config(combined.DEFAULTS, "random")["status"]["random"] is True
+    assert combined.runtime_config(
+        combined.DEFAULTS, "marquee")["status"]["marquee"]["enabled"] is True
 
 
 @pytest.mark.parametrize("name", ["status_random_gui", "status_marquee_gui"])
@@ -302,9 +251,7 @@ def test_split_status_start_waits_for_worker_pid_registration(
     monkeypatch.setattr(mod, "_strict_status_start_blocked", lambda *_a, **_k: False)
     monkeypatch.setattr(mod, "child_env", lambda: {})
     monkeypatch.setattr(mod, "child_cmd", lambda _args: ["status-worker.exe"])
-    monkeypatch.setattr(
-        mod, "worker_cmd", lambda _args: ["status-worker.exe", "--worker"]
-    )
+    monkeypatch.setattr(mod, "worker_cmd", lambda _args: ["status-worker.exe", "--worker"])
     states = iter([None, None, 321, 321])
     monkeypatch.setattr(mod, "running_pid", lambda _cfg: next(states))
     monkeypatch.setattr(mod, "read_pid", lambda _cfg: 321)
@@ -343,9 +290,7 @@ def test_split_status_start_waits_for_worker_pid_registration(
 
     assert rc == 0
     assert clock[0] >= 0.1
-    assert (
-        "PID 321" in ("\n".join(messages) if messages else "") or entry == "cmd_start"
-    )
+    assert "PID 321" in ("\n".join(messages) if messages else "") or entry == "cmd_start"
     gate = mod.worker_start_gate_path(cfg)
     assert gate.exists()
     assert launch["env"]["ZCFATO_WORKER_START_GATE"] == str(gate)
@@ -363,9 +308,7 @@ def test_split_status_accepts_registered_inner_pid_from_onefile_launcher(
     monkeypatch.setattr(mod, "_strict_status_start_blocked", lambda *_a, **_k: False)
     monkeypatch.setattr(mod, "child_env", lambda: {})
     monkeypatch.setattr(mod, "child_cmd", lambda _args: ["status-worker.exe"])
-    monkeypatch.setattr(
-        mod, "worker_cmd", lambda _args: ["status-worker.exe", "--worker"]
-    )
+    monkeypatch.setattr(mod, "worker_cmd", lambda _args: ["status-worker.exe", "--worker"])
     states = iter([None, 654, 654])
     monkeypatch.setattr(mod, "running_pid", lambda _cfg: next(states))
     monkeypatch.setattr(mod, "read_pid", lambda _cfg: 654)
@@ -407,9 +350,7 @@ def test_split_status_accepts_registration_after_launcher_exits(
     monkeypatch.setattr(mod, "_strict_status_start_blocked", lambda *_a, **_k: False)
     monkeypatch.setattr(mod, "child_env", lambda: {})
     monkeypatch.setattr(mod, "child_cmd", lambda _args: ["status-worker.exe"])
-    monkeypatch.setattr(
-        mod, "worker_cmd", lambda _args: ["status-worker.exe", "--worker"]
-    )
+    monkeypatch.setattr(mod, "worker_cmd", lambda _args: ["status-worker.exe", "--worker"])
     clock = [0.0]
     monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(
@@ -461,14 +402,10 @@ def test_split_status_start_stops_child_that_never_registers_pid(
     monkeypatch.setattr(mod, "_strict_status_start_blocked", lambda *_a, **_k: False)
     monkeypatch.setattr(mod, "child_env", lambda: {})
     monkeypatch.setattr(mod, "child_cmd", lambda _args: ["status-worker.exe"])
-    monkeypatch.setattr(
-        mod, "worker_cmd", lambda _args: ["status-worker.exe", "--worker"]
-    )
+    monkeypatch.setattr(mod, "worker_cmd", lambda _args: ["status-worker.exe", "--worker"])
     monkeypatch.setattr(mod, "running_pid", lambda _cfg: None)
     monkeypatch.setattr(mod, "system_taskkill_path", lambda: "taskkill.exe")
-    monkeypatch.setattr(
-        mod.subprocess, "run", lambda *_a, **_k: SimpleNamespace(returncode=0)
-    )
+    monkeypatch.setattr(mod.subprocess, "run", lambda *_a, **_k: SimpleNamespace(returncode=0))
     clock = [0.0]
     monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(
@@ -691,20 +628,15 @@ def test_status_worker_fails_closed_without_shared_writer_lock(
     pid_file = tmp_path / f"{name}.pid"
     monkeypatch.setattr(mod, "running_pid", lambda _cfg: None)
     monkeypatch.setattr(mod, "pid_path", lambda _cfg: pid_file)
-    monkeypatch.setattr(
-        mod, "Runner", lambda *_args: pytest.fail("writer lock must fail closed")
-    )
-    assert (
-        mod.run_guarded(
-            {
-                "autoreply": {"enabled": True},
-                "autoreply_im": {"enabled": True},
-                "status": {"execution_mode": "interactive"},
-            },
-            None,
-        )
-        == 3
-    )
+    monkeypatch.setattr(mod, "Runner", lambda *_args: pytest.fail("writer lock must fail closed"))
+    assert mod.run_guarded(
+        {
+            "autoreply": {"enabled": True},
+            "autoreply_im": {"enabled": True},
+            "status": {"execution_mode": "interactive"},
+        },
+        None,
+    ) == 3
     assert not pid_file.exists()
     assert "Another status worker owns" in capsys.readouterr().out
 
@@ -733,10 +665,7 @@ def test_split_status_interactive_test_requires_explicit_opt_in(name, monkeypatc
     monkeypatch.delenv("ZCHAT_STATUS_TEST_UNVERIFIED_SUBMIT", raising=False)
     normal = mod.apply_app_profile(configured)
     assert normal["status"]["execution_mode"] == "strict_background"
-    assert (
-        mod.runtime_config(configured)["status"]["execution_mode"]
-        == "strict_background"
-    )
+    assert mod.runtime_config(configured)["status"]["execution_mode"] == "strict_background"
     assert mod._strict_status_start_blocked(configured, emit=lambda *_args: None)
 
     monkeypatch.setenv("ZCHAT_STATUS_TEST_UNVERIFIED_SUBMIT", "1")
@@ -758,7 +687,6 @@ def test_split_status_best_effort_is_now_enabled(name, monkeypatch):
     config["status"]["execution_mode"] = "best_effort_background"
     assert not mod._strict_status_start_blocked(config, emit=lambda *_args: None)
 
-
 @pytest.mark.parametrize(
     "name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"]
 )
@@ -768,11 +696,7 @@ def test_status_profile_preserves_explicit_best_effort_mode(name):
     configured["status"]["execution_mode"] = "best_effort_background"
 
     profiled = mod.apply_app_profile(configured)
-    runtime = (
-        mod.runtime_config(profiled)
-        if name != "status_changer_gui"
-        else mod.runtime_config(profiled, "random")
-    )
+    runtime = mod.runtime_config(profiled) if name != "status_changer_gui" else mod.runtime_config(profiled, "random")
 
     assert profiled["status"]["execution_mode"] == "best_effort_background"
     assert runtime["status"]["execution_mode"] == "best_effort_background"
@@ -794,9 +718,7 @@ def test_status_commit_strict_mode_never_uses_foreground_input(name, monkeypatch
     )
     calls = []
     monkeypatch.setattr(
-        mod,
-        "commit_background",
-        lambda text, dry=False: calls.append((text, dry)) or True,
+        mod, "commit_background", lambda text, dry=False: calls.append((text, dry)) or True
     )
 
     assert mod.commit(
@@ -840,19 +762,16 @@ def test_live_status_worker_fails_before_spawn_when_strict_submit_is_unverified(
     assert "BACKGROUND_UNSUPPORTED" in capsys.readouterr().out
 
     messages = []
-    assert (
-        mod.cmd_start_worker(
-            config,
-            args,
-            report=messages.append,
-        )
-        == 2
-    )
+    assert mod.cmd_start_worker(
+        config, args, report=messages.append,
+    ) == 2
     assert len(messages) == 1
     assert "BACKGROUND_UNSUPPORTED" in messages[0]
     assert capsys.readouterr().out == ""
 
-    assert mod.cmd_start_worker(config, SimpleNamespace(config=None, lang=None)) == 2
+    assert mod.cmd_start_worker(
+        config, SimpleNamespace(config=None, lang=None)
+    ) == 2
     assert "BACKGROUND_UNSUPPORTED" in capsys.readouterr().out
 
 
@@ -865,9 +784,7 @@ def test_room_and_im_profiles_disable_other_features():
     out = room.apply_app_profile(copy.deepcopy(cfg))
     assert out["status"]["enabled"] is False and out["autoreply_im"]["enabled"] is False
     out_im = im.apply_app_profile(copy.deepcopy(cfg))
-    assert (
-        out_im["status"]["enabled"] is False and out_im["autoreply"]["enabled"] is False
-    )
+    assert out_im["status"]["enabled"] is False and out_im["autoreply"]["enabled"] is False
 
 
 def test_music_profile_disables_status_and_im():
@@ -881,71 +798,46 @@ def test_music_profile_disables_status_and_im():
     assert out["autoreply"]["enabled"] is True
 
 
-@pytest.mark.parametrize(
-    "name", ["im_autoreply_gui", "room_control_gui", "camfrog_music_gui"]
-)
+@pytest.mark.parametrize("name", ["im_autoreply_gui", "room_control_gui", "camfrog_music_gui"])
 def test_feature_engines_parse_current_camfrog_dom_rows(name):
     mod = load(name)
-    rows = [
-        {
-            "class_name": "msg-user animated-message",
-            "children": [
-                {"class_name": "nickname-field", "text": "FriendA"},
-                {"class_name": "msg-time", "text": "10/11/2026 08:24"},
-                {"class_name": "msgid", "text": "hello\nthere"},
-            ],
-        }
-    ]
+    rows = [{"class_name": "msg-user animated-message", "children": [
+        {"class_name": "nickname-field", "text": "FriendA"},
+        {"class_name": "msg-time", "text": "10/11/2026 08:24"},
+        {"class_name": "msgid", "text": "hello\nthere"},
+    ]}]
 
     assert mod.parse_web_dom_rows(rows) == ["FriendA: hello there"]
 
 
-@pytest.mark.parametrize(
-    "name",
-    ["camfrog_auto", "im_autoreply_gui", "room_control_gui", "camfrog_music_gui"],
-)
+@pytest.mark.parametrize("name", ["camfrog_auto", "im_autoreply_gui", "room_control_gui", "camfrog_music_gui"])
 def test_web_chat_reader_prefers_dom_when_uia_has_no_hyperlinks(name, monkeypatch):
     mod = load(name)
-    rows = [
-        {
-            "class_name": "msg-user animated-message",
-            "children": [
-                {"class_name": "nickname-field", "text": "zdevz"},
-                {"class_name": "msg-time", "text": "10/11/2026 08:24"},
-                {"class_name": "msgid", "text": "hello"},
-            ],
-        }
-    ]
+    rows = [{"class_name": "msg-user animated-message", "children": [
+        {"class_name": "nickname-field", "text": "zdevz"},
+        {"class_name": "msg-time", "text": "10/11/2026 08:24"},
+        {"class_name": "msgid", "text": "hello"},
+    ]}]
     monkeypatch.setattr(mod, "is_web", lambda _ctrl: True)
     monkeypatch.setattr(mod, "web_dom_rows", lambda _ctrl: rows)
-    monkeypatch.setattr(
-        mod,
-        "web_items",
-        lambda *_args, **_kwargs: pytest.fail(
-            "the DOM parser should handle current Camfrog UIA trees without Hyperlink controls"
-        ),
-    )
+    monkeypatch.setattr(mod, "web_items", lambda *_args, **_kwargs: pytest.fail(
+        "the DOM parser should handle current Camfrog UIA trees without Hyperlink controls"))
 
     assert mod.read_chat(object()) == "zdevz: hello"
 
 
-@pytest.mark.parametrize(
-    "name,cmd",
-    [
-        ("room_control_gui", "check"),
-        ("im_autoreply_gui", "check"),
-        ("camfrog_music_gui", "check"),
-    ],
-)
+@pytest.mark.parametrize("name,cmd", [
+    ("room_control_gui", "check"),
+    ("im_autoreply_gui", "check"),
+    ("camfrog_music_gui", "check"),
+])
 def test_cli_passthrough_validates_example_config(name, cmd, capsys):
     mod = load(name)
     assert mod.main([cmd, "--config", str(EXAMPLE)]) == 0
     assert "config OK" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize(
-    "name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"]
-)
+@pytest.mark.parametrize("name", ["status_random_gui", "status_marquee_gui", "status_changer_gui"])
 def test_status_modules_carry_a_working_engine_cli(name, capsys):
     mod = load(name)
     assert mod.cli_main(["check", "--config", str(EXAMPLE)]) == 0
@@ -965,14 +857,10 @@ def test_status_changer_logs_the_completed_status_text(caplog, monkeypatch):
     monkeypatch.setattr(mod, "LOG_TEXT", True)
     caplog.set_level(logging.INFO, logger="camfrog_status")
     runner_state = SimpleNamespace(
-        marq={"slot_index": None}, status_i=0, stats={"statuses": 0}, current_text=""
-    )
+        marq={"slot_index": None}, status_i=0, stats={"statuses": 0}, current_text="")
 
     mod.Runner._finish_status(
-        runner_state,
-        {"slot_index": None, "raw": "status text sent"},
-        "status text sent",
-    )
+        runner_state, {"slot_index": None, "raw": "status text sent"}, "status text sent")
 
     assert "status submission dispatched (provider outcome unverified)" in caplog.text
 
@@ -984,32 +872,19 @@ def test_status_changer_refuses_combo_submit_if_it_may_take_focus(monkeypatch):
     posted = []
     post_message = lambda *args: posted.append(args) or 1
     user32 = SimpleNamespace(GetForegroundWindow=lambda: 999, PostMessageW=post_message)
-    monkeypatch.setattr(
-        mod.ctypes, "windll", SimpleNamespace(user32=user32), raising=False
-    )
+    monkeypatch.setattr(mod.ctypes, "windll", SimpleNamespace(user32=user32), raising=False)
     combo = SimpleNamespace(class_name="CComboBoxTS", handle=77)
     ctrl = SimpleNamespace(
-        handle=88,
-        element_info=SimpleNamespace(parent=combo),
+        handle=88, element_info=SimpleNamespace(parent=combo),
         set_focus=lambda: pytest.fail("background update must not move focus"),
-        type_keys=lambda *_a, **_k: pytest.fail(
-            "background update must not simulate typing"
-        ),
+        type_keys=lambda *_a, **_k: pytest.fail("background update must not simulate typing"),
     )
     monkeypatch.setattr(mod, "is_web", lambda _ctrl: False)
     writes = []
-    monkeypatch.setattr(
-        mod, "write_text", lambda _ctrl, _text: writes.append(_text) or True
-    )
+    monkeypatch.setattr(mod, "write_text", lambda _ctrl, _text: writes.append(_text) or True)
 
-    assert not mod.commit(
-        SimpleNamespace(handle=123),
-        ctrl,
-        "status",
-        False,
-        require_fg=True,
-        background_enter_target="combo",
-    )
+    assert not mod.commit(SimpleNamespace(handle=123), ctrl, "status", False,
+                          require_fg=True, background_enter_target="combo")
     assert writes == []
     assert posted == []
 
@@ -1029,9 +904,7 @@ def test_standalone_status_startup_discovers_controls(name):
     assert discovered == [True]
 
 
-@pytest.mark.parametrize(
-    "name", ["room_control_gui", "im_autoreply_gui", "camfrog_music_gui"]
-)
+@pytest.mark.parametrize("name", ["room_control_gui", "im_autoreply_gui", "camfrog_music_gui"])
 def test_camfrog_apps_schedule_and_run_startup_discovery(name, monkeypatch):
     mod = load(name)
     app_class = mod.build_app()
@@ -1055,39 +928,22 @@ def test_camfrog_apps_schedule_and_run_startup_discovery(name, monkeypatch):
     assert len(tasks) == 1
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        "room_control_gui",
-        "im_autoreply_gui",
-        "camfrog_music_gui",
-        "status_random_gui",
-        "status_marquee_gui",
-        "status_changer_gui",
-        "chat_im_private_gui",
-    ],
-)
+@pytest.mark.parametrize("name", [
+    "room_control_gui", "im_autoreply_gui", "camfrog_music_gui",
+    "status_random_gui", "status_marquee_gui", "status_changer_gui",
+    "chat_im_private_gui",
+])
 def test_each_camfrog_standalone_saves_only_valid_detected_selectors(
-    name, tmp_path, monkeypatch, capsys
-):
+        name, tmp_path, monkeypatch, capsys):
     mod = load(name)
     cfg = {"status": {"edit": {}}, "autoreply": {"history": {}, "input": {}}}
     window = SimpleNamespace(handle=42)
-    control_rows = [
-        {
-            "class_name": "Edit",
-            "control_type": "Edit",
-            "name": "",
-            "auto_id": "statusEdit",
-            "visible": True,
-            "enabled": True,
-            "left": 10,
-            "top": 10,
-            "w": 180,
-            "h": 24,
-            "parent_class": "CComboBoxTS",
-        }
-    ]
+    control_rows = [{
+        "class_name": "Edit", "control_type": "Edit", "name": "",
+        "auto_id": "statusEdit", "visible": True, "enabled": True,
+        "left": 10, "top": 10, "w": 180, "h": 24,
+        "parent_class": "CComboBoxTS",
+    }]
     monkeypatch.setattr(mod, "BASE", tmp_path)
     monkeypatch.setattr(mod, "get_window", lambda _cfg: window)
     monkeypatch.setattr(mod, "process_windows", lambda _window: [])
@@ -1102,15 +958,9 @@ def test_each_camfrog_standalone_saves_only_valid_detected_selectors(
     assert saved["status"]["edit"]["index"] == 0
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        "room_control_gui",
-        "im_autoreply_gui",
-        "camfrog_music_gui",
-        "chat_im_private_gui",
-    ],
-)
+@pytest.mark.parametrize("name", [
+    "room_control_gui", "im_autoreply_gui", "camfrog_music_gui", "chat_im_private_gui",
+])
 def test_camfrog_standalones_schedule_startup_discovery(name):
     import ast
 
@@ -1123,18 +973,13 @@ def test_camfrog_standalones_schedule_startup_discovery(name):
         if node.func.attr != "after" or len(node.args) < 2:
             continue
         callback = node.args[1]
-        if (
-            isinstance(callback, ast.Attribute)
-            and isinstance(callback.value, ast.Name)
-            and callback.value.id == "self"
-            and callback.attr == "_discover_controls_on_start"
-        ):
+        if (isinstance(callback, ast.Attribute)
+                and isinstance(callback.value, ast.Name)
+                and callback.value.id == "self"
+                and callback.attr == "_discover_controls_on_start"):
             scheduled.append(node.args[0])
     assert scheduled, f"{name} does not schedule startup control discovery"
-    assert any(
-        isinstance(delay, ast.Constant) and delay.value >= 500 for delay in scheduled
-    )
-
+    assert any(isinstance(delay, ast.Constant) and delay.value >= 500 for delay in scheduled)
 
 def test_combined_status_startup_saves_and_discovers_both_modes(monkeypatch):
     mod = load("status_changer_gui")
@@ -1148,8 +993,7 @@ def test_combined_status_startup_saves_and_discovers_both_modes(monkeypatch):
     app.root = SimpleNamespace(after_cancel=lambda job: events.append(("cancel", job)))
     app.config_paths = {"random": "random.json", "marquee": "marquee.json"}
     app.runtime_config_paths = {
-        "random": "random-runtime.json",
-        "marquee": "marquee-runtime.json",
+        "random": "random-runtime.json", "marquee": "marquee-runtime.json"
     }
     app.config_path = "random.json"
     app.random_fields = [SimpleNamespace(get=lambda: "random text")]
@@ -1163,16 +1007,15 @@ def test_combined_status_startup_saves_and_discovers_both_modes(monkeypatch):
     app.run_task = lambda function, *_args, **_kwargs: tasks.append(function)
     app._tr = lambda en, _th: en
     configs = {
-        path: {"status": {"messages": ["old"]}} for path in app.config_paths.values()
+        path: {"status": {"messages": ["old"]}}
+        for path in app.config_paths.values()
     }
     monkeypatch.setattr(mod, "load_cfg", lambda path: configs[path])
     monkeypatch.setattr(mod, "validate", lambda _config: ([], []))
     monkeypatch.setattr(
         mod,
         "write_config",
-        lambda path, config: events.append(
-            ("write", path, config["status"]["messages"])
-        ),
+        lambda path, config: events.append(("write", path, config["status"]["messages"])),
     )
     monkeypatch.setattr(mod, "runtime_config", lambda config, _mode: config)
     monkeypatch.setattr(
@@ -1202,12 +1045,8 @@ def test_status_logs_clear_at_local_noon_once_per_day(tmp_path):
 
     mod = load("status_changer_gui")
     tz = dt.timezone(dt.timedelta(hours=7))
-    files = (
-        "status_activity.log",
-        "random-status-worker.log",
-        "marquee-status-worker.log",
-        "camfrog_status_changer.log",
-    )
+    files = ("status_activity.log", "random-status-worker.log",
+             "marquee-status-worker.log", "camfrog_status_changer.log")
     for filename in files:
         (tmp_path / filename).write_text("old log\n", encoding="utf-8")
         (tmp_path / f"{filename}.1").write_text("rotated log\n", encoding="utf-8")
@@ -1226,8 +1065,7 @@ def test_status_logs_clear_at_local_noon_once_per_day(tmp_path):
 
     later = dt.datetime(2026, 10, 14, 12, 1, tzinfo=tz)
     assert "random-status-worker.log" in mod.clean_status_logs_at_noon(
-        tmp_path, later, active_modes=set()
-    )
+        tmp_path, later, active_modes=set())
     (tmp_path / "status_activity.log").write_text("today log\n", encoding="utf-8")
     assert mod.clean_status_logs_at_noon(tmp_path, later) == ()
     assert (tmp_path / "status_activity.log").read_text("utf-8") == "today log\n"
@@ -1247,9 +1085,9 @@ def test_active_worker_clears_its_open_log_at_noon(tmp_path):
     rotated = Path(f"{path}.1")
     rotated.write_text("rotated log\n", encoding="utf-8")
     handler = logging.handlers.RotatingFileHandler(
-        path, maxBytes=10000, backupCount=1, encoding="utf-8"
-    )
-    now = dt.datetime(2026, 10, 14, 12, 0, tzinfo=dt.timezone(dt.timedelta(hours=7)))
+        path, maxBytes=10000, backupCount=1, encoding="utf-8")
+    now = dt.datetime(2026, 10, 14, 12, 0,
+                      tzinfo=dt.timezone(dt.timedelta(hours=7)))
     try:
         assert mod.clean_worker_log_at_noon(now, handlers=[handler]) == (path.name,)
         assert path.read_text("utf-8") == ""
@@ -1281,60 +1119,45 @@ def test_web_status_merged_module():
 
 def test_entry_points_import_their_module():
     import importlib
-
     for entry, module in (
-        ("room_control_entry", "room_control_gui"),
-        ("im_autoreply_entry", "im_autoreply_gui"),
-        ("status_random_entry", "status_random_gui"),
-        ("status_marquee_entry", "status_marquee_gui"),
-        ("status_changer_entry", "status_changer_gui"),
-        ("chat_im_private_entry", "chat_im_private_gui"),
-        ("music_dj_entry", "camfrog_music_gui"),
-        ("web_status_entry", "web_status_gui"),
-    ):
+            ("room_control_entry", "room_control_gui"),
+            ("im_autoreply_entry", "im_autoreply_gui"),
+            ("status_random_entry", "status_random_gui"),
+            ("status_marquee_entry", "status_marquee_gui"),
+            ("status_changer_entry", "status_changer_gui"),
+            ("chat_im_private_entry", "chat_im_private_gui"),
+            ("music_dj_entry", "camfrog_music_gui"),
+            ("web_status_entry", "web_status_gui")):
         mod = importlib.import_module(entry)
         assert importlib.import_module(module) is not None
         assert hasattr(mod, "main") or module is not None
 
 
-@pytest.mark.parametrize(
-    ("profile", "selected_override"),
-    [
-        ("im_reply", "CAMFROG_APP_DATA_DIR"),
-        ("status", "ZCFATO_DATA_DIR"),
-    ],
-)
-def test_engine_data_directory_override_is_profile_scoped(
-    profile, selected_override, tmp_path
-):
+@pytest.mark.parametrize(("profile", "selected_override"), [
+    ("im_reply", "CAMFROG_APP_DATA_DIR"),
+    ("status", "ZCFATO_DATA_DIR"),
+])
+def test_engine_data_directory_override_is_profile_scoped(profile, selected_override, tmp_path):
     import os
     import subprocess
 
     app_data = tmp_path / "app-data"
     status_data = tmp_path / "status-data"
     env = os.environ.copy()
-    pythonpath = os.pathsep.join(
-        [
-            str(ROOT / "src" / "camfrog"),
-            str(ROOT / "src" / "features"),
-            env.get("PYTHONPATH", ""),
-        ]
-    )
-    env.update(
-        {
-            "CAMFROG_APP_PROFILE": profile,
-            "CAMFROG_APP_DATA_DIR": str(app_data),
-            "ZCFATO_DATA_DIR": str(status_data),
-            "PYTHONPATH": pythonpath,
-        }
-    )
+    pythonpath = os.pathsep.join([
+        str(ROOT / "src" / "camfrog"),
+        str(ROOT / "src" / "features"),
+        env.get("PYTHONPATH", ""),
+    ])
+    env.update({
+        "CAMFROG_APP_PROFILE": profile,
+        "CAMFROG_APP_DATA_DIR": str(app_data),
+        "ZCFATO_DATA_DIR": str(status_data),
+        "PYTHONPATH": pythonpath,
+    })
     result = subprocess.run(
         [sys.executable, "-c", "import camfrog_auto; print(camfrog_auto.BASE)"],
-        cwd=ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=10,
+        cwd=ROOT, env=env, capture_output=True, text=True, timeout=10,
     )
 
     assert result.returncode == 0, result.stderr
@@ -1348,24 +1171,15 @@ def test_im_entry_clears_status_data_override(tmp_path):
 
     env = os.environ.copy()
     env["ZCFATO_DATA_DIR"] = str(tmp_path / "status-data")
-    env["PYTHONPATH"] = os.pathsep.join(
-        [
-            str(ROOT / "src" / "camfrog"),
-            str(ROOT / "src" / "features"),
-            env.get("PYTHONPATH", ""),
-        ]
-    )
+    env["PYTHONPATH"] = os.pathsep.join([
+        str(ROOT / "src" / "camfrog"),
+        str(ROOT / "src" / "features"),
+        env.get("PYTHONPATH", ""),
+    ])
     result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            "import os, im_autoreply_entry; print('ZCFATO_DATA_DIR' in os.environ)",
-        ],
-        cwd=ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=10,
+        [sys.executable, "-c",
+         "import os, im_autoreply_entry; print('ZCFATO_DATA_DIR' in os.environ)"],
+        cwd=ROOT, env=env, capture_output=True, text=True, timeout=10,
     )
 
     assert result.returncode == 0, result.stderr
@@ -1377,16 +1191,12 @@ def test_im_source_worker_dispatches_through_entrypoint():
     import subprocess
 
     command = load("im_autoreply_gui").child_cmd(
-        SimpleNamespace(config=None, lang=None)
-    )
+        SimpleNamespace(config=None, lang=None))
     assert Path(command[1]).name == "im_autoreply_entry.py"
     command[0] = sys.executable
     result = subprocess.run(
         command + ["not-a-real-command"],
-        capture_output=True,
-        text=True,
-        timeout=5,
-        env=os.environ.copy(),
+        capture_output=True, text=True, timeout=5, env=os.environ.copy(),
     )
 
     assert result.returncode == 2
@@ -1394,14 +1204,11 @@ def test_im_source_worker_dispatches_through_entrypoint():
     assert "not-a-real-command" in result.stderr
 
 
-@pytest.mark.parametrize(
-    ("module", "entrypoint"),
-    [
-        ("status_random_gui", "status_random_entry.py"),
-        ("status_marquee_gui", "status_marquee_entry.py"),
-        ("status_changer_gui", "status_changer_entry.py"),
-    ],
-)
+@pytest.mark.parametrize(("module", "entrypoint"), [
+    ("status_random_gui", "status_random_entry.py"),
+    ("status_marquee_gui", "status_marquee_entry.py"),
+    ("status_changer_gui", "status_changer_entry.py"),
+])
 def test_status_worker_command_dispatches_through_entrypoint(module, entrypoint):
     """Source workers must use the same launcher that calls the GUI module's main()."""
     import os
@@ -1413,10 +1220,7 @@ def test_status_worker_command_dispatches_through_entrypoint(module, entrypoint)
     command[0] = sys.executable
     result = subprocess.run(
         command + ["not-a-real-command"],
-        capture_output=True,
-        text=True,
-        timeout=5,
-        env=os.environ.copy(),
+        capture_output=True, text=True, timeout=5, env=os.environ.copy(),
     )
 
     assert result.returncode == 2
@@ -1479,9 +1283,7 @@ def test_combined_status_ctrl_x_cuts_selected_entry_text(monkeypatch):
 
     monkeypatch.setattr(tkinter, "Menu", Menu)
     copied = []
-    monkeypatch.setattr(
-        mod, "set_clipboard_text", lambda _root, text: copied.append(text)
-    )
+    monkeypatch.setattr(mod, "set_clipboard_text", lambda _root, text: copied.append(text))
     entry = Entry()
     controller = mod.ClipboardController(Root(entry))
     controller.install(controller.root)
@@ -1500,7 +1302,6 @@ from conftest import has_display, tk_root  # noqa: E402
 def test_room_gui_smoke(tmp_path, monkeypatch):
     import tkinter
     import room_control_gui as g
-
     config = json.loads(EXAMPLE.read_text("utf-8"))
     (tmp_path / "config.json").write_text(json.dumps(config), encoding="utf-8")
     monkeypatch.setattr(g, "BASE", tmp_path)
@@ -1519,7 +1320,6 @@ def test_room_gui_smoke(tmp_path, monkeypatch):
 def test_im_gui_smoke(tmp_path, monkeypatch):
     import tkinter
     import im_autoreply_gui as g
-
     config = json.loads(EXAMPLE.read_text("utf-8"))
     config["autoreply_im"]["only_nicknames"] = ["FriendA"]
     (tmp_path / "config.json").write_text(json.dumps(config), encoding="utf-8")
@@ -1531,9 +1331,8 @@ def test_im_gui_smoke(tmp_path, monkeypatch):
     app.root.update()
     tabs = app.nb.tabs()
     assert len(tabs) == 5
-    assert any(
-        app.nb.tab(tab, "text") in ("Activity Log", "บันทึกกิจกรรม") for tab in tabs
-    )
+    assert any(app.nb.tab(tab, "text") in ("Activity Log", "บันทึกกิจกรรม")
+               for tab in tabs)
     assert "Application opened" in app.log.get("1.0", "end")
     cfg, errs = app.collect()
     assert not errs
@@ -1547,7 +1346,6 @@ def test_im_gui_smoke(tmp_path, monkeypatch):
 @pytest.mark.parametrize("name", ["status_random_gui", "status_marquee_gui"])
 def test_status_gui_smoke_single_mode(name, tmp_path, monkeypatch):
     import tkinter
-
     mod = __import__(name)
     monkeypatch.setattr(mod, "DATA_DIR", tmp_path)
     config = copy.deepcopy(mod.DEFAULTS)
@@ -1581,24 +1379,16 @@ def test_marquee_runner_scrolls_frames_and_rotates_lines(monkeypatch):
     cfg["status"]["messages"] = ["AAA line one here", "BBB line two here"]
     cfg["status"]["interval_seconds"] = 10
     cfg["status"]["history"]["enabled"] = False
-    cfg["status"]["marquee"].update(
-        enabled=True,
-        scroll=True,
-        width=10,
-        stride=2,
-        step_seconds=10,
-        cycles=1,
-        max_frames=80,
-    )
+    cfg["status"]["marquee"].update(enabled=True, scroll=True, width=10, stride=2,
+                                    step_seconds=10, cycles=1, max_frames=80)
     assert m.validate(cfg)[0] == []
     clock = [0.0]
     monkeypatch.setattr(m.time, "monotonic", lambda: clock[0])
     r = m.Runner(cfg)
     r.status_edit, r.apply_btn, r.win = object(), None, object()
     sent = []
-    monkeypatch.setattr(
-        r, "send", lambda ctrl, text, btn=None, win=None: sent.append(text) or True
-    )
+    monkeypatch.setattr(r, "send", lambda ctrl, text, btn=None, win=None:
+                        sent.append(text) or True)
     monkeypatch.setattr(m.time, "sleep", lambda s: None)
     for _ in range(400):
         clock[0] += 10
@@ -1614,23 +1404,12 @@ def test_marquee_slot_loop_advances_after_finishing_scroll_frames(monkeypatch):
     cfg = copy.deepcopy(m.DEFAULTS)
     cfg["dry_run"] = True
     cfg["status"]["enabled"] = True
-    cfg["status"]["messages"] = [
-        "AAA status that is long enough",
-        "BBB next status long enough",
-    ]
+    cfg["status"]["messages"] = ["AAA status that is long enough", "BBB next status long enough"]
     cfg["status"]["interval_seconds"] = 10.0
     cfg["status"]["history"]["enabled"] = False
     cfg["status"]["marquee"].update(
-        enabled=True,
-        scroll=True,
-        width=10,
-        stride=2,
-        step_seconds=10,
-        cycles=1,
-        max_frames=5,
-        loop_slots=True,
-        infinite_loop=False,
-    )
+        enabled=True, scroll=True, width=10, stride=2, step_seconds=10,
+        cycles=1, max_frames=5, loop_slots=True, infinite_loop=False)
     assert m.validate(cfg)[0] == []
 
     clock = [0.0]
@@ -1638,9 +1417,8 @@ def test_marquee_slot_loop_advances_after_finishing_scroll_frames(monkeypatch):
     r = m.Runner(cfg)
     r.status_edit, r.apply_btn, r.win = object(), None, object()
     sent = []
-    monkeypatch.setattr(
-        r, "send", lambda ctrl, text, btn=None, win=None: sent.append(text) or True
-    )
+    monkeypatch.setattr(r, "send", lambda ctrl, text, btn=None, win=None:
+                        sent.append(text) or True)
     for instant in (10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0):
         clock[0] = instant
         r.do_status(instant)
@@ -1659,18 +1437,13 @@ def test_marquee_without_scroll_uses_frame_delay_not_legacy_interval(name, monke
     cfg = copy.deepcopy(mod.DEFAULTS)
     cfg["dry_run"] = True
     cfg["status"].update(
-        enabled=True,
-        random=False,
+        enabled=True, random=False,
         messages=["SLOT 01", "SLOT 02", "SLOT 03"],
-        interval_seconds=600,
-        set_on_start=True,
+        interval_seconds=600, set_on_start=True,
     )
     cfg["status"]["history"]["enabled"] = False
     cfg["status"]["marquee"].update(
-        enabled=True,
-        scroll=False,
-        loop_slots=True,
-        infinite_loop=False,
+        enabled=True, scroll=False, loop_slots=True, infinite_loop=False,
         step_seconds=10,
     )
     clock = [0.0]
@@ -1732,19 +1505,17 @@ def test_foreground_status_commit_writes_frame_before_enter(name, monkeypatch):
     user32 = SimpleNamespace(
         GetForegroundWindow=lambda: win.handle,
     )
-    monkeypatch.setattr(
-        mod.ctypes, "windll", SimpleNamespace(user32=user32), raising=False
-    )
+    monkeypatch.setattr(mod.ctypes, "windll", SimpleNamespace(user32=user32), raising=False)
     monkeypatch.setattr(mod, "is_web", lambda _ctrl: False)
     monkeypatch.setattr(mod, "foreground_ok", lambda _win: True)
     monkeypatch.setattr(
-        mod,
-        "write_text",
+        mod, "write_text",
         lambda _ctrl, text: events.append(("write", text)) or True,
     )
 
     assert mod.commit(win, ctrl, "slot 2", False, require_fg=True)
-    assert events == [("focus", 88), ("write", "slot 2"), ("keys", "{ENTER}")]
+    assert events == [("focus", 88), ("write", "slot 2"),
+                      ("keys", "{ENTER}")]
 
 
 @pytest.mark.parametrize("name", ["status_changer_gui", "status_marquee_gui"])
@@ -1763,32 +1534,20 @@ def test_combo_enter_option_refuses_when_camfrog_is_not_foreground(name, monkeyp
         IsWindow=lambda hwnd: True,
         SetForegroundWindow=lambda hwnd: events.append(("restore", hwnd)),
     )
-    monkeypatch.setattr(
-        mod.ctypes, "windll", SimpleNamespace(user32=user32), raising=False
-    )
+    monkeypatch.setattr(mod.ctypes, "windll", SimpleNamespace(user32=user32), raising=False)
     monkeypatch.setattr(mod, "is_web", lambda _ctrl: False)
     monkeypatch.setattr(
-        mod,
-        "write_text",
+        mod, "write_text",
         lambda _ctrl, text: events.append(("write", text)) or True,
     )
     monkeypatch.setattr(
-        mod,
-        "_background_enter",
-        lambda target_ctrl, target: events.append(
-            ("background_enter", target_ctrl, target)
-        ),
+        mod, "_background_enter",
+        lambda target_ctrl, target: events.append(("background_enter", target_ctrl, target)),
     )
 
     assert not mod.commit(
-        win,
-        ctrl,
-        "slot 2",
-        False,
-        require_fg=True,
-        restore=True,
-        background_enter_target="combo",
-    )
+        win, ctrl, "slot 2", False, require_fg=True, restore=True,
+        background_enter_target="combo")
     assert events == []
 
 
@@ -1821,31 +1580,19 @@ def test_best_effort_mode_refuses_unisolated_combo_submit(name, monkeypatch, cap
     user32 = SimpleNamespace(
         GetForegroundWindow=lambda: 55,
         IsWindow=lambda _hwnd: True,
-        SetForegroundWindow=lambda _hwnd: pytest.fail(
-            "best-effort must not restore focus"
-        ),
+        SetForegroundWindow=lambda _hwnd: pytest.fail("best-effort must not restore focus"),
     )
-    monkeypatch.setattr(
-        mod.ctypes, "windll", SimpleNamespace(user32=user32), raising=False
-    )
+    monkeypatch.setattr(mod.ctypes, "windll", SimpleNamespace(user32=user32), raising=False)
     monkeypatch.setattr(mod, "is_web", lambda _ctrl: False)
     writes = []
+    monkeypatch.setattr(mod, "write_text", lambda _ctrl, _text: writes.append(_text) or True)
     monkeypatch.setattr(
-        mod, "write_text", lambda _ctrl, _text: writes.append(_text) or True
-    )
-    monkeypatch.setattr(
-        mod,
-        "_background_enter",
+        mod, "_background_enter",
         lambda _ctrl, target: events.append(target),
     )
 
     assert not mod.commit(
-        win,
-        ctrl,
-        "test",
-        False,
-        require_fg=True,
-        restore=True,
+        win, ctrl, "test", False, require_fg=True, restore=True,
         execution_mode="best_effort_background",
     )
     assert events == []
@@ -1853,8 +1600,7 @@ def test_best_effort_mode_refuses_unisolated_combo_submit(name, monkeypatch, cap
 
 
 @pytest.mark.parametrize(
-    "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"]
-)
+    "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"])
 def test_status_update_refuses_combo_when_camfrog_is_not_foreground(name, monkeypatch):
     """Targeted Enter can activate Camfrog, so non-foreground submits fail closed."""
     mod = load(name)
@@ -1870,62 +1616,39 @@ def test_status_update_refuses_combo_when_camfrog_is_not_foreground(name, monkey
         IsWindow=lambda _hwnd: True,
         SetForegroundWindow=lambda hwnd: events.append(("restore", hwnd)),
     )
-    monkeypatch.setattr(
-        mod.ctypes, "windll", SimpleNamespace(user32=user32), raising=False
-    )
+    monkeypatch.setattr(mod.ctypes, "windll", SimpleNamespace(user32=user32), raising=False)
     monkeypatch.setattr(mod, "is_web", lambda _ctrl: False)
+    monkeypatch.setattr(mod, "foreground_ok", lambda _win: pytest.fail(
+        "background status updates must not focus Camfrog"))
     monkeypatch.setattr(
-        mod,
-        "foreground_ok",
-        lambda _win: pytest.fail("background status updates must not focus Camfrog"),
-    )
+        mod, "write_text", lambda _ctrl, text: events.append(("write", text)) or True)
     monkeypatch.setattr(
-        mod, "write_text", lambda _ctrl, text: events.append(("write", text)) or True
-    )
-    monkeypatch.setattr(
-        mod,
-        "_background_enter",
-        lambda target_ctrl, target: events.append(
-            ("background_enter", target_ctrl, target)
-        ),
-    )
+        mod, "_background_enter",
+        lambda target_ctrl, target: events.append(("background_enter", target_ctrl, target)))
 
     assert not mod.commit(
-        win,
-        ctrl,
-        "slot 2",
-        False,
-        require_fg=True,
-        restore=True,
-        background_enter_target="edit",
-        background_if_not_foreground=True,
-    )
+        win, ctrl, "slot 2", False, require_fg=True, restore=True,
+        background_enter_target="edit", background_if_not_foreground=True)
     assert events == []
 
 
 @pytest.mark.parametrize(
     "name", ["status_changer_gui", "status_random_gui", "status_marquee_gui"]
 )
-def test_status_submit_never_imports_or_mutates_windows_sound_registry(
-    name, monkeypatch
-):
+def test_status_submit_never_imports_or_mutates_windows_sound_registry(name, monkeypatch):
     import builtins
 
     mod = load(name)
     sent = []
     user32 = SimpleNamespace(PostMessageW=lambda *args: sent.append(args) or 1)
-    monkeypatch.setattr(
-        mod.ctypes, "windll", SimpleNamespace(user32=user32), raising=False
-    )
+    monkeypatch.setattr(mod.ctypes, "windll", SimpleNamespace(user32=user32), raising=False)
     monkeypatch.setattr(mod.os, "name", "nt")
     monkeypatch.setattr(mod.time, "sleep", lambda _seconds: None)
     original_import = builtins.__import__
 
     def guarded_import(module_name, *args, **kwargs):
         if module_name == "winreg":
-            raise AssertionError(
-                "Status submission must not access Windows sound registry"
-            )
+            raise AssertionError("Status submission must not access Windows sound registry")
         return original_import(module_name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", guarded_import)
@@ -1959,8 +1682,7 @@ def test_status_submit_fails_closed_without_hwnd_instead_of_sending_keys(name):
 
 
 @pytest.mark.parametrize(
-    "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"]
-)
+    "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"])
 def test_non_status_commit_keeps_foreground_requirement(name, monkeypatch):
     """Chat and IM controls must not use the status-only background fallback."""
     mod = load(name)
@@ -1968,14 +1690,10 @@ def test_non_status_commit_keeps_foreground_requirement(name, monkeypatch):
     win = SimpleNamespace(handle=77)
     ctrl = SimpleNamespace(set_focus=lambda: events.append("focus"))
     user32 = SimpleNamespace(GetForegroundWindow=lambda: 55)
-    monkeypatch.setattr(
-        mod.ctypes, "windll", SimpleNamespace(user32=user32), raising=False
-    )
+    monkeypatch.setattr(mod.ctypes, "windll", SimpleNamespace(user32=user32), raising=False)
     monkeypatch.setattr(mod, "is_web", lambda _ctrl: False)
     monkeypatch.setattr(mod, "foreground_ok", lambda _win: False)
-    monkeypatch.setattr(
-        mod, "write_text", lambda *_args: events.append("write") or True
-    )
+    monkeypatch.setattr(mod, "write_text", lambda *_args: events.append("write") or True)
 
     assert not mod.commit(win, ctrl, "reply", False, require_fg=True)
     assert events == []
@@ -2014,10 +1732,7 @@ def test_status_window_discovery_includes_hidden_windows(name, monkeypatch):
         return NativeDesktop() if kwargs["backend"] == "win32" else UiaDesktop()
 
     monkeypatch.setattr(mod, "find", lambda _window, _selector: object())
-    cfg = {
-        "window_title_regex": ".*Camfrog.*",
-        "status": {"edit": {"class_name": "Edit"}},
-    }
+    cfg = {"window_title_regex": ".*Camfrog.*", "status": {"edit": {"class_name": "Edit"}}}
     assert isinstance(mod.get_status_window(cfg, desktop_factory), UiaWindow)
     assert calls == [{"title_re": ".*Camfrog.*", "visible_only": False}]
 
@@ -2026,22 +1741,13 @@ def test_status_window_discovery_includes_hidden_windows(name, monkeypatch):
     "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"]
 )
 def test_status_window_discovery_uses_matching_status_control_to_disambiguate_processes(
-    name, monkeypatch
-):
+        name, monkeypatch):
     mod = load(name)
     windows = [
-        SimpleNamespace(
-            handle=77,
-            process_id=lambda: None,
-            class_name=lambda: "#32770",
-            window_text=lambda: "Camfrog one",
-        ),
-        SimpleNamespace(
-            handle=88,
-            process_id=lambda: 202,
-            class_name=lambda: "#32770",
-            window_text=lambda: "Camfrog two",
-        ),
+        SimpleNamespace(handle=77, process_id=lambda: None,
+                        class_name=lambda: "#32770", window_text=lambda: "Camfrog one"),
+        SimpleNamespace(handle=88, process_id=lambda: 202,
+                        class_name=lambda: "#32770", window_text=lambda: "Camfrog two"),
     ]
     wrappers = {77: SimpleNamespace(handle=77), 88: SimpleNamespace(handle=88)}
 
@@ -2054,22 +1760,13 @@ def test_status_window_discovery_uses_matching_status_control_to_disambiguate_pr
             return SimpleNamespace(wrapper_object=lambda: wrappers[handle])
 
     monkeypatch.setattr(
-        mod,
-        "find",
-        lambda win, _selector: (
-            object()
-            if win.handle == 88
-            else (_ for _ in ()).throw(LookupError("no control"))
-        ),
-    )
+        mod, "find", lambda win, _selector: (
+            object() if win.handle == 88 else (_ for _ in ()).throw(LookupError("no control"))))
 
     def desktop_factory(**kwargs):
         return NativeDesktop() if kwargs["backend"] == "win32" else UiaDesktop()
 
-    cfg = {
-        "window_title_regex": ".*Camfrog.*",
-        "status": {"edit": {"class_name": "Edit"}},
-    }
+    cfg = {"window_title_regex": ".*Camfrog.*", "status": {"edit": {"class_name": "Edit"}}}
     assert mod.get_status_window(cfg, desktop_factory) is wrappers[88]
 
 
@@ -2077,22 +1774,13 @@ def test_status_window_discovery_uses_matching_status_control_to_disambiguate_pr
     "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"]
 )
 def test_status_window_discovery_fails_when_status_control_matches_multiple_processes(
-    name, monkeypatch
-):
+        name, monkeypatch):
     mod = load(name)
     windows = [
-        SimpleNamespace(
-            handle=77,
-            process_id=lambda: 101,
-            class_name=lambda: "#32770",
-            window_text=lambda: "Camfrog one",
-        ),
-        SimpleNamespace(
-            handle=88,
-            process_id=lambda: 202,
-            class_name=lambda: "#32770",
-            window_text=lambda: "Camfrog two",
-        ),
+        SimpleNamespace(handle=77, process_id=lambda: 101,
+                        class_name=lambda: "#32770", window_text=lambda: "Camfrog one"),
+        SimpleNamespace(handle=88, process_id=lambda: 202,
+                        class_name=lambda: "#32770", window_text=lambda: "Camfrog two"),
     ]
 
     class NativeDesktop:
@@ -2101,19 +1789,14 @@ def test_status_window_discovery_fails_when_status_control_matches_multiple_proc
 
     class UiaDesktop:
         def window(self, handle):
-            return SimpleNamespace(
-                wrapper_object=lambda: SimpleNamespace(handle=handle)
-            )
+            return SimpleNamespace(wrapper_object=lambda: SimpleNamespace(handle=handle))
 
     monkeypatch.setattr(mod, "find", lambda _win, _selector: object())
 
     def desktop_factory(**kwargs):
         return NativeDesktop() if kwargs["backend"] == "win32" else UiaDesktop()
 
-    cfg = {
-        "window_title_regex": ".*Camfrog.*",
-        "status": {"edit": {"class_name": "Edit"}},
-    }
+    cfg = {"window_title_regex": ".*Camfrog.*", "status": {"edit": {"class_name": "Edit"}}}
     with pytest.raises(RuntimeError, match="processes match"):
         mod.get_status_window(cfg, desktop_factory)
 
@@ -2123,24 +1806,13 @@ def test_marquee_submits_frames_only_after_configured_step(name, monkeypatch):
     mod = load(name)
     cfg = copy.deepcopy(mod.DEFAULTS)
     cfg["dry_run"] = True
-    cfg["status"].update(
-        enabled=True,
-        random=False,
-        messages=["A marquee message long enough for several frames"],
-        set_on_start=True,
-    )
+    cfg["status"].update(enabled=True, random=False,
+                         messages=["A marquee message long enough for several frames"],
+                         set_on_start=True)
     cfg["status"]["history"]["enabled"] = False
     cfg["status"]["marquee"].update(
-        enabled=True,
-        scroll=True,
-        width=8,
-        stride=2,
-        step_seconds=10,
-        cycles=1,
-        max_frames=5,
-        loop_slots=False,
-        infinite_loop=False,
-    )
+        enabled=True, scroll=True, width=8, stride=2, step_seconds=10,
+        cycles=1, max_frames=5, loop_slots=False, infinite_loop=False)
     clock = [0.0]
     monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
     runner = mod.Runner(cfg)
@@ -2177,7 +1849,9 @@ def test_status_retry_never_bypasses_ten_second_minimum(name, monkeypatch):
     runner = mod.Runner(cfg)
     runner.status_edit, runner.apply_btn, runner.win = object(), None, object()
     sends = []
-    runner.send = lambda _ctrl, _text, btn=None: (sends.append(True), len(sends) > 1)[1]
+    runner.send = lambda _ctrl, _text, btn=None: (
+        sends.append(True), len(sends) > 1
+    )[1]
 
     with pytest.raises(RuntimeError):
         runner.do_status(100)
@@ -2225,9 +1899,7 @@ def test_status_startup_waits_ten_seconds_before_first_change(name, monkeypatch)
 @pytest.mark.parametrize(
     "name", ["status_changer_gui", "status_random_gui", "status_marquee_gui"]
 )
-def test_marquee_step_minimum_is_point_three_seconds_in_every_standalone(
-    name, tmp_path
-):
+def test_marquee_step_minimum_is_point_three_seconds_in_every_standalone(name, tmp_path):
     mod = load(name)
     config_path = tmp_path / f"{name}.json"
     config_path.write_text(
@@ -2246,38 +1918,22 @@ def test_marquee_step_minimum_is_point_three_seconds_in_every_standalone(
 @pytest.mark.parametrize("scroll", [False, True])
 @pytest.mark.parametrize("loop_slots", [False, True])
 def test_marquee_uses_each_slot_once_then_wraps_only_when_loop_is_enabled(
-    name, scroll, loop_slots, monkeypatch, tmp_path, caplog
-):
+        name, scroll, loop_slots, monkeypatch, tmp_path, caplog):
     """Marquee sends slots 1..10 in order, then returns to 1 only with Loop."""
     mod = load(name)
     monkeypatch.setattr(mod, "BASE", tmp_path)
     cfg = copy.deepcopy(mod.DEFAULTS)
     cfg["dry_run"] = True
-    messages = [
-        f"SLOT {index:02d} -- " + ("abcdefghijklmno" * 2) for index in range(1, 11)
-    ]
-    cfg["status"].update(
-        enabled=True,
-        random=False,
-        messages=messages,
-        interval_seconds=600,
-        set_on_start=True,
-        language_cycle=["en", "th"],
-    )
+    messages = [f"SLOT {index:02d} -- " + ("abcdefghijklmno" * 2)
+                for index in range(1, 11)]
+    cfg["status"].update(enabled=True, random=False, messages=messages,
+                         interval_seconds=600, set_on_start=True,
+                         language_cycle=["en", "th"])
     cfg["status"]["history"].update(
-        enabled=True, use_as_source=True, seed_from_messages=False
-    )
+        enabled=True, use_as_source=True, seed_from_messages=False)
     cfg["status"]["marquee"].update(
-        enabled=True,
-        scroll=scroll,
-        width=8,
-        stride=2,
-        step_seconds=10,
-        cycles=1,
-        max_frames=3,
-        loop_slots=loop_slots,
-        infinite_loop=False,
-    )
+        enabled=True, scroll=scroll, width=8, stride=2, step_seconds=10,
+        cycles=1, max_frames=3, loop_slots=loop_slots, infinite_loop=False)
     caplog.set_level("INFO")
     clock = [0.0]
     monkeypatch.setattr(mod.time, "monotonic", lambda: clock[0])
@@ -2300,7 +1956,7 @@ def test_marquee_uses_each_slot_once_then_wraps_only_when_loop_is_enabled(
             if loop_slots and len(completed) == len(expected):
                 break
 
-    assert completed[: len(expected)] == expected
+    assert completed[:len(expected)] == expected
     assert completed == expected
     assert "1/10" in caplog.text
     if loop_slots:
@@ -2311,8 +1967,7 @@ def test_marquee_uses_each_slot_once_then_wraps_only_when_loop_is_enabled(
 
 @pytest.mark.skipif(not has_display(), reason="needs tkinter + display")
 def test_combined_status_changer_marquee_has_no_every_and_matches_web_status_theme(
-    tmp_path, monkeypatch
-):
+        tmp_path, monkeypatch):
     import tkinter
     import status_changer_gui as app_module
     import web_status_gui
@@ -2346,9 +2001,8 @@ def test_combined_status_changer_marquee_has_no_every_and_matches_web_status_the
 
     app.tabs.select(app.pages["random"])
     root.update()
-    assert any(
-        label in ("Every", "เปลี่ยนทุก") for label in labels_under(app.pages["random"])
-    )
+    assert any(label in ("Every", "เปลี่ยนทุก")
+               for label in labels_under(app.pages["random"]))
     assert app_module.STATUS_CHANGER_THEME == web_status_gui.WEB_STATUS_THEME
     assert root.cget("background") == web_status_gui.WEB_STATUS_THEME["background"]
     root.withdraw()
@@ -2363,15 +2017,8 @@ def test_apply_sends_frames_immediately_when_scroll_on(monkeypatch):
     cfg["status"]["enabled"] = True
     cfg["status"]["execution_mode"] = "interactive"
     cfg["status"]["max_length"] = 120
-    cfg["status"]["marquee"].update(
-        enabled=True,
-        scroll=True,
-        width=10,
-        stride=2,
-        step_seconds=10,
-        cycles=1,
-        max_frames=80,
-    )
+    cfg["status"]["marquee"].update(enabled=True, scroll=True, width=10, stride=2,
+                                    step_seconds=10, cycles=1, max_frames=80)
     monkeypatch.setattr(m, "get_window", lambda config: object())
     monkeypatch.setattr(m, "find", lambda win, spec: object())
     seen, sleeps = [], []
@@ -2404,8 +2051,7 @@ def test_apply_falls_back_to_single_shot_when_scroll_off(monkeypatch):
 
 @pytest.mark.parametrize("scrolling", [False, True])
 def test_strict_background_failure_does_not_fall_back_to_uia_discovery(
-    monkeypatch, scrolling
-):
+        monkeypatch, scrolling):
     """A strict submit rejection must not trigger legacy window discovery."""
     import status_marquee_gui as m
 
@@ -2413,26 +2059,18 @@ def test_strict_background_failure_does_not_fall_back_to_uia_discovery(
     cfg["dry_run"] = False
     cfg["status"]["enabled"] = True
     cfg["status"]["execution_mode"] = "strict_background"
-    cfg["status"]["marquee"].update(
-        enabled=scrolling, scroll=scrolling, width=8, stride=1, cycles=1
-    )
+    cfg["status"]["marquee"].update(enabled=scrolling, scroll=scrolling,
+                                     width=8, stride=1, cycles=1)
     monkeypatch.setattr(m, "load_cfg", lambda _path: cfg)
     monkeypatch.setattr(
-        m,
-        "commit_background",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            RuntimeError(
-                "background status failed (state=BACKGROUND_UNSUPPORTED, "
-                "code=STRICT_SUBMIT_UNVERIFIED)"
-            )
-        ),
+        m, "commit_background",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(
+            "background status failed (state=BACKGROUND_UNSUPPORTED, "
+            "code=STRICT_SUBMIT_UNVERIFIED)")),
     )
     monkeypatch.setattr(
-        m,
-        "cmd_detect",
-        lambda *_args, **_kwargs: pytest.fail(
-            "strict failure must not run UIA discovery"
-        ),
+        m, "cmd_detect",
+        lambda *_args, **_kwargs: pytest.fail("strict failure must not run UIA discovery"),
     )
 
     apply = m.apply_status_scrolling if scrolling else m.apply_status_text
@@ -2444,8 +2082,7 @@ def test_strict_background_failure_does_not_fall_back_to_uia_discovery(
     "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"]
 )
 def test_status_worker_reload_attach_failure_clears_stale_status_handles(
-    name, monkeypatch, tmp_path, caplog
-):
+        name, monkeypatch, tmp_path, caplog):
     import logging
 
     m = load(name)
@@ -2463,8 +2100,7 @@ def test_status_worker_reload_attach_failure_clears_stale_status_handles(
     runner.marq = {"raw": "stale"}
     runner.apply_cfg = lambda _cfg: None
     runner.resolve = lambda: (_ for _ in ()).throw(
-        RuntimeError("multiple or unverifiable Camfrog processes")
-    )
+        RuntimeError("multiple or unverifiable Camfrog processes"))
 
     monkeypatch.setattr(m, "apply_app_profile", lambda cfg: cfg)
     monkeypatch.setattr(m, "load_cfg", lambda _path: cfg)
@@ -2482,19 +2118,14 @@ def test_status_worker_reload_attach_failure_clears_stale_status_handles(
 @pytest.mark.parametrize(
     "name", ["status_changer_gui", "status_marquee_gui", "status_random_gui"]
 )
-def test_status_worker_resolve_invalidates_stale_handles_before_discovery(
-    name, monkeypatch
-):
+def test_status_worker_resolve_invalidates_stale_handles_before_discovery(name, monkeypatch):
     m = load(name)
 
     runner = object.__new__(m.Runner)
     runner.cfg = {"status": {"enabled": True}, "autoreply": {"enabled": False}}
     runner.win = runner.status_edit = runner.apply_btn = object()
-    monkeypatch.setattr(
-        m,
-        "get_window",
-        lambda _cfg: (_ for _ in ()).throw(RuntimeError("ambiguous Camfrog process")),
-    )
+    monkeypatch.setattr(m, "get_window", lambda _cfg: (_ for _ in ()).throw(
+        RuntimeError("ambiguous Camfrog process")))
 
     with pytest.raises(RuntimeError, match="ambiguous Camfrog process"):
         runner._do_resolve()

@@ -65,12 +65,7 @@ def test_standalone_color_alternator_extract_external_data_balanced_brace():
     assert len(data["settings"]["nickname"]["colors"]) == 2
 
     assert nccg.extract_external_data("<html>no external data</html>") is None
-    assert (
-        nccg.extract_external_data(
-            "var external_data = (function(){return {broken;})()||{};"
-        )
-        is None
-    )
+    assert nccg.extract_external_data("var external_data = (function(){return {broken;})()||{};") is None
 
 
 def test_standalone_color_alternator_parse_settings_colors():
@@ -96,9 +91,7 @@ def test_standalone_color_alternator_refuses_unknown_color_id(monkeypatch):
         "verify_active_session",
         lambda *a: (True, {"nickname": "Seaza", "user_id": "1"}, "token", ""),
     )
-    monkeypatch.setattr(
-        nccg, "fetch_settings", lambda *a: (SANITIZED_SETTINGS_HTML, 200)
-    )
+    monkeypatch.setattr(nccg, "fetch_settings", lambda *a: (SANITIZED_SETTINGS_HTML, 200))
 
     ret = nccg.run_color_alternator(
         opener=object(),
@@ -109,9 +102,7 @@ def test_standalone_color_alternator_refuses_unknown_color_id(monkeypatch):
         print_fn=out_msgs.append,
     )
     assert ret == nccg.EXIT_USAGE
-    assert any(
-        "Refusing color A: id 9999 is not in allowed colors" in m for m in out_msgs
-    )
+    assert any("Refusing color A: id 9999 is not in allowed colors" in m for m in out_msgs)
 
 
 def test_standalone_color_alternator_alternation_order_and_restore(monkeypatch):
@@ -167,9 +158,7 @@ def test_standalone_color_alternator_stops_immediately_on_429(monkeypatch):
         "verify_active_session",
         lambda *a: (True, {"nickname": "Seaza", "user_id": "1"}, "token", ""),
     )
-    monkeypatch.setattr(
-        nccg, "fetch_settings", lambda *a: (SANITIZED_SETTINGS_HTML, 200)
-    )
+    monkeypatch.setattr(nccg, "fetch_settings", lambda *a: (SANITIZED_SETTINGS_HTML, 200))
 
     def fake_post_429(opener, color_id, csrf, timeout):
         return "rate limit", 429, "60"
@@ -198,17 +187,11 @@ def test_standalone_color_alternator_stops_immediately_on_error_true(monkeypatch
         "verify_active_session",
         lambda *a: (True, {"nickname": "Seaza", "user_id": "1"}, "token", ""),
     )
-    monkeypatch.setattr(
-        nccg, "fetch_settings", lambda *a: (SANITIZED_SETTINGS_HTML, 200)
-    )
+    monkeypatch.setattr(nccg, "fetch_settings", lambda *a: (SANITIZED_SETTINGS_HTML, 200))
     monkeypatch.setattr(
         nccg,
         "post_flair_color",
-        lambda *a: (
-            json.dumps({"error": True, "response": "color expired"}),
-            200,
-            None,
-        ),
+        lambda *a: (json.dumps({"error": True, "response": "color expired"}), 200, None),
     )
 
     ret = nccg.run_color_alternator(
@@ -241,16 +224,13 @@ def test_standalone_color_alternator_redacts_credentials_and_personal_data():
     assert "[stripe-key redacted]" in redacted
     assert "[redacted]" in redacted
 
-
 def test_name_color_changer_clipboard_controller(monkeypatch):
     from types import SimpleNamespace
     import tkinter
     from tests.test_gui_theme_clipboard import FakeEntry, FakeMenu, FakeRoot
 
     monkeypatch.setattr(tkinter, "Menu", FakeMenu)
-    monkeypatch.setattr(
-        nccg, "set_clipboard_text", lambda root, value: root.clipboard_append(value)
-    )
+    monkeypatch.setattr(nccg, "set_clipboard_text", lambda root, value: root.clipboard_append(value))
     monkeypatch.setattr(nccg, "get_clipboard_text", lambda root: root.clipboard_get())
     entry = FakeEntry()
     root = FakeRoot(entry)
@@ -263,11 +243,7 @@ def test_name_color_changer_clipboard_controller(monkeypatch):
     assert "<Control-x>" in entry.bindings
     assert "<Control-a>" in entry.bindings
 
-    assert (
-        controller.handle_control_key(
-            SimpleNamespace(widget=entry, keysym="??", char="ษ", keycode=88)
-        )
-        == "break"
-    )
+    assert controller.handle_control_key(SimpleNamespace(
+        widget=entry, keysym="??", char="ษ", keycode=88)) == "break"
     assert root.clipboard == "bcd"
     assert entry.value == "aef"

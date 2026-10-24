@@ -1,5 +1,4 @@
 """Regression tests for the audit fixes (offline, no Windows)."""
-
 import copy
 import sys
 from pathlib import Path
@@ -15,9 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.fixture
 def cfg():
     x = c.load_cfg(ROOT / "config.example.json")
-    x["dry_run"] = (
-        True  # tests must not depend on the user's live settings in the shipped config
-    )
+    x["dry_run"] = True  # tests must not depend on the user's live settings in the shipped config
     x["status"]["enabled"] = True
     x["autoreply"]["enabled"] = True
     x["status"]["enabled"] = True
@@ -31,9 +28,7 @@ def cfg():
 @pytest.fixture(autouse=True)
 def _iso(tmp_path, monkeypatch):
     monkeypatch.setattr(c, "BASE", tmp_path)
-    monkeypatch.setattr(
-        c.time, "sleep", lambda *_a: None
-    )  # no real reply delays in tests
+    monkeypatch.setattr(c.time, "sleep", lambda *_a: None)   # no real reply delays in tests
     c.LANG = "en"
 
 
@@ -41,16 +36,10 @@ def test_full_build_source_clean_marker_fails_closed_and_checks_status_file():
     batch = (ROOT / "full-build.bat").read_text(encoding="utf-8")
 
     assert 'set "BUILD_SOURCE_CLEAN=false"' in batch
-    assert (
-        'git status --porcelain --untracked-files=normal > "%BUILD_STATUS_FILE%" 2>nul'
-        in batch
-    )
+    assert 'git status --porcelain --untracked-files=normal > "%BUILD_STATUS_FILE%" 2>nul' in batch
     assert "if errorlevel 1 goto :build_source_status_done" in batch
-    assert (
-        'for %%A in ("%BUILD_STATUS_FILE%") do if %%~zA EQU 0 set "BUILD_SOURCE_CLEAN=true"'
-        in batch
-    )
-    assert 'for /f "delims=" %%i in (\'git status --porcelain' not in batch
+    assert 'for %%A in ("%BUILD_STATUS_FILE%") do if %%~zA EQU 0 set "BUILD_SOURCE_CLEAN=true"' in batch
+    assert "for /f \"delims=\" %%i in ('git status --porcelain" not in batch
 
 
 def test_history_keeps_newcomer_when_full(tmp_path):
@@ -70,9 +59,7 @@ def test_skip_patterns_catch_embedded_thai_and_english(cfg):
 
 
 def test_selector_clash_warns_in_dry_and_errors_live(cfg):
-    cfg["status"]["edit"] = dict(
-        cfg["autoreply"]["history"]
-    )  # force a clash (new defaults are distinct)
+    cfg["status"]["edit"] = dict(cfg["autoreply"]["history"])  # force a clash (new defaults are distinct)
     assert c.selector_clashes(cfg) == [("status.edit", "autoreply.history")]
     errs, warns = c.validate(cfg)
     assert not errs and any("identical" in w for w in warns)
@@ -85,18 +72,11 @@ def test_selector_clash_warns_in_dry_and_errors_live(cfg):
     assert c.selector_clashes(live) == []
 
 
-@pytest.mark.parametrize(
-    "path,val",
-    [
-        (("poll_seconds",), 0),
-        (("poll_seconds",), -1),
-        (("poll_seconds",), "x"),
-        (("safety", "max_consecutive_failures"), 0),
-        (("status", "max_length"), 0),
-        (("autoreply", "max_reply_length"), 0),
-        (("poll_seconds",), True),
-    ],
-)
+@pytest.mark.parametrize("path,val", [
+    (("poll_seconds",), 0), (("poll_seconds",), -1), (("poll_seconds",), "x"),
+    (("safety", "max_consecutive_failures"), 0), (("status", "max_length"), 0),
+    (("autoreply", "max_reply_length"), 0), (("poll_seconds",), True),
+])
 def test_numeric_ranges(cfg, path, val):
     cfg = copy.deepcopy(cfg)
     d = cfg
@@ -108,10 +88,8 @@ def test_numeric_ranges(cfg, path, val):
 
 
 def test_clip_never_splits_thai_cluster():
-    assert c.clip("เก", 1) == ""  # lead vowel + consonant stay together
-    assert (
-        c.clip("กี่กี่", 3) == "กี่"
-    )  # consonant + vowel + tone (3 code points) stay together
+    assert c.clip("เก", 1) == ""            # lead vowel + consonant stay together
+    assert c.clip("กี่กี่", 3) == "กี่"      # consonant + vowel + tone (3 code points) stay together
     assert c.clip("กี่กี่", 2) == ""
     assert c.clip("abc", 2) == "ab" and c.clip("abc", 9) == "abc"
     assert c.safe_reply("เก" * 5, "x", 3) == "เก"
@@ -182,15 +160,14 @@ def test_pid_reuse_guard(monkeypatch):
     monkeypatch.setattr(c.sys, "executable", "room-control.exe")
     assert c.pid_is_ours(1, "room-control.exe", 123456) is True
     monkeypatch.setattr(c.sys, "executable", r"C:\venv\Scripts\python.exe")
-    monkeypatch.setattr(
-        c.sys, "_base_executable", r"C:\Python313\python.exe", raising=False
-    )
+    monkeypatch.setattr(c.sys, "_base_executable", r"C:\Python313\python.exe",
+                        raising=False)
     assert c.pid_is_ours(1, r"C:\venv\Scripts\pythonw.exe", 123456) is True
     assert c.pid_is_ours(1, r"C:\Python313\pythonw.exe", 123456) is True
     assert c.pid_is_ours(1, r"C:\Python312\pythonw.exe", 123456) is False
     assert c.pid_is_ours(1, r"C:\venv\Scripts\python.exe", 654321) is False
     assert c.pid_is_ours(1, r"C:\venv\Scripts\python.exe") is False
-    assert c.pid_is_ours(1, "") is False  # unknown -> fail closed
+    assert c.pid_is_ours(1, "") is False       # unknown -> fail closed
 
 
 def test_running_pid_rejects_legacy_and_reused_pid_files(monkeypatch, tmp_path):
@@ -203,9 +180,7 @@ def test_running_pid_rejects_legacy_and_reused_pid_files(monkeypatch, tmp_path):
     monkeypatch.setattr(c, "pid_alive", lambda _pid: True)
     monkeypatch.setattr(c, "pid_image", lambda _pid: r"C:\venv\Scripts\python.exe")
     monkeypatch.setattr(c, "pid_creation_time", lambda _pid: 200)
-    assert (
-        c.running_pid(cfg) is None
-    )  # same interpreter path, different process lifetime
+    assert c.running_pid(cfg) is None  # same interpreter path, different process lifetime
 
     pidfile.write_text("4242", encoding="ascii")
     assert c.read_pid(cfg) == 4242
@@ -247,9 +222,8 @@ def test_pid_alive_uses_pointer_sized_windows_handles(monkeypatch):
     process_api.QueryFullProcessImageNameW = _ApiFunction(1)
     process_api.CloseHandle = _ApiFunction(1)
     monkeypatch.setattr(c.os, "name", "nt")
-    monkeypatch.setattr(
-        c.ctypes, "WinDLL", lambda *args, **kwargs: process_api, raising=False
-    )
+    monkeypatch.setattr(c.ctypes, "WinDLL", lambda *args, **kwargs: process_api,
+                        raising=False)
 
     assert c.pid_alive(4242) is True
     assert process_api.OpenProcess.restype is wintypes.HANDLE
@@ -257,9 +231,7 @@ def test_pid_alive_uses_pointer_sized_windows_handles(monkeypatch):
     assert process_api.CloseHandle.calls == [(handle,)]
 
 
-def test_stop_does_not_force_kill_when_process_identity_changes(
-    cfg, monkeypatch, tmp_path
-):
+def test_stop_does_not_force_kill_when_process_identity_changes(cfg, monkeypatch, tmp_path):
     (tmp_path / cfg["safety"]["pid_file"]).write_text("4242")
     monkeypatch.setattr(c, "pid_alive", lambda p: True)
     checks = iter([True, False, False])
@@ -277,7 +249,7 @@ def test_stop_ignores_stranger_pid(cfg, monkeypatch, tmp_path):
     called = []
     monkeypatch.setattr(c.subprocess, "run", lambda *a, **k: called.append(a))
     assert c.cmd_stop(cfg) == 0
-    assert called == []  # nothing killed
+    assert called == []                          # nothing killed
     assert not (tmp_path / cfg["safety"]["pid_file"]).exists()
 
 

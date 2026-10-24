@@ -48,16 +48,13 @@ def test_cli_cycle_name(capsys):
     out, _ = capsys.readouterr()
     assert "Switched to next name: ชื่อสอง" in out
 
-
 def test_name_changer_clipboard_controller(monkeypatch):
     from types import SimpleNamespace
     import tkinter
     from tests.test_gui_theme_clipboard import FakeEntry, FakeMenu, FakeRoot
 
     monkeypatch.setattr(tkinter, "Menu", FakeMenu)
-    monkeypatch.setattr(
-        ncg, "set_clipboard_text", lambda root, value: root.clipboard_append(value)
-    )
+    monkeypatch.setattr(ncg, "set_clipboard_text", lambda root, value: root.clipboard_append(value))
     monkeypatch.setattr(ncg, "get_clipboard_text", lambda root: root.clipboard_get())
     entry = FakeEntry()
     root = FakeRoot(entry)
@@ -71,29 +68,17 @@ def test_name_changer_clipboard_controller(monkeypatch):
     assert "<Control-a>" in entry.bindings
 
     # Test Ctrl+X
-    assert (
-        controller.handle_control_key(
-            SimpleNamespace(widget=entry, keysym="??", char="ษ", keycode=88)
-        )
-        == "break"
-    )
+    assert controller.handle_control_key(SimpleNamespace(
+        widget=entry, keysym="??", char="ษ", keycode=88)) == "break"
     assert root.clipboard == "bcd"
     assert entry.value == "aef"
 
     # Test Ctrl+A then Ctrl+V
-    assert (
-        controller.handle_control_key(
-            SimpleNamespace(widget=entry, keysym="??", char="ฟ", keycode=65)
-        )
-        == "break"
-    )
+    assert controller.handle_control_key(SimpleNamespace(
+        widget=entry, keysym="??", char="ฟ", keycode=65)) == "break"
     assert entry.selection == (0, len(entry.value))
 
     root.clipboard = "ทดสอบไทย"
-    assert (
-        controller.handle_control_key(
-            SimpleNamespace(widget=entry, keysym="??", char="อ", keycode=86)
-        )
-        == "break"
-    )
+    assert controller.handle_control_key(SimpleNamespace(
+        widget=entry, keysym="??", char="อ", keycode=86)) == "break"
     assert entry.value == "ทดสอบไทย"

@@ -1,5 +1,4 @@
 """Tests for the Camfrog private-chat window manager."""
-
 import sys
 from pathlib import Path
 
@@ -12,10 +11,8 @@ import camfrog_private_chat_gui as p  # noqa: E402
 
 def test_private_config_stays_beside_executable(tmp_path, monkeypatch):
     monkeypatch.setattr(ca, "BASE", tmp_path)
-    assert (
-        p.private_config_path("private-chat-config.json")
-        == (tmp_path / "private-chat-config.json").resolve()
-    )
+    assert p.private_config_path("private-chat-config.json") == (
+        tmp_path / "private-chat-config.json").resolve()
     with pytest.raises(ValueError):
         p.private_config_path("../outside.json")
 
@@ -33,7 +30,6 @@ from conftest import has_display, tk_root  # noqa: E402
 
 def _buttons(manager):
     from tkinter import ttk
-
     found = []
 
     def walk(widget):
@@ -87,9 +83,7 @@ def test_private_chat_discover_reports_output_path(tmp_path, monkeypatch, live_t
 
 
 @pytest.mark.skipif(not has_display(), reason="needs tkinter + display")
-def test_private_chat_discover_reports_failure_in_status(
-    tmp_path, monkeypatch, live_tk_root
-):
+def test_private_chat_discover_reports_failure_in_status(tmp_path, monkeypatch, live_tk_root):
     monkeypatch.setattr(ca, "BASE", tmp_path)
 
     def fake_discover(_config):

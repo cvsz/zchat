@@ -10,9 +10,7 @@ def test_build_guard_allows_non_elevated_windows_tokens(
     monkeypatch: pytest.MonkeyPatch,
     elevation_type: int,
 ) -> None:
-    monkeypatch.setattr(
-        require_non_admin, "_token_elevation_type", lambda: elevation_type
-    )
+    monkeypatch.setattr(require_non_admin, "_token_elevation_type", lambda: elevation_type)
 
     assert require_non_admin.main() == 0
 

@@ -1,5 +1,4 @@
 """Reliable clipboard helpers and standard editing shortcuts for Tk GUIs."""
-
 from __future__ import annotations
 
 import os
@@ -7,13 +6,7 @@ import time
 
 
 _WIDGET_CLASSES = {
-    "Entry",
-    "TEntry",
-    "TCombobox",
-    "Spinbox",
-    "TSpinbox",
-    "Text",
-    "Listbox",
+    "Entry", "TEntry", "TCombobox", "Spinbox", "TSpinbox", "Text", "Listbox",
 }
 _EDITABLE_CLASSES = {"Entry", "TEntry", "TCombobox", "Spinbox", "TSpinbox", "Text"}
 
@@ -165,70 +158,46 @@ class ClipboardController:
         self.target = None
         self.widgets = []
         import weakref
-
         self._installed_widgets = weakref.WeakSet()
         self.menu = tk.Menu(root, tearoff=False)
-        for label, action in (
-            ("Cut|ตัด", "cut"),
-            ("Copy|คัดลอก", "copy"),
-            ("Paste|วาง", "paste"),
-        ):
-            self.menu.add_command(
-                label=self.translate(label),
-                command=lambda op=action: self.perform(self.target, op),
-            )
+        for label, action in (("Cut|ตัด", "cut"), ("Copy|คัดลอก", "copy"),
+                              ("Paste|วาง", "paste")):
+            self.menu.add_command(label=self.translate(label),
+                                  command=lambda op=action: self.perform(self.target, op))
         self.menu.add_separator()
-        self.menu.add_command(
-            label=self.translate("Select all|เลือกทั้งหมด"),
-            command=lambda: self.select_all(self.target),
-        )
+        self.menu.add_command(label=self.translate("Select all|เลือกทั้งหมด"),
+                              command=lambda: self.select_all(self.target))
 
     def refresh_menu(self):
         """Refresh localized labels after the GUI language changes."""
-        labels = ("Cut|ตัด", "Copy|คัดลอก", "Paste|วาง", "Select all|เลือกทั้งหมด")
+        labels = ("Cut|ตัด", "Copy|คัดลอก", "Paste|วาง",
+                  "Select all|เลือกทั้งหมด")
         for index, label in enumerate(labels):
-            self.menu.entryconfigure(
-                index if index < 3 else 4, label=self.translate(label)
-            )
+            self.menu.entryconfigure(index if index < 3 else 4,
+                                     label=self.translate(label))
 
     def install(self, parent):
         """Bind editors recursively, including controls added after the first build."""
         for widget in parent.winfo_children():
             widget_class = _widget_class(widget)
-            if (
-                widget_class in _WIDGET_CLASSES
-                and widget not in self._installed_widgets
-            ):
+            if widget_class in _WIDGET_CLASSES and widget not in self._installed_widgets:
                 self._installed_widgets.add(widget)
                 self.widgets.append(widget)
                 if widget_class in {"Text", "Listbox"}:
                     try:
                         widget.configure(
-                            background="#ffffff"
-                            if widget_class == "Text"
-                            else "#fffdfa",
-                            foreground="#283648",
-                            selectbackground="#8b672b",
-                            selectforeground="#fffdfa",
-                            insertbackground="#283648",
-                            highlightbackground="#d5c8ac",
-                            highlightcolor="#8b672b",
-                        )
+                            background="#ffffff" if widget_class == "Text" else "#fffdfa",
+                            foreground="#283648", selectbackground="#8b672b",
+                            selectforeground="#fffdfa", insertbackground="#283648",
+                            highlightbackground="#d5c8ac", highlightcolor="#8b672b")
                     except Exception:
                         pass
                 for sequence, action in (
-                    ("<Control-c>", "copy"),
-                    ("<Control-x>", "cut"),
-                    ("<Control-v>", "paste"),
-                    ("<Control-Insert>", "copy"),
-                    ("<Shift-Delete>", "cut"),
-                    ("<Shift-Insert>", "paste"),
+                    ("<Control-c>", "copy"), ("<Control-x>", "cut"),
+                    ("<Control-v>", "paste"), ("<Control-Insert>", "copy"),
+                    ("<Shift-Delete>", "cut"), ("<Shift-Insert>", "paste"),
                 ):
-                    widget.bind(
-                        sequence,
-                        lambda event, op=action: self.handle(event, op),
-                        add="+",
-                    )
+                    widget.bind(sequence, lambda event, op=action: self.handle(event, op), add="+")
                 # The generic key binding also recognizes Windows virtual-key
                 # codes and control characters when a Thai/non-Latin layout
                 # reports an unknown keysym for Ctrl+A/C/V/X.
@@ -252,14 +221,8 @@ class ClipboardController:
             "v": ({"v", "\x16"}, 86, "paste"),
             "x": ({"x", "\x18"}, 88, "cut"),
         }
-        key = next(
-            (
-                name
-                for name, (chars, code, _action) in shortcuts.items()
-                if keysym == name or char in chars or keycode == code
-            ),
-            None,
-        )
+        key = next((name for name, (chars, code, _action) in shortcuts.items()
+                    if keysym == name or char in chars or keycode == code), None)
         if key is None:
             return None
         self.target = event.widget

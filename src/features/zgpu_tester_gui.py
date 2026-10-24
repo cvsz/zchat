@@ -3,7 +3,6 @@
 Allows operators to test connections to zGPU RPC backends, inspect inference performance,
 and preview LLM responses.
 """
-
 from __future__ import annotations
 
 import json
@@ -47,33 +46,19 @@ class ZGPUTesterApp:
         main_frame.pack(fill=tk.BOTH, expand=True)
 
         # Config section
-        cfg_frame = ttk.LabelFrame(
-            main_frame, text="zGPU RPC Endpoint Configuration", padding=8
-        )
+        cfg_frame = ttk.LabelFrame(main_frame, text="zGPU RPC Endpoint Configuration", padding=8)
         cfg_frame.pack(fill=tk.X, pady=(0, 10))
 
-        ttk.Label(cfg_frame, text="Endpoint URL:").grid(
-            row=0, column=0, sticky=tk.W, pady=2
-        )
-        ttk.Entry(cfg_frame, textvariable=self.endpoint_var, width=40).grid(
-            row=0, column=1, sticky=tk.EW, padx=5, pady=2
-        )
+        ttk.Label(cfg_frame, text="Endpoint URL:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        ttk.Entry(cfg_frame, textvariable=self.endpoint_var, width=40).grid(row=0, column=1, sticky=tk.EW, padx=5, pady=2)
 
-        ttk.Label(cfg_frame, text="API Key (optional):").grid(
-            row=1, column=0, sticky=tk.W, pady=2
-        )
-        ttk.Entry(cfg_frame, textvariable=self.api_key_var, show="*", width=40).grid(
-            row=1, column=1, sticky=tk.EW, padx=5, pady=2
-        )
+        ttk.Label(cfg_frame, text="API Key (optional):").grid(row=1, column=0, sticky=tk.W, pady=2)
+        ttk.Entry(cfg_frame, textvariable=self.api_key_var, show="*", width=40).grid(row=1, column=1, sticky=tk.EW, padx=5, pady=2)
 
         ttk.Label(cfg_frame, text="Model:").grid(row=2, column=0, sticky=tk.W, pady=2)
-        ttk.Entry(cfg_frame, textvariable=self.model_var, width=20).grid(
-            row=2, column=1, sticky=tk.W, padx=5, pady=2
-        )
+        ttk.Entry(cfg_frame, textvariable=self.model_var, width=20).grid(row=2, column=1, sticky=tk.W, padx=5, pady=2)
 
-        test_btn = ttk.Button(
-            cfg_frame, text="Ping / Health Check", command=self.on_health_check
-        )
+        test_btn = ttk.Button(cfg_frame, text="Ping / Health Check", command=self.on_health_check)
         test_btn.grid(row=0, column=2, rowspan=2, padx=5, sticky=tk.NSEW)
 
         cfg_frame.columnconfigure(1, weight=1)
@@ -83,19 +68,10 @@ class ZGPUTesterApp:
         param_frame.pack(fill=tk.X, pady=(0, 10))
 
         ttk.Label(param_frame, text="Max Tokens:").pack(side=tk.LEFT)
-        ttk.Spinbox(
-            param_frame, from_=16, to=4096, textvariable=self.max_tokens_var, width=6
-        ).pack(side=tk.LEFT, padx=(5, 15))
+        ttk.Spinbox(param_frame, from_=16, to=4096, textvariable=self.max_tokens_var, width=6).pack(side=tk.LEFT, padx=(5, 15))
 
         ttk.Label(param_frame, text="Temperature:").pack(side=tk.LEFT)
-        ttk.Spinbox(
-            param_frame,
-            from_=0.0,
-            to=2.0,
-            increment=0.1,
-            textvariable=self.temperature_var,
-            width=5,
-        ).pack(side=tk.LEFT, padx=5)
+        ttk.Spinbox(param_frame, from_=0.0, to=2.0, increment=0.1, textvariable=self.temperature_var, width=5).pack(side=tk.LEFT, padx=5)
 
         # Prompt input
         prompt_frame = ttk.LabelFrame(main_frame, text="Prompt Input", padding=8)
@@ -103,33 +79,23 @@ class ZGPUTesterApp:
 
         self.prompt_text = tk.Text(prompt_frame, height=5, wrap=tk.WORD)
         self.prompt_text.pack(fill=tk.BOTH, expand=True)
-        self.prompt_text.insert(
-            tk.END, "Hello, can you give me a friendly Camfrog status message?"
-        )
+        self.prompt_text.insert(tk.END, "Hello, can you give me a friendly Camfrog status message?")
 
         # Output / Results
-        out_frame = ttk.LabelFrame(
-            main_frame, text="LLM Output & Performance", padding=8
-        )
+        out_frame = ttk.LabelFrame(main_frame, text="LLM Output & Performance", padding=8)
         out_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
 
-        self.output_text = tk.Text(
-            out_frame, height=6, wrap=tk.WORD, state=tk.DISABLED, bg="#f8f9fa"
-        )
+        self.output_text = tk.Text(out_frame, height=6, wrap=tk.WORD, state=tk.DISABLED, bg="#f8f9fa")
         self.output_text.pack(fill=tk.BOTH, expand=True)
 
         # Action Buttons & Status bar
         btn_frame = ttk.Frame(main_frame)
         btn_frame.pack(fill=tk.X, pady=(0, 5))
 
-        self.send_btn = ttk.Button(
-            btn_frame, text="⚡ Generate (zGPU Accelerated)", command=self.on_generate
-        )
+        self.send_btn = ttk.Button(btn_frame, text="⚡ Generate (zGPU Accelerated)", command=self.on_generate)
         self.send_btn.pack(side=tk.RIGHT)
 
-        status_lbl = ttk.Label(
-            main_frame, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W
-        )
+        status_lbl = ttk.Label(main_frame, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W)
         status_lbl.pack(fill=tk.X, side=tk.BOTTOM)
 
     def _get_client(self) -> ZGPUClient:
@@ -157,15 +123,10 @@ class ZGPUTesterApp:
     def _handle_health_res(self, res: Dict[str, Any]):
         if res.get("ok"):
             self.status_var.set("Endpoint healthy and reachable!")
-            messagebox.showinfo(
-                "zGPU Status",
-                f"Endpoint is reachable!\n\nDetails: {json.dumps(res.get('details', {}), indent=2)}",
-            )
+            messagebox.showinfo("zGPU Status", f"Endpoint is reachable!\n\nDetails: {json.dumps(res.get('details', {}), indent=2)}")
         else:
             self.status_var.set("Health check failed")
-            messagebox.showerror(
-                "zGPU Status", f"Connection error:\n{res.get('error')}"
-            )
+            messagebox.showerror("zGPU Status", f"Connection error:\n{res.get('error')}")
 
     def on_generate(self):
         prompt = self.prompt_text.get("1.0", tk.END).strip()
@@ -192,9 +153,7 @@ class ZGPUTesterApp:
 
         if resp.ok:
             self.output_text.insert(tk.END, resp.text)
-            self.status_var.set(
-                f"Completed in {resp.latency_ms:.1f}ms | Tokens: {resp.tokens_used}"
-            )
+            self.status_var.set(f"Completed in {resp.latency_ms:.1f}ms | Tokens: {resp.tokens_used}")
         else:
             err = resp.error or "Unknown error"
             self.output_text.insert(tk.END, f"[Error]: {err}")
