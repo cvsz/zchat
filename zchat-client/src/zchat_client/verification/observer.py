@@ -236,7 +236,7 @@ def _read_control_value(control: Any) -> str | None:
          UIA Value pattern; raises ``NoPatternInterfaceError`` when unsupported.
       3. ``UIAWrapper.legacy_properties()["Value"]`` — LegacyIAccessible pattern
          fallback (dict keys are the ``Current*`` property names, e.g. Value).
-      4. Raw pattern access: ``effect_info.element.GetCurrentPattern(
+      4. Raw pattern access: ``element_info.element.GetCurrentPattern(
          uia_defines.pattern_ids["Value"][0]).CurrentValue`` — the raw COM
          element lives on ``element_info.element`` (``BaseWrapper.element_info``
          property); a UIAWrapper itself does not expose ``.element``.
