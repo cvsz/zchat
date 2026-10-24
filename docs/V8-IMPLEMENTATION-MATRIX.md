@@ -1,6 +1,6 @@
-# ZChat V8 Implementation Matrix (source-backed, final head 7b1d0e4946096cde03cee498c6b54ced2a6f85b2)
+# ZChat V8 Implementation Matrix (source-backed, current main head a952443)
 
-Evidence states follow AGENTS.md: VERIFIED / PARTIALLY VERIFIED / UNVERIFIED / BLOCKED / NOT APPLICABLE.
+Evidence states follow AGENTS.md: VERIFIED / PARTIALLY VERIFIED / UNVERIFIED / BLOCKED / NOT APPLICABLE / INCONCLUSIVE.
 Unit/CI-green is never conflated with external-provider execution. "Native Camfrog E2E" means a real
 two-account Windows+Linux acceptance run with reconciled evidence at one exact head.
 
@@ -52,19 +52,31 @@ State: BLOCKED in this environment; the executable procedure and gates are in
 (no simulated results are claimed). The acceptance decision itself stays with a human reviewer correlating Windows worker evidence with the
 observer bundle; the tools refuse to fabricate an EXTERNAL_EFFECT_VERIFIED state.
 
-## Phase 6 - Full feature audit
+## Phase 6 - Full feature audit (current main head a952443)
 
-| App | State |
-| --- | --- |
-| room-control / chat-im-private / im-autoreply / music-dj / status-* / web-status / name-changer / name-color-changer / icon-changer | VERIFIED (unit/CI level; packaging covered by build-windows CI) |
-| Combined Windows client + zchat-client | VERIFIED (unit/CI) |
-| control-server | VERIFIED (unit/CI: 92 tests; RLS/audit posture documented in control-server/README) |
-| zGPU client | PARTIALLY VERIFIED (loopback tooling; no real zGPU backend exercised) |
-| zWorkforce | NOT APPLICABLE until authorization gates satisfied (read-only/disabled boundary holds) |
+| App / area | State | Source evidence |
+| --- | --- | --- |
+| room-control | VERIFIED (unit/CI) | `room-control.spec`, `tests/test_room_control*` + CI `test` job green at a952443 |
+| chat-im-private | VERIFIED (unit/CI) | `chat-im-private.spec`, `tests/test_im.py`, `tests/test_private_chat_gui.py`; IM auto-reply refuses IM windows by design |
+| im-autoreply | VERIFIED (unit/CI) | `im-autoreply.spec`, `tests/test_im.py`; room rules never answer private chats (`log_kind` validation) |
+| music-dj | VERIFIED (unit/CI) | `music-dj.spec`, `tests/test_dj.py`, `tests/test_music_gui.py`; local `.wav` backend + queue |
+| status-changer | VERIFIED (unit/CI) | `status-changer.spec`, `tests/test_camfrog_status_engine.py`, `tests/test_status_gui.py`; fail-closed foreground + resource-lock gates |
+| status-marquee | VERIFIED (unit/CI) | `status-marquee.spec`, `tests/test_status_gui.py`; marquee frame rendering + UTF-8 clip |
+| status-random | VERIFIED (unit/CI) | `status-random.spec`, `tests/test_status_gui.py`; random frame selection |
+| web-status | VERIFIED (unit/CI) | `web-status.spec`, `tests/test_web_status.py`, `tests/test_web_status_gui.py`; redaction fails closed, browser UA, DPAPI encrypted store |
+| name-changer | VERIFIED (unit/CI; local-only prototype) | `name-changer.spec`, `tests/test_name_changer.py`; in-memory name switching, no live client automation |
+| name-color-changer | VERIFIED (unit/CI; profiles.camfrog.com path) | `name-color-changer.spec`, `tests/test_name_color_changer.py`; flair color via profile site, HTTP 429 backoff |
+| icon-changer | VERIFIED (unit/CI; profiles.camfrog.com path) | `icon-changer.spec`, `tests/test_icon_changer.py`; flair icons via profile site, dynamic external data parsing |
+| Unified Windows client + zchat-client | VERIFIED (unit/CI) | `zchat-client/src/zchat_client/` (ui, session, process_monitor, verification); 106 passed / 1 skipped |
+| control-server | VERIFIED (unit/CI) | `control-server/src/`; 92 passed; RLS/audit posture in `control-server/README.md`; zWorkforce endpoints read-only/token-gated |
+| zGPU client | PARTIALLY VERIFIED (loopback tooling) | `src/camfrog/zgpu_client.py`, `src/features/zgpu_tester_gui.py`, `tests/test_zgpu_client.py`; no real zGPU backend exercised |
+| zWorkforce integration | NOT APPLICABLE until authorization gates satisfied | `control-server/src/camfrog_control_server/zworkforce_mcp.py`; read-only boundary holds, disabled without service token |
+| Native Camfrog friend-list UIA discovery | INCONCLUSIVE (provider limitation) | `reports/windows-runs/uia-probe-20261024/`: RawViewWalker 1,405 nodes, Camfrog discloses 18 nodes only, zero ListItem/List/TreeItem; observer correctly fail-closes (`friend_not_observed`) |
+| Real two-account acceptance (A: Windows / B: Linux) | BLOCKED in this environment | Requires authorized Account B credentials + live Windows marker mutation + human reconcile (`docs/TWO-ACCOUNT-ACCEPTANCE-RUNBOOK.md`); no simulated results claimed |
 
 ## Phase 7 - Suites run in this session (Linux WSL)
 
 Command evidence recorded in the PR body after execution.
 
 - Windows native suite and native Camfrog acceptance: NOT RUN here (CI runners cover the packaged smoke/runtime fixtures).
-- Final CI state (PR #81 head c662dc9): all required checks passed (build-windows x2, test x2, control-server x2, windows-tests, CodeQL, dependency-review, Analyze GitHub Actions); 0 open CodeQL alerts.
+- Final CI state (main head a952443): all required checks passed (ci, control-server x2, windows-tests, build-windows x2, CodeQL, dependency-review, Analyze GitHub Actions); 0 open CodeQL alerts; pip-audit 0 CVEs; Dependabot 0 open alerts.
