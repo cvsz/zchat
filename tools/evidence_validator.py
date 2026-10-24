@@ -116,7 +116,7 @@ def validate_bundle(
         errors.append("summary.json: missing or empty run_id")
     checked.append("summary.json.run_id")
 
-    nickname = summary.get("nickname")
+    nickname = summary.get("account_a_nickname", summary.get("nickname"))
     if expected_nickname is not None and nickname != expected_nickname:
         errors.append(
             f"summary.json: nickname mismatch: expected {expected_nickname!r}, "

@@ -15,7 +15,7 @@ from tools.evidence_validator import validate_bundle
 
 BUNDLE_STATE = {
     "run_id": "RUN-0001",
-    "nickname": "Seaza",
+    "account_a_nickname": "Seaza",
     "command_id": "CMD-0001",
     "account_b_reference": "acct-b-01",
     "stage_chain": {
@@ -121,7 +121,7 @@ def _write_bundle(tmp_path: Path, *, tamper: str | None = None) -> Path:
         )
     elif tamper == "nickname_mismatch":
         state = json.loads((out / "summary.json").read_text(encoding="utf-8"))
-        state["nickname"] = "NotSeaza"
+        state["account_a_nickname"] = "NotSeaza"
         (out / "summary.json").write_text(
             json.dumps(state, indent=2) + "\n", encoding="utf-8"
         )
