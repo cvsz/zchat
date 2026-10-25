@@ -188,12 +188,20 @@ def reconcile_bundles(
         if not bdir.is_dir():
             errors.append(f"bundle directory not found ({role}): {bdir}")
             continue
-        verdict = _validate_bundle(
-            bdir,
-            expected_nickname=expected_nickname,
-            expected_command_id=None,
-            expected_account_b_reference=expected_account_b_reference,
-        )
+        try:
+            verdict = _validate_bundle(
+                bdir,
+                expected_nickname=expected_nickname,
+                expected_command_id=None,
+                expected_account_b_reference=expected_account_b_reference,
+            )
+        except Exception as exc:
+            # Evidence is untrusted input: malformed field types must fail closed.
+            verdict = {
+                "status": "FAIL",
+                "errors": [f"validator raised {type(exc).__name__}"],
+                "warnings": [],
+            }
         bundle_verdicts[role] = verdict
         if verdict["status"] == "FAIL":
             for e in verdict["errors"]:
