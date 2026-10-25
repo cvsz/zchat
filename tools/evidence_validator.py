@@ -250,8 +250,13 @@ def validate_bundle(
     jsonl_name = summary.get("sample_log")
     samples: list[dict[str, Any]] = []
     if jsonl_name:
-        jsonl_path = output / jsonl_name
-        if not jsonl_path.is_file():
+        jsonl_path = _resolve_safe_path(output, jsonl_name)
+        if jsonl_path is None:
+            errors.append(
+                "summary.json: sample_log must be a safe filename contained "
+                "in the evidence directory"
+            )
+        elif not jsonl_path.is_file():
             errors.append(f"sample log missing: {jsonl_name}")
         else:
             with jsonl_path.open("r", encoding="utf-8") as fh:
