@@ -167,6 +167,7 @@ def _valid_bundle_set(tmp_path: Path) -> dict[str, Path]:
         "marker_a": _write_bundle(
             tmp_path, "marker_a",
             run_id="RUN-MARKER-A-0001",
+            command_id="CMD-MARKER-A-0001",
             observed_at=now + timedelta(seconds=2),
             state="WEB_PROFILE_MATCH",
             last_observed_text_sha256="sha-marker-a",
@@ -174,6 +175,7 @@ def _valid_bundle_set(tmp_path: Path) -> dict[str, Path]:
         "marker_b": _write_bundle(
             tmp_path, "marker_b",
             run_id="RUN-MARKER-B-0001",
+            command_id="CMD-MARKER-B-0001",
             observed_at=now + timedelta(seconds=4),
             state="WEB_PROFILE_MATCH",
             last_observed_text_sha256="sha-marker-b",
@@ -225,6 +227,8 @@ def test_complete_valid_reconciliation_passes(tmp_path: Path):
         expected_nickname="Seaza",
         expected_account_b_reference="acct-b-01",
         expected_source_commit_sha="abc123def456",
+        expected_marker_a_command_id="CMD-MARKER-A-0001",
+        expected_marker_b_command_id="CMD-MARKER-B-0001",
     )
     assert verdict["status"] == "TRANSITION_CANDIDATE"
     assert verdict["external_effect_verified"] is False
@@ -240,14 +244,36 @@ def test_valid_baseline_bundle(tmp_path: Path):
     assert verdict["status"] == "FAIL"
 
 
-def test_matching_command_ids(tmp_path: Path):
+def test_marker_command_ids_match_expected_requests(tmp_path: Path):
     bundles = _valid_bundle_set(tmp_path)
     verdict = reconcile_bundles(
         bundles,
         expected_nickname="Seaza",
         expected_account_b_reference="acct-b-01",
+        expected_marker_a_command_id="CMD-MARKER-A-0001",
+        expected_marker_b_command_id="CMD-MARKER-B-0001",
     )
     assert verdict["status"] == "TRANSITION_CANDIDATE"
+    linkage = next(c for c in verdict["checks"] if c["check"] == "marker_command_ids_match_expected_requests")
+    assert linkage["passed"] is True
+
+
+def test_missing_expected_marker_command_ids_are_inconclusive(tmp_path: Path):
+    verdict = reconcile_bundles(_valid_bundle_set(tmp_path))
+    assert verdict["status"] == "INCONCLUSIVE"
+    linkage = next(c for c in verdict["checks"] if c["check"] == "marker_command_ids_match_expected_requests")
+    assert linkage["passed"] is False
+    assert any("expected marker command IDs were not supplied" in warning for warning in verdict["warnings"])
+
+
+def test_mismatched_expected_marker_command_ids_fail(tmp_path: Path):
+    verdict = reconcile_bundles(
+        _valid_bundle_set(tmp_path),
+        expected_marker_a_command_id="CMD-MARKER-A-0001",
+        expected_marker_b_command_id="CMD-UNRELATED",
+    )
+    assert verdict["status"] == "FAIL"
+    assert any("do not match expected request IDs" in error for error in verdict["errors"])
 
 
 def test_correct_utc_ordering(tmp_path: Path):
