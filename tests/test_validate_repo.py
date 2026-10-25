@@ -128,6 +128,29 @@ def test_build_and_dist_exclusions(tmp_path, monkeypatch):
     assert not any("bad.md" in e for e in errors)
 
 
+def test_tracked_reports_are_scanned_but_generated_report_trees_are_excluded(tmp_path, monkeypatch):
+    _skeleton(tmp_path)
+    tracked = tmp_path / "reports" / "NEXT_STEPS_ROADMAP.md"
+    tracked.parent.mkdir(parents=True, exist_ok=True)
+    tracked.write_text("[missing](missing.md)\n", encoding="utf-8")
+    for rel in ("reports/camfrog-runtime/generated.md", "reports/windows-runs/run.md"):
+        generated = tmp_path / rel
+        generated.parent.mkdir(parents=True, exist_ok=True)
+        generated.write_text("[missing](missing.md)\n", encoding="utf-8")
+
+    monkeypatch.setattr(validate_repo, "ROOT", tmp_path)
+    found = {p.relative_to(tmp_path).as_posix() for p in validate_repo.find_markdown_files()}
+    assert "reports/NEXT_STEPS_ROADMAP.md" in found
+    assert not any(path.startswith("reports/camfrog-runtime/") for path in found)
+    assert not any(path.startswith("reports/windows-runs/") for path in found)
+
+    errors = validate_repo.validate_markdown_links()
+    assert any(
+        "reports/NEXT_STEPS_ROADMAP.md" in error.replace("\\", "/") and "broken local link" in error
+        for error in errors
+    )
+
+
 def test_changelog_with_version_heading(tmp_path, monkeypatch):
     _skeleton(tmp_path)
     (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## [1.0.0] - 2026-01-01\n\nInitial\n", encoding="utf-8")
