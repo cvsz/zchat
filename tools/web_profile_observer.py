@@ -73,6 +73,13 @@ def _validate_optional_text(value: str | None, max_len: int, label: str) -> str:
         )
     return value
 
+def _validate_source_commit_sha(value: str | None) -> str:
+    """Validate an optional Git commit object ID (SHA-1 or SHA-256)."""
+    sha = _validate_optional_text(value, 64, "source_commit_sha")
+    if sha and not re.fullmatch(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})", sha):
+        raise ValueError("source_commit_sha must be a 40- or 64-character hexadecimal commit SHA")
+    return sha.lower()
+
 
 def build_summary(result: dict, log_name: str) -> dict:
     """Reconcile an observer run into the acceptance stage-chain summary.
@@ -223,13 +230,9 @@ def run(args) -> int:
         MAX_ACCEPTANCE_SESSION_ID,
         "acceptance_session_id",
     )
-    source_commit_sha = _validate_optional_text(
-        getattr(args, "source_commit_sha", None) or None,
-        64,
-        "source_commit_sha",
+    source_commit_sha = _validate_source_commit_sha(
+        getattr(args, "source_commit_sha", None) or None
     )
-    if source_commit_sha and not re.fullmatch(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})", source_commit_sha):
-        raise ValueError("source_commit_sha must be a 40- or 64-character hexadecimal commit SHA")
     result = {
         "run_id": uuid4().hex,
         "acceptance_session_id": acceptance_session_id,
