@@ -1,6 +1,5 @@
 """The status/marquee senders must not take over the mouse/keyboard while the user is active."""
 import ast
-import re
 import sys
 from pathlib import Path
 
@@ -52,11 +51,8 @@ def test_guard_block_identical_in_every_module():
 
 
 def _load_guard_class():
-    ns = {"os": __import__("os"), "time": __import__("time"),
-          "ctypes": __import__("ctypes"), "log": __import__("logging").getLogger("t"),
-          "is_web": lambda c: bool(getattr(c, "web", False))}
-    exec(compile(_block(FILES[0]), "guard", "exec"), ns)  # noqa: S102 - trusted repo source
-    return ns
+    from user_activity_guard import UserActivityGuard
+    return {"UserActivityGuard": UserActivityGuard}
 
 
 def _stub(real, sink):
@@ -89,7 +85,8 @@ class Clock:
 def make(ns, last, idle_ms=2000, max_wait=5.0):
     c = Clock()
     g = ns["UserActivityGuard"](idle_ms=idle_ms, poll=0.5, max_wait=max_wait, tick=c.tick,
-                                last_input=lambda: last(c), sleep=c.sleep, clock=c.clock)
+                                last_input=lambda: last(c), sleep=c.sleep, clock=c.clock,
+                                os=ns.get("os"))
     return g, c
 
 

@@ -14,13 +14,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_module_has_no_project_imports():
-    """The DJ exe is built from this single file: no sibling modules allowed."""
+    """The DJ exe is self-contained; shared user_activity_guard module is allowed."""
     src = (ROOT / "src" / "features" / "camfrog_music_gui.py").read_text(encoding="utf-8")
     for banned in ("import camfrog_auto", "import camfrog_gui", "import camfrog_status_gui",
                    "import camfrog_private_chat_gui", "import web_status_gui",
                    "from tools", "import tools", "import clipboard_support",
                    "from clipboard_support"):
         assert banned not in src, banned
+    # user_activity_guard is a shared safety module explicitly allowed in music DJ
 
 
 def test_profile_is_music_and_disables_other_features():
