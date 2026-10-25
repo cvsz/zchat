@@ -12,6 +12,21 @@ Produces machine-readable candidate evidence and a human-readable
 reconciliation report. Never assigns ``EXTERNAL_EFFECT_VERIFIED`` -- that
 decision is reserved for a human reviewer.
 
+Verdict levels (in increasing strength):
+
+- ``FAIL`` — structural or correlation problems; bundle set is invalid.
+- ``INCONCLUSIVE`` — structurally valid but missing essential live evidence
+  (e.g. Windows execution evidence, unverifiable transitions).
+- ``STRUCTURALLY_VALID`` — all bundles validate and cross-bundle identity /
+  ordering checks pass, but no transition evidence was demonstrated.
+- ``CORRELATION_VALID`` — structural + correlation checks pass and at least
+  one transition was observed, but stop-check/post-stop evidence is absent.
+- ``TRANSITION_CANDIDATE`` — full end-to-end candidate: structural,
+  correlation, transition, and stop-check evidence all present.
+
+``EXTERNAL_EFFECT_VERIFIED`` is always ``False`` here; only an authorized
+independent reviewer may set it.
+
 Usage::
 
     from tools.evidence_reconciliation import reconcile_bundles
@@ -38,7 +53,26 @@ BUNDLE_ROLES = ("baseline", "marker_a", "marker_b", "stop_check", "windows")
 
 REQUIRED_OBSERVER_BUNDLES = ("baseline", "marker_a", "marker_b", "stop_check")
 
+# Ordered observer roles used for transition sequencing
+OBSERVER_SEQUENCE = ("baseline", "marker_a", "marker_b", "stop_check")
+
 STAGE_NOT_OBSERVED = "EXTERNAL_NOT_OBSERVED_BY_THIS_TOOL"
+
+# Mandatory identity fields that must be present in every observer bundle
+MANDATORY_IDENTITY_FIELDS = (
+    "account_a_nickname",
+    "account_b_reference",
+    "run_id",
+)
+
+# Verdict levels in increasing strength
+VERDICT_LEVELS = {
+    "FAIL": 0,
+    "INCONCLUSIVE": 1,
+    "STRUCTURALLY_VALID": 2,
+    "CORRELATION_VALID": 3,
+    "TRANSITION_CANDIDATE": 4,
+}
 
 
 class ReconciliationError(Exception):
@@ -65,8 +99,30 @@ def _parse_utc(value: str) -> datetime:
     return dt.astimezone(UTC)
 
 
-def _bundle_dir(run_dir: Path, role: str) -> Path:
-    return run_dir / role
+def _get_summary(bundle_dir: Path, role: str) -> dict[str, Any] | None:
+    """Load summary.json from a bundle directory, returning None on failure."""
+    summary_path = bundle_dir / "summary.json"
+    try:
+        data = _load_json(summary_path)
+    except ReconciliationError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
+def _stage_chain(summary: dict[str, Any]) -> dict[str, Any]:
+    sc = summary.get("stage_chain", {})
+    return sc if isinstance(sc, dict) else {}
+
+
+def _observed_text_sha(summary: dict[str, Any]) -> str | None:
+    """Return the most recent observed Custom Status text SHA from samples."""
+    # Prefer summary-level field if present
+    val = summary.get("last_observed_text_sha256")
+    if isinstance(val, str) and val:
+        return val
+    return None
 
 
 def reconcile_bundles(
@@ -97,10 +153,11 @@ def reconcile_bundles(
     -------
     dict
         Structured reconciliation verdict with keys:
-        ``status`` (PASS/FAIL/INCONCLUSIVE), ``errors``, ``warnings``,
-        ``bundle_verdicts`` (per-bundle validation results), ``checks``
-        (cross-bundle check results), ``review_required`` (always True --
-        ``EXTERNAL_EFFECT_VERIFIED`` is never auto-assigned).
+        ``status`` (one of FAIL/INCONCLUSIVE/STRUCTURALLY_VALID/
+        CORRELATION_VALID/TRANSITION_CANDIDATE), ``errors``, ``warnings``,
+        ``bundle_verdicts``, ``checks``, ``windows_evidence``,
+        ``review_required`` (always True), ``external_effect_verified``
+        (always False), ``verdict_level`` (numeric strength).
     """
     errors: list[str] = []
     warnings: list[str] = []
@@ -114,14 +171,9 @@ def reconcile_bundles(
         errors.append(
             f"missing required bundles: {', '.join(sorted(missing_roles))}"
         )
-        return {
-            "status": "FAIL",
-            "errors": errors,
-            "warnings": warnings,
-            "bundle_verdicts": bundle_verdicts,
-            "checks": checks,
-            "review_required": True,
-        }
+        return _final_verdict(
+            "FAIL", errors, warnings, bundle_verdicts, checks, None
+        )
 
     unknown_roles = provided_roles - set(BUNDLE_ROLES)
     if unknown_roles:
@@ -129,7 +181,7 @@ def reconcile_bundles(
             f"unknown bundle roles ignored: {', '.join(sorted(unknown_roles))}"
         )
 
-    # --- Validate each bundle individually ------------------------------
+    # --- Validate each observer bundle individually --------------------
     for role in REQUIRED_OBSERVER_BUNDLES:
         bdir = bundles[role]
         if not bdir.is_dir():
@@ -149,82 +201,97 @@ def reconcile_bundles(
             warnings.append(f"{role}: {w}")
 
     if errors:
-        return {
-            "status": "FAIL",
-            "errors": errors,
-            "warnings": warnings,
-            "bundle_verdicts": bundle_verdicts,
-            "checks": checks,
-            "review_required": True,
-        }
+        return _final_verdict(
+            "FAIL", errors, warnings, bundle_verdicts, checks, None
+        )
 
-    # --- Load summaries for cross-bundle checks -------------------------
+    # --- Load summaries for cross-bundle checks ------------------------
     summaries: dict[str, dict[str, Any]] = {}
     for role in REQUIRED_OBSERVER_BUNDLES:
-        summary_path = bundles[role] / "summary.json"
-        try:
-            summaries[role] = _load_json(summary_path)
-        except ReconciliationError as exc:
-            errors.append(str(exc))
+        summary = _get_summary(bundles[role], role)
+        if summary is None:
+            errors.append(f"{role}: missing or unreadable summary.json")
             continue
+        summaries[role] = summary
 
     if errors:
-        return {
-            "status": "FAIL",
-            "errors": errors,
-            "warnings": warnings,
-            "bundle_verdicts": bundle_verdicts,
-            "checks": checks,
-            "review_required": True,
-        }
+        return _final_verdict(
+            "FAIL", errors, warnings, bundle_verdicts, checks, None
+        )
 
-    # --- Check 1: Consistent Account A identity -------------------------
+    # --- Check 1: Mandatory identity fields present ---------------------
+    missing_identity: dict[str, list[str]] = {}
+    for role in REQUIRED_OBSERVER_BUNDLES:
+        missing = [
+            f
+            for f in MANDATORY_IDENTITY_FIELDS
+            if not summaries[role].get(f)
+        ]
+        if missing:
+            missing_identity[role] = missing
+    checks.append(
+        {
+            "check": "mandatory_identity_fields_present",
+            "passed": not missing_identity,
+            "details": missing_identity or "all present",
+        }
+    )
+    if missing_identity:
+        errors.append(
+            f"missing mandatory identity fields: {missing_identity}"
+        )
+        return _final_verdict(
+            "FAIL", errors, warnings, bundle_verdicts, checks, None
+        )
+
+    # --- Check 2: Consistent Account A identity -------------------------
     nicknames = {
-        role: summaries[role].get("account_a_nickname")
-        or summaries[role].get("nickname")
+        role: summaries[role]["account_a_nickname"]
         for role in REQUIRED_OBSERVER_BUNDLES
     }
-    unique_nicknames = {n for n in nicknames.values() if n is not None}
+    unique_nicknames = set(nicknames.values())
     checks.append(
         {
             "check": "consistent_account_a_identity",
-            "passed": len(unique_nicknames) <= 1,
+            "passed": len(unique_nicknames) == 1,
             "details": nicknames,
         }
     )
-    if len(unique_nicknames) > 1:
+    if len(unique_nicknames) != 1:
         errors.append(
             f"inconsistent Account A identity across bundles: {nicknames}"
         )
 
-    # --- Check 2: Account B reference present and distinct --------------
+    # --- Check 3: Account B reference present, consistent, distinct -----
     account_b_refs = {
-        role: summaries[role].get("account_b_reference", "")
+        role: summaries[role]["account_b_reference"]
         for role in REQUIRED_OBSERVER_BUNDLES
     }
-    unique_b_refs = {r for r in account_b_refs.values() if r}
+    unique_b_refs = set(account_b_refs.values())
     checks.append(
         {
-            "check": "account_b_reference_present",
-            "passed": len(unique_b_refs) >= 1
-            and (expected_account_b_reference is None
-                 or expected_account_b_reference in unique_b_refs),
+            "check": "account_b_reference_consistent",
+            "passed": len(unique_b_refs) == 1,
             "details": account_b_refs,
         }
     )
-    if expected_account_b_reference is not None and expected_account_b_reference not in unique_b_refs:
-            errors.append(
-                f"expected Account B reference {expected_account_b_reference!r} "
-                f"not found in bundles: {account_b_refs}"
-            )
+    if len(unique_b_refs) != 1:
+        errors.append(
+            f"inconsistent Account B reference across bundles: {account_b_refs}"
+        )
     # Account B reference must be distinct from Account A nickname
     for role, ref in account_b_refs.items():
-        if ref and ref in unique_nicknames:
+        if ref in unique_nicknames:
             errors.append(
                 f"Account B reference equals Account A nickname in {role}: {ref!r}"
             )
+    if expected_account_b_reference is not None and expected_account_b_reference not in unique_b_refs:
+        errors.append(
+            f"expected Account B reference {expected_account_b_reference!r} "
+            f"not found in bundles: {account_b_refs}"
+        )
 
-    # --- Check 3: Source commit SHA consistency -------------------------
+    # --- Check 4: Source commit SHA consistency -------------------------
     commit_shas = {
         role: summaries[role].get("source_commit_sha", "")
         for role in REQUIRED_OBSERVER_BUNDLES
@@ -242,82 +309,166 @@ def reconcile_bundles(
             f"inconsistent source commit SHAs across bundles: {commit_shas}"
         )
     if expected_source_commit_sha is not None and expected_source_commit_sha not in unique_shas:
-            errors.append(
-                f"expected source commit SHA {expected_source_commit_sha!r} "
-                f"not found in bundles: {commit_shas}"
-            )
+        errors.append(
+            f"expected source commit SHA {expected_source_commit_sha!r} "
+            f"not found in bundles: {commit_shas}"
+        )
 
-    # --- Check 4: UTC ordering baseline < marker_a < marker_b -----------
+    # --- Check 5: Run/session lineage consistency -----------------------
+    run_ids = {
+        role: summaries[role]["run_id"]
+        for role in REQUIRED_OBSERVER_BUNDLES
+    }
+    unique_run_ids = set(run_ids.values())
+    checks.append(
+        {
+            "check": "run_session_lineage_consistency",
+            "passed": len(unique_run_ids) == 1,
+            "details": run_ids,
+        }
+    )
+    if len(unique_run_ids) != 1:
+        errors.append(
+            f"inconsistent run_id across bundles: {run_ids}"
+        )
+
+    # --- Check 6: Request/command ID linkage ---------------------------
+    command_ids = {
+        role: summaries[role].get("command_id", "")
+        for role in REQUIRED_OBSERVER_BUNDLES
+    }
+    unique_command_ids = {c for c in command_ids.values() if c}
+    checks.append(
+        {
+            "check": "request_command_id_linkage",
+            "passed": len(unique_command_ids) >= 1,
+            "details": command_ids,
+        }
+    )
+    if not unique_command_ids:
+        errors.append("no command_id found in any observer bundle")
+
+    # --- Check 7: UTC timestamps (baseline, marker_a, marker_b, stop_check)
     times: dict[str, datetime | None] = {}
-    for role in ("baseline", "marker_a", "marker_b"):
+    for role in OBSERVER_SEQUENCE:
         generated_at = summaries[role].get("generated_at", "")
         try:
             times[role] = _parse_utc(generated_at) if generated_at else None
-        except ValueError:
+        except (ValueError, TypeError):
             times[role] = None
             warnings.append(
-                f"{role}: unparseable generated_at timestamp: {generated_at!r}"
+                f"{role}: unparseable or missing generated_at timestamp: {generated_at!r}"
             )
 
+    # Finding A: stop_check timestamp must be present and valid
+    stop_check_missing_or_invalid = times["stop_check"] is None
+    if stop_check_missing_or_invalid:
+        errors.append(
+            "stop_check: missing or invalid generated_at timestamp "
+            "(required for acceptance-grade reconciliation)"
+        )
+
+    # Chronological ordering: baseline < marker_a < marker_b < stop_check
     ordering_ok = True
-    if times["baseline"] is not None and times["marker_a"] is not None and times["baseline"] >= times["marker_a"]:
-        ordering_ok = False
-        errors.append(
-            "baseline generated_at is not before marker_a generated_at"
-        )
-    if times["marker_a"] is not None and times["marker_b"] is not None and times["marker_a"] >= times["marker_b"]:
-        ordering_ok = False
-        errors.append(
-            "marker_a generated_at is not before marker_b generated_at"
-        )
+    pairs = [
+        ("baseline", "marker_a"),
+        ("marker_a", "marker_b"),
+        ("marker_b", "stop_check"),
+    ]
+    for earlier, later in pairs:
+        t_e = times[earlier]
+        t_l = times[later]
+        if t_e is not None and t_l is not None and t_e >= t_l:
+            ordering_ok = False
+            errors.append(
+                f"{earlier} generated_at is not before {later} generated_at"
+            )
     checks.append(
         {
-            "check": "utc_ordering_baseline_before_markers",
+            "check": "utc_ordering_chronological",
             "passed": ordering_ok,
             "details": {k: (v.isoformat() if v else None) for k, v in times.items()},
         }
     )
 
-    # --- Check 5: Stop event before stop-check --------------------------
-    stop_check_time = times.get("stop_check")
-    marker_b_time = times.get("marker_b")
-    stop_order_ok = True
-    if stop_check_time is not None and marker_b_time is not None and stop_check_time < marker_b_time:
-        stop_order_ok = False
+    # --- Check 8: Transition evidence across markers --------------------
+    # Finding B: transition evidence must be validated, not informational.
+    transition_states = {}
+    transition_evidence_ok = True
+    baseline_sha = _observed_text_sha(summaries["baseline"])
+    marker_a_sha = _observed_text_sha(summaries["marker_a"])
+    marker_b_sha = _observed_text_sha(summaries["marker_b"])
+
+    for role in REQUIRED_OBSERVER_BUNDLES:
+        sc = _stage_chain(summaries[role])
+        transition_states[role] = sc.get("WEB_PROFILE_OBSERVED", "")
+        if sc.get("EXTERNAL_EFFECT_VERIFIED") is not False:
+            errors.append(
+                f"{role}: EXTERNAL_EFFECT_VERIFIED must not be true "
+                f"(human reviewer only)"
+            )
+
+    # Baseline: should show no transition (or original status)
+    baseline_wp = _stage_chain(summaries["baseline"]).get("WEB_PROFILE_OBSERVED", "")
+    if baseline_wp not in ("", STAGE_NOT_OBSERVED, None):
+        # Baseline may have been observed but should not show a transition
+        pass  # informational; reviewer interprets
+
+    # Marker A and Marker B must show distinct observed values
+    if marker_a_sha is None:
+        transition_evidence_ok = False
+        errors.append("marker_a: no observed text SHA (transition not verified)")
+    if marker_b_sha is None:
+        transition_evidence_ok = False
+        errors.append("marker_b: no observed text SHA (transition not verified)")
+    if marker_a_sha is not None and marker_b_sha is not None and marker_a_sha == marker_b_sha:
+        transition_evidence_ok = False
         errors.append(
-            "stop-check generated_at is before marker_b generated_at "
-            "(stop should occur after Marker B)"
+            "marker_a and marker_b observed text SHAs are identical "
+            "(no distinct transition between markers)"
         )
+    # Baseline vs Marker A should differ (mutation occurred)
+    if baseline_sha is not None and marker_a_sha is not None and baseline_sha == marker_a_sha:
+        warnings.append(
+            "baseline and marker_a observed text SHAs are identical "
+            "(no change detected after request A)"
+        )
+
     checks.append(
         {
-            "check": "stop_event_before_stop_check",
-            "passed": stop_order_ok,
+            "check": "transition_evidence_validated",
+            "passed": transition_evidence_ok,
             "details": {
-                "marker_b": marker_b_time.isoformat() if marker_b_time else None,
-                "stop_check": (
-                    stop_check_time.isoformat() if stop_check_time else None
-                ),
+                "transition_states": transition_states,
+                "baseline_sha": baseline_sha,
+                "marker_a_sha": marker_a_sha,
+                "marker_b_sha": marker_b_sha,
             },
         }
     )
 
-    # --- Check 6: Transition detection across markers -------------------
-    # A valid acceptance requires: baseline has no transition (or matches
-    # original status), marker_a shows a change, marker_b shows a second
-    # change, stop_check shows no further change.
-    transition_states = {}
-    for role in REQUIRED_OBSERVER_BUNDLES:
-        sc = summaries[role].get("stage_chain", {})
-        transition_states[role] = sc.get("WEB_PROFILE_OBSERVED", "")
+    # --- Check 9: Post-stop observation period -------------------------
+    # Stop-check should show no further change after F4
+    stop_check_sha = _observed_text_sha(summaries["stop_check"])
+    post_stop_stable = True
+    if stop_check_sha is not None and marker_b_sha is not None and stop_check_sha != marker_b_sha:
+        post_stop_stable = False
+        warnings.append(
+            "stop_check observed text SHA differs from marker_b "
+            "(possible post-stop change)"
+        )
     checks.append(
         {
-            "check": "transition_states_across_bundles",
-            "passed": True,  # informational only; reviewer interprets
-            "details": transition_states,
+            "check": "post_stop_observation_stable",
+            "passed": post_stop_stable,
+            "details": {
+                "marker_b_sha": marker_b_sha,
+                "stop_check_sha": stop_check_sha,
+            },
         }
     )
 
-    # --- Check 7: Screenshot integrity ----------------------------------
+    # --- Check 10: Screenshot integrity -------------------------------
     screenshot_ok = True
     for role in REQUIRED_OBSERVER_BUNDLES:
         scr = summaries[role].get("screenshot_files", [])
@@ -337,24 +488,10 @@ def reconcile_bundles(
         }
     )
 
-    # --- Check 8: Complete manifest coverage ----------------------------
-    manifest_ok = True
-    for role in REQUIRED_OBSERVER_BUNDLES:
-        v = bundle_verdicts.get(role, {})
-        if v.get("status") == "FAIL":
-            manifest_ok = False
-    checks.append(
-        {
-            "check": "complete_manifest_coverage",
-            "passed": manifest_ok,
-        }
-    )
-
-    # --- Check 9: No conflicting claims --------------------------------
-    # EXTERNAL_EFFECT_VERIFIED must never be true in any observer bundle.
+    # --- Check 11: No conflicting claims ------------------------------
     external_effect_claims = {}
     for role in REQUIRED_OBSERVER_BUNDLES:
-        sc = summaries[role].get("stage_chain", {})
+        sc = _stage_chain(summaries[role])
         external_effect_claims[role] = sc.get("EXTERNAL_EFFECT_VERIFIED", False)
         if external_effect_claims[role] is not False:
             errors.append(
@@ -369,44 +506,129 @@ def reconcile_bundles(
         }
     )
 
-    # --- Windows execution evidence (optional) --------------------------
+    # --- Finding D: Windows execution evidence (required for acceptance)
     windows_verdict = None
+    windows_present = False
+    windows_valid = False
     if "windows" in bundles:
         wdir = bundles["windows"]
         if wdir.is_dir():
-            # Windows evidence is validated structurally (files present,
-            # manifest covers them). Content semantics are reviewer-dependent.
+            windows_present = True
+            # Validate Windows evidence structurally
+            has_summary = (wdir / "summary.json").is_file()
+            has_manifest = (wdir / "manifest.json").is_file()
+            windows_valid = has_summary and has_manifest
             windows_verdict = {
                 "present": True,
                 "path": str(wdir),
+                "has_summary": has_summary,
+                "has_manifest": has_manifest,
+                "valid": windows_valid,
             }
-            # Check for key Windows evidence files
-            for required_name in ("summary.json", "manifest.json"):
-                if not (wdir / required_name).is_file():
-                    warnings.append(
-                        f"windows bundle missing {required_name}"
-                    )
+            if not has_summary:
+                warnings.append("windows bundle missing summary.json")
+            if not has_manifest:
+                warnings.append("windows bundle missing manifest.json")
         else:
             warnings.append(f"windows bundle directory not found: {wdir}")
-            windows_verdict = {"present": False, "path": str(wdir)}
+            windows_verdict = {
+                "present": False,
+                "path": str(wdir),
+                "has_summary": False,
+                "has_manifest": False,
+                "valid": False,
+            }
+    else:
+        windows_verdict = {
+            "present": False,
+            "path": None,
+            "has_summary": False,
+            "has_manifest": False,
+            "valid": False,
+        }
 
-    # --- Overall status -------------------------------------------------
-    status = "FAIL" if errors else "PASS"
+    # --- Finding E: Determine verdict level ----------------------------
+    has_errors = bool(errors)
+    structural_valid = not has_errors and all(
+        bundle_verdicts.get(r, {}).get("status") != "FAIL"
+        for r in REQUIRED_OBSERVER_BUNDLES
+    )
+    correlation_valid = structural_valid and ordering_ok
+    transition_candidate = (
+        correlation_valid
+        and transition_evidence_ok
+        and windows_present
+        and windows_valid
+        and not stop_check_missing_or_invalid
+        and post_stop_stable
+    )
+
+    if has_errors or not structural_valid:
+        status = "FAIL"
+        level = VERDICT_LEVELS["FAIL"]
+    elif not correlation_valid:
+        status = "INCONCLUSIVE"
+        level = VERDICT_LEVELS["INCONCLUSIVE"]
+    elif not transition_candidate:
+        if transition_evidence_ok and structural_valid:
+            status = "CORRELATION_VALID"
+            level = VERDICT_LEVELS["CORRELATION_VALID"]
+        else:
+            status = "STRUCTURALLY_VALID"
+            level = VERDICT_LEVELS["STRUCTURALLY_VALID"]
+    else:
+        status = "TRANSITION_CANDIDATE"
+        level = VERDICT_LEVELS["TRANSITION_CANDIDATE"]
+
     # EXTERNAL_EFFECT_VERIFIED is NEVER auto-assigned:
     review_required = True
 
+    return _final_verdict(
+        status,
+        errors,
+        warnings,
+        bundle_verdicts,
+        checks,
+        windows_verdict,
+        level=level,
+        review_required=review_required,
+        external_effect_verified=False,
+        source_commit_sha=expected_source_commit_sha,
+        account_a_nickname=expected_nickname,
+        account_b_reference=expected_account_b_reference,
+    )
+
+
+def _final_verdict(
+    status: str,
+    errors: list[str],
+    warnings: list[str],
+    bundle_verdicts: dict[str, dict[str, Any]],
+    checks: list[dict[str, Any]],
+    windows_verdict: dict[str, Any] | None,
+    *,
+    level: int | None = None,
+    review_required: bool = True,
+    external_effect_verified: bool = False,
+    source_commit_sha: str | None = None,
+    account_a_nickname: str | None = None,
+    account_b_reference: str | None = None,
+) -> dict[str, Any]:
+    if level is None:
+        level = VERDICT_LEVELS.get(status, 0)
     return {
         "status": status,
+        "verdict_level": level,
         "errors": errors,
         "warnings": warnings,
         "bundle_verdicts": bundle_verdicts,
         "checks": checks,
         "windows_evidence": windows_verdict,
         "review_required": review_required,
-        "external_effect_verified": False,
-        "source_commit_sha": expected_source_commit_sha,
-        "account_a_nickname": expected_nickname,
-        "account_b_reference": expected_account_b_reference,
+        "external_effect_verified": external_effect_verified,
+        "source_commit_sha": source_commit_sha,
+        "account_a_nickname": account_a_nickname,
+        "account_b_reference": account_b_reference,
     }
 
 
@@ -418,6 +640,7 @@ def write_reconciliation_report(
     lines.append("# Evidence Reconciliation Report")
     lines.append("")
     lines.append(f"- **Status:** {verdict['status']}")
+    lines.append(f"- **Verdict level:** {verdict['verdict_level']}")
     lines.append(f"- **Review required:** {verdict['review_required']}")
     lines.append(f"- **EXTERNAL_EFFECT_VERIFIED:** {verdict['external_effect_verified']}")
     lines.append("")
@@ -441,6 +664,12 @@ def write_reconciliation_report(
         lines.append(f"- **{check['check']}:** {'PASS' if check['passed'] else 'FAIL'}")
         if "details" in check:
             lines.append(f"  - Details: {check['details']}")
+    lines.append("")
+
+    lines.append("## Windows Evidence")
+    we = verdict.get("windows_evidence") or {}
+    lines.append(f"- **Present:** {we.get('present', False)}")
+    lines.append(f"- **Valid:** {we.get('valid', False)}")
     lines.append("")
 
     lines.append("## Errors")
@@ -467,6 +696,7 @@ def write_reconciliation_report(
 
 def main(argv: list[str] | None = None) -> int:
     import argparse
+    import sys
 
     parser = argparse.ArgumentParser(
         description="Reconcile multiple evidence bundles for two-account acceptance."
@@ -521,20 +751,22 @@ def main(argv: list[str] | None = None) -> int:
             expected_source_commit_sha=args.expected_source_commit_sha,
         )
     except ReconciliationError as exc:
-        print(f"RECONCILIATION_ERROR: {exc}", file=__import__("sys").stderr)
+        print(f"RECONCILIATION_ERROR: {exc}", file=sys.stderr)
         return 2
 
     print(json.dumps(verdict, indent=2, ensure_ascii=False))
-    if verdict["status"] == "PASS":
-        print("RECONCILIATION: PASS (candidate evidence — human review required)",
-              file=__import__("sys").stderr)
+    if verdict["status"] == "TRANSITION_CANDIDATE":
+        print(
+            "RECONCILIATION: TRANSITION_CANDIDATE (candidate evidence — human review required)",
+            file=sys.stderr,
+        )
     else:
-        print("RECONCILIATION: FAIL", file=__import__("sys").stderr)
+        print(f"RECONCILIATION: {verdict['status']}", file=sys.stderr)
 
     if args.report:
         write_reconciliation_report(verdict, Path(args.report))
 
-    return 0 if verdict["status"] == "PASS" else 1
+    return 0 if verdict["status"] == "TRANSITION_CANDIDATE" else 1
 
 
 if __name__ == "__main__":
