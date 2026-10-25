@@ -146,7 +146,7 @@ def test_tracked_reports_are_scanned_but_generated_report_trees_are_excluded(tmp
 
     errors = validate_repo.validate_markdown_links()
     assert any(
-        "reports/NEXT_STEPS_ROADMAP.md" in error and "broken local link" in error
+        "reports/NEXT_STEPS_ROADMAP.md" in error.replace("\\", "/") and "broken local link" in error
         for error in errors
     )
 
