@@ -200,7 +200,7 @@ def _rewrite_summary_field(bundle: Path, field: str, value) -> None:
     summary_path = bundle / "summary.json"
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     summary[field] = value
-    summary_path.write_text(json.dumps(summary, indent=2) + "\\n", encoding="utf-8")
+    summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
 
     manifest_path = bundle / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -210,7 +210,7 @@ def _rewrite_summary_field(bundle: Path, field: str, value) -> None:
             entry["sha256"] = hashlib.sha256(summary_bytes).hexdigest()
             entry["size_bytes"] = len(summary_bytes)
             break
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\\n", encoding="utf-8")
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -574,7 +574,7 @@ def test_marker_observation_state_must_confirm_match(tmp_path: Path):
     summary_path = bundles["marker_a"] / "summary.json"
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     summary["stage_chain"]["WEB_PROFILE_OBSERVED"] = "WEB_PROFILE_MISMATCH"
-    summary_path.write_text(json.dumps(summary, indent=2) + "\\n", encoding="utf-8")
+    summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     manifest_path = bundles["marker_a"] / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     data = summary_path.read_bytes()
@@ -583,7 +583,7 @@ def test_marker_observation_state_must_confirm_match(tmp_path: Path):
             entry["sha256"] = hashlib.sha256(data).hexdigest()
             entry["size_bytes"] = len(data)
             break
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\\n", encoding="utf-8")
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     verdict = reconcile_bundles(bundles)
     assert verdict["status"] == "FAIL"
     assert any("WEB_PROFILE_OBSERVED" in error for error in verdict["errors"])
@@ -602,7 +602,7 @@ def test_windows_manifest_content_is_validated(tmp_path: Path):
     manifest_path = bundles["windows"] / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["files"] = []
-    manifest_path.write_text(json.dumps(manifest, indent=2) + "\\n", encoding="utf-8")
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     verdict = reconcile_bundles(bundles)
     assert verdict["status"] == "FAIL"
     assert verdict["windows_evidence"]["valid"] is False
