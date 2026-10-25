@@ -1,4 +1,5 @@
 """The status/marquee senders must not take over the mouse/keyboard while the user is active."""
+import ast
 import re
 import sys
 from pathlib import Path
@@ -31,8 +32,23 @@ def _block(path):
 
 
 def test_guard_block_identical_in_every_module():
-    blocks = {_block(p) for p in FILES}
-    assert len(blocks) == 1
+    """All nine Guard blocks must be semantically identical (same AST).
+
+    Formatting may differ (e.g. Ruff 0.17.2 reformatted camfrog_auto.py
+    while the eight standalone GUI modules retain their previous layout),
+    but the safety contract must be the same across every module. A raw
+    text comparison is too brittle; an AST dump catches any real logic
+    divergence while ignoring whitespace/style changes.
+    """
+    blocks = [_block(p) for p in FILES]
+    dumps = [
+        ast.dump(ast.parse(b), annotate_fields=False, include_attributes=False)
+        for b in blocks
+    ]
+    assert len(set(dumps)) == 1, (
+        "Guard block semantics differ across modules:\n"
+        + "\n".join(f"  {p}: {d}" for p, d in zip(FILES, dumps))
+    )
 
 
 def _load_guard_class():
