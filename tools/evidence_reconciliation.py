@@ -408,6 +408,7 @@ def reconcile_bundles(
 
     # --- Check 7: UTC timestamps (baseline, marker_a, marker_b, stop_check)
     times: dict[str, datetime | None] = {}
+    ordering_ok = True
     for role in OBSERVER_SEQUENCE:
         generated_at = summaries[role].get("generated_at", "")
         try:
@@ -424,7 +425,6 @@ def reconcile_bundles(
     stop_check_missing_or_invalid = times["stop_check"] is None
 
     # Chronological ordering: baseline < marker_a < marker_b < stop_check
-    ordering_ok = True
     pairs = [
         ("baseline", "marker_a"),
         ("marker_a", "marker_b"),
