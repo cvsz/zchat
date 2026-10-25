@@ -55,6 +55,31 @@ def _load_guard_class():
     return {"UserActivityGuard": UserActivityGuard}
 
 
+def _load_embedded_guard_class(path, os_module=None):
+    """Load the actual self-contained guard class from an application source file."""
+    import ctypes
+    import logging
+    import os as host_os
+    import time
+
+    tree = ast.parse(_block(path))
+    cls = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "UserActivityGuard"
+    )
+    namespace = {
+        "__name__": f"embedded_guard_{Path(path).stem}",
+        "ctypes": ctypes,
+        "logging": logging,
+        "log": logging.getLogger(__name__),
+        "os": host_os if os_module is None else os_module,
+        "time": time,
+    }
+    exec(compile(ast.Module(body=[cls], type_ignores=[]), path, "exec"), namespace)
+    return {"UserActivityGuard": namespace["UserActivityGuard"]}
+
+
 def _stub(real, sink):
     """Replacement for _commit_impl that keeps its signature (commit() binds against it)."""
     import functools
@@ -88,6 +113,39 @@ def make(ns, last, idle_ms=2000, max_wait=5.0):
                                 last_input=lambda: last(c), sleep=c.sleep, clock=c.clock,
                                 os=ns.get("os"))
     return g, c
+
+
+def make_embedded(ns, last, idle_ms=2000, max_wait=5.0):
+    c = Clock()
+    g = ns["UserActivityGuard"](
+        idle_ms=idle_ms,
+        poll=0.5,
+        max_wait=max_wait,
+        tick=c.tick,
+        last_input=lambda: last(c),
+        sleep=c.sleep,
+        clock=c.clock,
+    )
+    return g, c
+
+
+@pytest.mark.parametrize("path", FILES)
+def test_embedded_guard_allows_idle_and_defers_active_user(path):
+    ns = _load_embedded_guard_class(path)
+    guard, _ = make_embedded(ns, lambda c: c.now - 5000)
+    assert guard.wait_until_idle() is True
+
+    guard, _ = make_embedded(ns, lambda c: c.now, max_wait=1.0)
+    assert guard.wait_until_idle() is False
+
+
+@pytest.mark.parametrize("path", FILES)
+def test_embedded_guard_fails_closed_when_windows_input_is_unknown(path):
+    from types import SimpleNamespace
+
+    ns = _load_embedded_guard_class(path, os_module=SimpleNamespace(name="nt"))
+    guard, _ = make_embedded(ns, lambda c: None)
+    assert guard.wait_until_idle() is False
 
 
 def test_idle_user_is_not_blocked():
