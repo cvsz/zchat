@@ -664,7 +664,7 @@ def test_sample_log_path_traversal_is_rejected(tmp_path):
     summary_path = out / "summary.json"
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     summary["sample_log"] = "../outside.jsonl"
-    summary_path.write_text(json.dumps(summary, indent=2) + "\\n", encoding="utf-8")
+    summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
 
     # Keep the manifest internally consistent so the assertion targets the
     # path-containment guard rather than an unrelated hash mismatch.
@@ -677,7 +677,7 @@ def test_sample_log_path_traversal_is_rejected(tmp_path):
             entry["size_bytes"] = len(summary_bytes)
             break
     manifest_path.write_text(
-        json.dumps(manifest, indent=2) + "\\n", encoding="utf-8"
+        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
     )
 
     verdict = validate_bundle(out)
