@@ -323,6 +323,8 @@ def test_missing_windows_evidence_returns_inconclusive(tmp_path: Path):
         expected_nickname="Seaza",
         expected_account_b_reference="acct-b-01",
         expected_source_commit_sha="abc123def456",
+        expected_marker_a_command_id="CMD-MARKER-A-0001",
+        expected_marker_b_command_id="CMD-MARKER-B-0001",
     )
     # Without Windows evidence, cannot be TRANSITION_CANDIDATE
     assert verdict["status"] != "TRANSITION_CANDIDATE"
@@ -447,6 +449,8 @@ def test_missing_source_sha(tmp_path: Path):
     verdict = reconcile_bundles(
         bundles,
         expected_source_commit_sha="abc123def456",
+        expected_marker_a_command_id="CMD-MARKER-A-0001",
+        expected_marker_b_command_id="CMD-MARKER-B-0001",
     )
     assert verdict["status"] == "FAIL"
 
@@ -571,6 +575,8 @@ def test_distinct_observer_run_ids_share_acceptance_session(tmp_path: Path):
         expected_nickname="Seaza",
         expected_account_b_reference="acct-b-01",
         expected_source_commit_sha="abc123def456",
+        expected_marker_a_command_id="CMD-MARKER-A-0001",
+        expected_marker_b_command_id="CMD-MARKER-B-0001",
     )
     assert verdict["status"] == "TRANSITION_CANDIDATE"
     run_check = next(c for c in verdict["checks"] if c["check"] == "run_id_present_per_bundle")
@@ -679,7 +685,12 @@ def test_missing_timestamp_on_any_ordered_bundle_fails(tmp_path: Path):
 def test_partial_source_sha_missing_fails_when_expected_sha_is_supplied(tmp_path: Path):
     bundles = _valid_bundle_set(tmp_path)
     _rewrite_summary_field(bundles["marker_a"], "source_commit_sha", "")
-    verdict = reconcile_bundles(bundles, expected_source_commit_sha="abc123def456")
+    verdict = reconcile_bundles(
+        bundles,
+        expected_source_commit_sha="abc123def456",
+        expected_marker_a_command_id="CMD-MARKER-A-0001",
+        expected_marker_b_command_id="CMD-MARKER-B-0001",
+    )
     assert verdict["status"] == "FAIL"
     assert any("source_commit_sha missing from bundles" in error for error in verdict["errors"])
 
