@@ -609,10 +609,34 @@ def test_windows_manifest_content_is_validated(tmp_path: Path):
 
 
 def test_marker_command_ids_required_even_when_baseline_has_one(tmp_path: Path):
-    bundles = _valid_bundle_set(tmp_path)
-    _rewrite_summary_field(bundles["baseline"], "command_id", "CMD-BASELINE")
-    _rewrite_summary_field(bundles["marker_a"], "command_id", "")
-    _rewrite_summary_field(bundles["marker_b"], "command_id", "")
+    now = datetime.now(UTC)
+    bundles = {
+        "baseline": _write_bundle(
+            tmp_path, "baseline", command_id="CMD-BASELINE",
+            observed_at=now, state="WEB_PROFILE_OBSERVED",
+            last_observed_text_sha256="sha-base",
+        ),
+        "marker_a": _write_bundle(
+            tmp_path, "marker_a", command_id="",
+            observed_at=now + timedelta(seconds=2), state="WEB_PROFILE_MATCH",
+            last_observed_text_sha256="sha-a",
+        ),
+        "marker_b": _write_bundle(
+            tmp_path, "marker_b", command_id="",
+            observed_at=now + timedelta(seconds=4), state="WEB_PROFILE_MATCH",
+            last_observed_text_sha256="sha-b",
+        ),
+        "stop_check": _write_bundle(
+            tmp_path, "stop_check", command_id="CMD-STOP",
+            observed_at=now + timedelta(seconds=6), state="WEB_PROFILE_MATCH",
+            last_observed_text_sha256="sha-b",
+        ),
+        "windows": _write_bundle(
+            tmp_path, "windows", command_id="CMD-STOP",
+            observed_at=now + timedelta(seconds=8), state="WEB_PROFILE_MATCH",
+            last_observed_text_sha256="sha-b",
+        ),
+    }
     verdict = reconcile_bundles(bundles)
     assert verdict["status"] == "FAIL"
     assert any("marker bundles missing command_id" in error for error in verdict["errors"])
