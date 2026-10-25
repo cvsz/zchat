@@ -132,11 +132,11 @@ def test_tracked_reports_are_scanned_but_generated_report_trees_are_excluded(tmp
     _skeleton(tmp_path)
     tracked = tmp_path / "reports" / "NEXT_STEPS_ROADMAP.md"
     tracked.parent.mkdir(parents=True, exist_ok=True)
-    tracked.write_text("[missing](missing.md)\\n", encoding="utf-8")
+    tracked.write_text("[missing](missing.md)\n", encoding="utf-8")
     for rel in ("reports/camfrog-runtime/generated.md", "reports/windows-runs/run.md"):
         generated = tmp_path / rel
         generated.parent.mkdir(parents=True, exist_ok=True)
-        generated.write_text("[missing](missing.md)\\n", encoding="utf-8")
+        generated.write_text("[missing](missing.md)\n", encoding="utf-8")
 
     monkeypatch.setattr(validate_repo, "ROOT", tmp_path)
     found = {p.relative_to(tmp_path).as_posix() for p in validate_repo.find_markdown_files()}
