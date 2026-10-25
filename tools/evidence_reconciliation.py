@@ -30,13 +30,17 @@ independent reviewer may set it.
 Usage::
 
     from tools.evidence_reconciliation import reconcile_bundles
-    verdict = reconcile_bundles({
-        "baseline": Path("reports/.../baseline/"),
-        "marker_a": Path("reports/.../marker_a/"),
-        "marker_b": Path("reports/.../marker_b/"),
-        "stop_check": Path("reports/.../stop_check/"),
-        "windows": Path("reports/.../windows_execution/"),
-    })
+    verdict = reconcile_bundles(
+        {
+            "baseline": Path("reports/.../baseline/"),
+            "marker_a": Path("reports/.../marker_a/"),
+            "marker_b": Path("reports/.../marker_b/"),
+            "stop_check": Path("reports/.../stop_check/"),
+            "windows": Path("reports/.../windows_execution/"),
+        },
+        expected_marker_a_command_id="CMD-REQUEST-A",
+        expected_marker_b_command_id="CMD-REQUEST-B",
+    )
 """
 
 from __future__ import annotations
@@ -132,6 +136,8 @@ def reconcile_bundles(
     expected_nickname: str | None = None,
     expected_account_b_reference: str | None = None,
     expected_source_commit_sha: str | None = None,
+    expected_marker_a_command_id: str | None = None,
+    expected_marker_b_command_id: str | None = None,
 ) -> dict[str, Any]:
     """Reconcile multiple evidence bundles into a single acceptance verdict.
 
@@ -149,6 +155,10 @@ def reconcile_bundles(
     expected_source_commit_sha:
         Expected source commit SHA (enforced across all bundles that carry
         a ``source_commit_sha`` field).
+    expected_marker_a_command_id:
+        Trusted command-ledger ID for the request that produced marker A.
+    expected_marker_b_command_id:
+        Trusted command-ledger ID for the request that produced marker B.
 
     Returns
     -------
@@ -414,6 +424,57 @@ def reconcile_bundles(
     if missing_marker_command_ids:
         errors.append(f"marker bundles missing command_id: {missing_marker_command_ids}")
 
+    expected_marker_command_ids = {
+        "marker_a": expected_marker_a_command_id,
+        "marker_b": expected_marker_b_command_id,
+    }
+    any_expected_marker_id_supplied = any(
+        value is not None for value in expected_marker_command_ids.values()
+    )
+    expected_marker_ids_valid = all(
+        isinstance(value, str) and bool(value.strip())
+        for value in expected_marker_command_ids.values()
+    )
+    command_linkage_ok = False
+    if not expected_marker_ids_valid:
+        message = (
+            "expected_marker_a_command_id and expected_marker_b_command_id "
+            "must both be non-empty strings"
+        )
+        if any_expected_marker_id_supplied:
+            errors.append(message)
+        else:
+            warnings.append(
+                "expected marker command IDs were not supplied; "
+                "acceptance-grade correlation is inconclusive"
+            )
+    elif expected_marker_a_command_id == expected_marker_b_command_id:
+        errors.append("expected marker command IDs must be distinct")
+    else:
+        mismatched_marker_ids = [
+            role
+            for role in ("marker_a", "marker_b")
+            if command_ids[role] != expected_marker_command_ids[role]
+        ]
+        if mismatched_marker_ids:
+            errors.append(
+                "marker command IDs do not match expected request IDs: "
+                f"{mismatched_marker_ids}"
+            )
+        elif not missing_marker_command_ids and not invalid_command_types:
+            command_linkage_ok = True
+
+    checks.append(
+        {
+            "check": "marker_command_ids_match_expected_requests",
+            "passed": command_linkage_ok,
+            "details": {
+                "actual": {role: command_ids[role] for role in ("marker_a", "marker_b")},
+                "expected": expected_marker_command_ids,
+            },
+        }
+    )
+
     # --- Check 7: UTC timestamps (baseline, marker_a, marker_b, stop_check)
     times: dict[str, datetime | None] = {}
     ordering_ok = True
@@ -652,7 +713,7 @@ def reconcile_bundles(
         bundle_verdicts.get(r, {}).get("status") != "FAIL"
         for r in REQUIRED_OBSERVER_BUNDLES
     )
-    correlation_valid = structural_valid and ordering_ok
+    correlation_valid = structural_valid and ordering_ok and command_linkage_ok
     transition_candidate = (
         correlation_valid
         and transition_evidence_ok
