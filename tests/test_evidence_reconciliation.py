@@ -656,3 +656,10 @@ def test_partial_source_sha_missing_fails_when_expected_sha_is_supplied(tmp_path
     verdict = reconcile_bundles(bundles, expected_source_commit_sha="abc123def456")
     assert verdict["status"] == "FAIL"
     assert any("source_commit_sha missing from bundles" in error for error in verdict["errors"])
+
+def test_non_string_identity_field_fails_closed(tmp_path: Path):
+    bundles = _valid_bundle_set(tmp_path)
+    _rewrite_summary_field(bundles["marker_a"], "account_a_nickname", ["Seaza"])
+    verdict = reconcile_bundles(bundles)
+    assert verdict["status"] == "FAIL"
+    assert verdict["external_effect_verified"] is False
