@@ -50,6 +50,15 @@ def _load_json(path: Path) -> Any:
         raise EvidenceValidationError(f"cannot load {path.name}: {exc}") from exc
 
 
+def _load_json_safe(path: Path, display_name: str, errors: list[str]) -> Any | None:
+    """Load JSON, returning None (and recording an error) on failure."""
+    try:
+        return _load_json(path)
+    except EvidenceValidationError as exc:
+        errors.append(f"cannot load {display_name}: {exc}")
+        return None
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -127,8 +136,10 @@ def validate_bundle(
     if errors:
         return _verdict("FAIL", errors, warnings, checked)
 
-    summary = _load_json(summary_path)
-    manifest = _load_json(manifest_path)
+    summary = _load_json_safe(summary_path, "summary.json", errors)
+    manifest = _load_json_safe(manifest_path, "manifest.json", errors)
+    if summary is None or manifest is None:
+        return _verdict("FAIL", errors, warnings, checked)
     checked.extend(["summary.json", "manifest.json"])
 
     # --- Manifest covers every file, hashes match -----------------------
@@ -248,6 +259,13 @@ def validate_bundle(
                     line = line.strip()
                     if not line:
                         continue
+                    line_bytes = len(line.encode("utf-8"))
+                    if line_bytes > MAX_JSONL_LINE_BYTES:
+                        errors.append(
+                            f"{jsonl_name}:{line_no}: JSONL line too large "
+                            f"({line_bytes} bytes, max {MAX_JSONL_LINE_BYTES})"
+                        )
+                        continue
                     try:
                         sample = json.loads(line)
                     except json.JSONDecodeError as exc:
@@ -332,7 +350,7 @@ def validate_bundle(
         try:
             obs_time = _parse_utc(observed_at)
         except ValueError:
-            errors.append(f"sample has unparseable observed_at: {observed_at}")
+            errors.append(f"sample has invalid or naive observed_at: {observed_at}")
             continue
         age = (now - obs_time).total_seconds()
         if age > MAX_STALE_SECONDS:
