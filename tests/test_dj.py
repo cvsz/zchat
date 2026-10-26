@@ -633,7 +633,7 @@ def test_random_youtube_music_command_saves_a_youtube_search(cfg, monkeypatch):
     url = c.youtube_search_url(query)
     history_path = Path(c.BASE) / c.YOUTUBE_RANDOM_MUSIC_FILE
     history = json.loads(history_path.read_text(encoding="utf-8"))
-    assert sent == [f"[dj] Random YouTube music search (saved): {url}"]
+    assert sent == [f"[dj] Random YouTube search opened: {url}"]
     assert history["version"] == 1
     assert history["links"][-1]["query"] == query
     assert history["links"][-1]["url"] == url
@@ -860,3 +860,69 @@ def test_bot_manager_skip_uses_live_youtube_runner(cfg, tmp_path):
     assert runner.started == [(
         {"title": "lmnopqrstuv", "user": "Bob", "video_id": "lmnopqrstuv"},
         "youtube")]
+
+
+# ------------------------------------------------------------------ !randommusic
+
+def test_randommusic_returns_search_link_not_saved(cfg, monkeypatch):
+    """!randommusic must announce the search link (not "saved") and persist history."""
+    query = "Thai pop official music video"
+    monkeypatch.setattr(c.random, "choice", lambda _choices: query)
+    runner, sent = _dj_runner(cfg, monkeypatch, ["Ann: !randommusic"])
+
+    runner.do_dj(True)
+
+    url = c.youtube_search_url(query)
+    assert sent == [f"[dj] Random YouTube search opened: {url}"]
+
+    history_path = Path(c.BASE) / c.YOUTUBE_RANDOM_MUSIC_FILE
+    history = json.loads(history_path.read_text(encoding="utf-8"))
+    assert history["version"] == 1
+    assert history["links"][-1]["query"] == query
+    assert history["links"][-1]["url"] == url
+    assert history["links"][-1]["created_at"].endswith("Z")
+
+
+def test_randommusic_aliases(cfg, monkeypatch):
+    """!musicrandom and !ytmusic are aliases of !randommusic."""
+    query = "EDM dance music"
+    monkeypatch.setattr(c.random, "choice", lambda _choices: query)
+    url = c.youtube_search_url(query)
+
+    for alias in ("randommusic", "musicrandom", "ytmusic"):
+        runner, sent = _dj_runner(cfg, monkeypatch, [f"Ann: !{alias}"])
+        runner.do_dj(True)
+        assert sent == [f"[dj] Random YouTube search opened: {url}"], f"alias {alias}"
+
+
+def test_randommusic_youtube_backend_opens_search(cfg, monkeypatch):
+    """With youtube backend, !randommusic must open the visible search page."""
+    query = "city pop music"
+    monkeypatch.setattr(c.random, "choice", lambda _choices: query)
+    cfg["dj"]["audio_backend"] = "youtube"
+    opened = []
+    monkeypatch.setattr(c, "open_youtube_search", lambda q: opened.append(q))
+    runner, sent = _dj_runner(cfg, monkeypatch, ["Ann: !randommusic"])
+
+    runner.do_dj(True)
+
+    assert opened == [query]
+    url = c.youtube_search_url(query)
+    assert sent == [f"[dj] Random YouTube search opened: {url}"]
+
+
+def test_randommusic_does_not_enqueue_without_video_id(cfg, monkeypatch):
+    """!randommusic must not try to play (no playable video ID from a search URL)."""
+    query = "acoustic pop songs"
+    monkeypatch.setattr(c.random, "choice", lambda _choices: query)
+    playback_called = []
+    monkeypatch.setattr(
+        c.Runner, "dj_start_playback",
+        lambda self, queue, dj: playback_called.append(True) or False)
+    runner, sent = _dj_runner(cfg, monkeypatch, ["Ann: !randommusic"])
+
+    # Must not raise and must not attempt playback (no video ID).
+    runner.do_dj(True)
+    assert playback_called == []
+    url = c.youtube_search_url(query)
+    assert sent == [f"[dj] Random YouTube search opened: {url}"]

@@ -3226,8 +3226,17 @@ class Runner:
                 log.exception("Could not persist generated YouTube music search")
                 raise DJError(bi("could not save random YouTube music link; check the local data folder|"
                                  "บันทึกลิงก์เพลง YouTube ไม่ได้ โปรดตรวจสอบโฟลเดอร์ข้อมูลของแอป")) from None
-            return bi("[dj] Random YouTube music search (saved): {url}|"
-                      "[dj] สุ่มลิงก์ค้นหาเพลง YouTube (บันทึกแล้ว): {url}").format(url=url)
+            backend = dj.get("audio_backend", "chat")
+            title = query
+            if backend == "youtube":
+                # A search-results URL has no playable video ID. Open the visible
+                # search page so the user can pick a video, then use !request to play it.
+                try:
+                    open_youtube_search(query)
+                except (OSError, FileNotFoundError) as exc:
+                    log.warning("Could not open YouTube search browser: %s", exc)
+            return bi("[dj] Random YouTube search opened: {url}|"
+                      "[dj] เปิดค้นหาเพลง YouTube แล้ว: {url} ใช้ !request <YouTube URL> เพื่อเล่นอัตโนมัติ").format(url=url)
         if cmd in ("play", "request", "req", "song"):
             title = arg
             video_id = None
