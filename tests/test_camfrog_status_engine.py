@@ -168,7 +168,10 @@ def _hold_status_resource_lock_in_child(resource_key, acquired, release):
         lock.release()
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="requires a Windows named mutex")
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="requires a Windows named mutex (Windows-only feature)",
+)
 def test_windows_status_resource_lock_serializes_separate_processes():
     context = multiprocessing.get_context("spawn")
     resource_key = f"process_{uuid.uuid4().hex}"

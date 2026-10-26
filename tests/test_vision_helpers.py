@@ -9,11 +9,6 @@ sys.path.insert(0, str(ROOT / "src" / "camfrog"))
 import pytest
 from vision_helpers import image_sha256, ocr_image, template_match
 
-pytestmark = pytest.mark.skipif(
-    sys.platform != "win32",
-    reason="Vision/OCR helpers require Windows Tesseract/OpenCV; behavior tested on import paths only.",
-)
-
 
 def test_image_sha256(tmp_path):
     img = tmp_path / "test.png"
@@ -37,6 +32,7 @@ def test_ocr_image_missing_file_raises(tmp_path):
 
 
 def test_template_match_threshold_validation(tmp_path):
+    pytest.importorskip("cv2")
     a = tmp_path / "a.png"
     b = tmp_path / "b.png"
     a.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 50)
