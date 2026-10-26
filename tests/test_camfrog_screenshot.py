@@ -9,7 +9,7 @@ import pytest
 from camfrog_screenshot import capture_camfrog_window, utc_now_iso
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows-only screenshot capture path")
+@pytest.mark.skipif(sys.platform == "win32", reason="This test exercises the non-Windows fallback")
 def test_capture_non_windows_returns_reason():
     result = capture_camfrog_window()
     assert result["captured"] is False
