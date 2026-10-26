@@ -41,6 +41,10 @@ def ocr_image(
         FileNotFoundError: If the image path does not exist.
         RuntimeError: If OCR dependencies are not installed.
     """
+    p = Path(path)
+    if not p.is_file():
+        raise FileNotFoundError(str(p))
+
     try:
         import pytesseract
         from PIL import Image
@@ -48,10 +52,6 @@ def ocr_image(
         raise RuntimeError(
             "OCR dependencies are optional. Install requirements-vision.txt first."
         ) from exc
-
-    p = Path(path)
-    if not p.is_file():
-        raise FileNotFoundError(str(p))
     with Image.open(p) as img:
         text = pytesseract.image_to_string(img, lang=lang)
         data = pytesseract.image_to_data(
@@ -104,15 +104,15 @@ def template_match(
         ValueError: If threshold is out of range or images cannot be read.
         RuntimeError: If OpenCV is not installed.
     """
+    if not 0.0 <= threshold <= 1.0:
+        raise ValueError("threshold must be between 0 and 1")
+
     try:
         import cv2
     except ImportError as exc:
         raise RuntimeError(
             "OpenCV is optional. Install requirements-vision.txt first."
         ) from exc
-
-    if not 0.0 <= threshold <= 1.0:
-        raise ValueError("threshold must be between 0 and 1")
     image = cv2.imread(str(screenshot_path), cv2.IMREAD_COLOR)
     template = cv2.imread(str(template_path), cv2.IMREAD_COLOR)
     if image is None or template is None:
