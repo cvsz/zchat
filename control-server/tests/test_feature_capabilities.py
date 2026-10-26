@@ -108,7 +108,7 @@ def test_capability_matrix_matches_every_standalone_build_target() -> None:
         build_argument = build_argument.replace("/", "\\").lower()
         command_blocks = script.split("-m pyinstaller")
         assert any(
-            f"--name {executable_name}" in block and build_argument in block
+            f"--name {executable_name.lower()}" in block and build_argument in block
             for block in command_blocks
         ), f"missing dedicated PyInstaller command for {feature_id}"
 
