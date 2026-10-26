@@ -84,6 +84,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Fixed GitHub Actions supply-chain security by pinning actions to immutable commit SHAs with least-privilege `contents: read` permissions.
 
 ### Changed
+- Renamed the packaged Music DJ app for clarity: `music-dj.exe` → `AutoDJ.exe` (`auto-dj/` folder, user-side room-chat DJ). Bot Manager discovery and self-update accept the new name first and keep legacy `music-dj.exe` working during upgrades; `web-status.exe` keeps its name.
+- Added the stand-alone `CloudBot-Manager.exe` app (`cloudbot-manager/` folder): a window with only the Camfrog cloudbot **Bot Manager** page over the shared `web_status_gui` module (`ZCHAT_BOT_MANAGER_ONLY` mode, window title "ZeaZDev CloudBot Manager"), its own build and package segment, release asset, and self-update asset.
 - Raised the minimum Random interval and Marquee frame delay to 10 seconds across the standalone and combined Status Changer apps. Legacy settings are clamped on load, and retry scheduling cannot submit faster than the configured interval.
 - Status worker logs now label successful local dispatch as unverified instead of claiming the provider status was set.
 - Changed the opt-in unverified Status Changer test route from Edit Enter to combo-parent Enter to avoid the observed Edit-control ding; the combo route can activate Camfrog and remains unsupported for strict background use.

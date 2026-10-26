@@ -714,7 +714,7 @@ def test_youtube_player_bridge_checks_token_origin_revision_and_metadata(monkeyp
         with urllib.request.urlopen(origin + "/?" + query, timeout=2) as response:
             page = response.read().decode("utf-8")
         assert response.status == 200
-        assert "Music DJ YouTube Player" in page
+        assert "AutoDJ YouTube Player" in page
         assert "const names={'-1':'ready'" in page
 
         payload = json.dumps({
@@ -889,7 +889,8 @@ def test_randommusic_aliases(cfg, monkeypatch):
     monkeypatch.setattr(c.random, "choice", lambda _choices: query)
     url = c.youtube_search_url(query)
 
-    for alias in ("randommusic", "musicrandom", "ytmusic"):
+    for alias in ("randommusic", "musicrandom", "ytmusic",
+                  " MUSICสุ่ม", " MUSICสุ่ม neck"):
         runner, sent = _dj_runner(cfg, monkeypatch, [f"Ann: !{alias}"])
         runner.do_dj(True)
         assert sent == [f"[dj] Random YouTube search opened: {url}"], f"alias {alias}"

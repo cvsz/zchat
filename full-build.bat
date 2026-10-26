@@ -97,6 +97,9 @@ if not exist dist\im-autoreply\im-autoreply.exe (
     echo ERROR: dist\im-autoreply\im-autoreply.exe not found
     exit /b 1
 )
+if not exist dist\cloudbot-manager\CloudBot-Manager.exe (
+    echo ERROR: dist\cloudbot-manager\CloudBot-Manager.exe not found
+)
 if not exist dist\web-status\web-status.exe (
     echo ERROR: dist\web-status\web-status.exe not found
     exit /b 1
@@ -113,8 +116,8 @@ if not exist dist\name-changer\name-changer.exe (
     echo ERROR: dist\name-changer\name-changer.exe not found
     exit /b 1
 )
-if not exist dist\music-dj\music-dj.exe (
-    echo ERROR: dist\music-dj\music-dj.exe not found
+if not exist dist\auto-dj\AutoDJ.exe (
+    echo ERROR: dist\auto-dj\AutoDJ.exe not found
     exit /b 1
 )
 if not exist dist\status-changer\status-changer.exe (
@@ -191,10 +194,11 @@ echo   dist\status-random\status-random.exe
 echo   dist\status-marquee\status-marquee.exe
 echo   dist\im-autoreply\im-autoreply.exe
 echo   dist\web-status\web-status.exe
+echo   dist\cloudbot-manager\CloudBot-Manager.exe
 echo   dist\name-color-changer\name-color-changer.exe
 echo   dist\icon-changer\icon-changer.exe
 echo   dist\name-changer\name-changer.exe
-echo   dist\music-dj\music-dj.exe
+echo   dist\auto-dj\AutoDJ.exe
 echo   dist\status-changer\status-changer.exe
 echo   dist\zchat-client\zchat-client.exe
 echo   dist\zchat-client\SHA256SUMS.txt

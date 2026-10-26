@@ -6,6 +6,15 @@ Follow-up on 2026-10-18: after operator authorization, one read-only GET using t
 
 Follow-up on 2026-10-19: one operator-authorized sign-on attempt used the existing ignored `.env` keys `CAMFROG_BOT_USER` and `CAMFROG_BOT_PASSWORD` against the official HTTPS `/bot/signon` form. The response remained on `/bot/signon`; a `cloudbot` cookie was set, but this did not establish an authenticated session. The attempted credentials were not retried, `/bot/room` was not fetched in this attempt, and no room action was submitted. The public form exposes `_1` and `_2` text/password inputs and a submit button; no CAPTCHA marker appeared in the anonymous page markup, which does not rule out server-side verification. The application code does not consume the `CAMFROG_BOT_USER` or `CAMFROG_BOT_PASSWORD` keys; its Bot Manager flow accepts a `cloudbot=<token>` cookie via `WEBAUTH_BOT_USER`.
 
+Follow-up on 2026-10-26: with fresh operator authorization to authenticate from `.env`, the stored `WEBAUTH_BOT_USER` `cloudbot` cookie was accepted this time and one operator-authorized, read-only session fetched `/bot/plugins/1`, `/bot/plugins/15`, `/bot/room`, and `/bot/profile` through the repository's own client code. No settings values, account values, or credentials were recorded; no form was submitted; no `switch_plugin`, save, `/bot/stop`, or `/bot/logout` action was called; the transient probe script was deleted after the run. During this session:
+
+- The authenticated plugin inventory was listed: `1 8 ball`, `2 IM control`, `3 Messenger`, `4 Greeter`, `5 Math trivia`, `6 Bad words`, `7 Trivia`, `8 Word trivia`, `9 Roulette`, `11 Ghost`, `12 Who banned`, `13 Talkback`, `14 Dice`, `15 DJ Manager`, `16 Auto Moderator` — all reported enabled in that session.
+- Plugin `15` is **DJ Manager**. Its settings form contains exactly three bot-configurable fields — a mic take-time text field, an "only moderators can take the mic" checkbox, and a user-notify checkbox (plus the shared font-picker controls). It exposes **no playlist, stream-URL, audio-file, or music-playback setting**.
+- `/bot/room` exposes a room-name field, a room password field, a bot-language select, and a stop-bot checkbox (`_4`), all left untouched.
+- `/bot/profile` exposes current-password, new-password, and new-email fields.
+
+Consequence for music playback: DJ Manager (plugin 15) manages the microphone request queue only, and Camfrog does not expose a cloud-side music/stream configuration for it. ZChat cannot "update" the plugin to play music; we can only toggle it and save its documented fields. Room music playback therefore remains the responsibility of ZChat's own local bot (`camfrog_music_gui.py`).
+
 ## Public route checks
 
 | Route | Anonymous result | What this establishes |
@@ -14,6 +23,7 @@ Follow-up on 2026-10-19: one operator-authorized sign-on attempt used the existi
 | [`/bot/profile`](https://www.camfrog.com/bot/profile) | HTTP 302 to [`/bot/signon`](https://www.camfrog.com/bot/signon) | The public request reaches a sign-on gate; profile fields and actions were not visible. |
 | [`/bot/plugins/`](https://www.camfrog.com/bot/plugins/) | HTTP 404 | The unauthenticated plugin index did not resolve. This does not establish what an authenticated session can access. |
 | [`/bot/plugins/1`](https://www.camfrog.com/bot/plugins/1) | HTTP 302 to [`/bot/signon`](https://www.camfrog.com/bot/signon) | The public request reaches the sign-on gate; the plugin form and its schema were not visible. |
+| [`/bot/plugins/15`](https://www.camfrog.com/bot/plugins/15) | HTTP 302 to [`/bot/signon`](https://www.camfrog.com/bot/signon) | The public request reaches the sign-on gate; on 2026-10-26 the authenticated page was read-only verified as plugin 15 = DJ Manager (see follow-up above). |
 
 The [public sign-on page](https://www.camfrog.com/bot/signon) labels the service “Camfrog Bot Manager,” says “Manage your bot remotely,” and displays Bot Name and Password fields. It does not document the `cloudbot` cookie, endpoint methods, form fields, or an API contract. Those details therefore remain unverified by public documentation.
 
@@ -36,4 +46,4 @@ The current client in [`web_status_gui.py`](../src/features/web_status_gui.py#L2
 
 ## Conclusion
 
-Public first-party evidence describes Cloud Bot product features and a remote Bot Manager sign-on portal. Anonymous route checks show the Room/Profile URLs and the tested numeric plugin URL redirect to sign-on, while the plugin index URL returns 404. These checks do not reveal or prove the authenticated plugin endpoint. Authenticated page contents and request protocol remain unverified without an authorized session or an official API specification.
+Public first-party evidence describes Cloud Bot product features and a remote Bot Manager sign-on portal. Anonymous route checks show the Room/Profile URLs and the tested numeric plugin URL redirect to sign-on, while the plugin index URL returns 404. These checks do not reveal or prove the authenticated plugin endpoint. On 2026-10-26 an operator-authorized cookie session verified the Room, Profile, and Plugins forms read-only; plugin 15 (DJ Manager) has no music-playback configuration, so cloud-side music playback is not available from ZChat either way.

@@ -25,19 +25,27 @@ def test_verify_feature_hashes_accepts_all_expected_files(tmp_path, monkeypatch)
     dist.mkdir()
     files = {}
     lines = []
-    for name in ("room-control", "chat-im-private", "status-random",
-                 "status-marquee", "status-changer", "im-autoreply", "music-dj", "web-status"):
-        path = dist / name / (name + ".exe")
+    for name, exe in (
+            ("room-control", "room-control.exe"),
+            ("chat-im-private", "chat-im-private.exe"),
+            ("status-random", "status-random.exe"),
+            ("status-marquee", "status-marquee.exe"),
+            ("status-changer", "status-changer.exe"),
+            ("im-autoreply", "im-autoreply.exe"),
+            ("auto-dj", "AutoDJ.exe"),
+            ("web-status", "web-status.exe"),
+            ("cloudbot-manager", "CloudBot-Manager.exe")):
+        path = dist / name / exe
         path.parent.mkdir()
         path.write_bytes(("test-" + name).encode())
-        files[name + ".exe"] = path
+        files[exe] = path
         lines.append(hashlib.sha256(path.read_bytes()).hexdigest()
-                     + "  " + name + "/" + name + ".exe")
+                     + "  " + name + "/" + exe)
     (dist / "SHA256SUMS.txt").write_text("\n".join(lines) + "\n")
     monkeypatch.setattr(release, "DIST", dist)
     monkeypatch.setattr(release, "FEATURE_EXES", files)
     release.verify_feature_hashes()
-    files["music-dj.exe"].write_bytes(b"tampered")
+    files["AutoDJ.exe"].write_bytes(b"tampered")
     with pytest.raises(SystemExit, match="checksum mismatch"):
         release.verify_feature_hashes()
 

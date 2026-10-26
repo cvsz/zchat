@@ -188,8 +188,12 @@ if exist "dist\status-marquee\status-marquee.exe" del /q "dist\status-marquee\st
 if exist "dist\status-changer\status-changer.exe" del /q "dist\status-changer\status-changer.exe"
 if exist "dist\im-autoreply\im-autoreply.exe" del /q "dist\im-autoreply\im-autoreply.exe"
 if exist "dist\music-dj\music-dj.exe" del /q "dist\music-dj\music-dj.exe"
+if exist "dist\auto-dj\AutoDJ.exe" del /q "dist\auto-dj\AutoDJ.exe"
+if exist "dist\AutoDJ.exe" del /q "dist\AutoDJ.exe"
 if exist "dist\web-status\web-status.exe" del /q "dist\web-status\web-status.exe"
 if exist "dist\web-status.exe" del /q "dist\web-status.exe"
+if exist "dist\cloudbot-manager\CloudBot-Manager.exe" del /q "dist\cloudbot-manager\CloudBot-Manager.exe"
+if exist "dist\CloudBot-Manager.exe" del /q "dist\CloudBot-Manager.exe"
 if exist "dist\name-color-changer\name-color-changer.exe" del /q "dist\name-color-changer\name-color-changer.exe"
 if exist "dist\name-color-changer.exe" del /q "dist\name-color-changer.exe"
 if exist "dist\icon-changer\icon-changer.exe" del /q "dist\icon-changer\icon-changer.exe"
@@ -320,6 +324,19 @@ echo === BUILD WEB STATUS UPDATER (GUI + CONSOLE PROTOTYPE) ===
 if errorlevel 1 goto :fail
 
 echo.
+echo === BUILD STANDALONE CLOUD BOT MANAGER (CLOUDBOT ONLY) ===
+
+"%VENV_PY%" -m PyInstaller ^
+    --noconfirm --clean --onefile --windowed ^
+    --distpath dist\cloudbot-manager --workpath build\cloudbot-manager ^
+    --name CloudBot-Manager %ICONARG% ^
+    --collect-all psutil ^
+    --add-data "assets\zttato.png;assets" ^
+    --paths src\camfrog --paths src\features ^
+    src\features\cloudbot_manager_entry.py
+if errorlevel 1 goto :fail
+
+echo.
 echo === BUILD STANDALONE NAME COLOR CHANGER ===
 
 "%VENV_PY%" -m PyInstaller ^
@@ -357,8 +374,8 @@ echo === BUILD MUSIC DJ ===
 
 "%VENV_PY%" -W "ignore:invalid escape sequence:SyntaxWarning" -m PyInstaller ^
     --noconfirm --clean --onefile --windowed ^
-    --distpath dist\music-dj --workpath build\music-dj ^
-    --name music-dj %ICONARG% ^
+    --distpath dist\auto-dj --workpath build\auto-dj ^
+    --name AutoDJ %ICONARG% ^
     --add-data "assets\zeazdev-room.png;assets" ^
     --collect-all pywinauto --collect-all psutil --collect-submodules comtypes ^
     --paths src\camfrog --paths src\features ^
@@ -366,7 +383,7 @@ echo === BUILD MUSIC DJ ===
 if errorlevel 1 goto :fail
 
 
-for %%D in (room-control chat-im-private status-random status-marquee status-changer im-autoreply music-dj web-status name-color-changer icon-changer name-changer) do (
+for %%D in (room-control chat-im-private status-random status-marquee status-changer im-autoreply auto-dj web-status cloudbot-manager name-color-changer icon-changer name-changer) do (
     copy /y "app.ico" "dist\%%D\app.ico" >nul
     if errorlevel 1 goto :fail
 )
@@ -395,10 +412,11 @@ if not exist "dist\status-marquee\status-marquee.exe" goto :fail
 if not exist "dist\status-changer\status-changer.exe" goto :fail
 if not exist "dist\im-autoreply\im-autoreply.exe" goto :fail
 if not exist "dist\web-status\web-status.exe" goto :fail
+if not exist "dist\cloudbot-manager\CloudBot-Manager.exe" goto :fail
 if not exist "dist\name-color-changer\name-color-changer.exe" goto :fail
 if not exist "dist\icon-changer\icon-changer.exe" goto :fail
 if not exist "dist\name-changer\name-changer.exe" goto :fail
-if not exist "dist\music-dj\music-dj.exe" goto :fail
+if not exist "dist\auto-dj\AutoDJ.exe" goto :fail
 if not exist "dist\SHA256SUMS.txt" goto :fail
 if not exist "%FEATURE_NAME%-windows.zip" goto :fail
 
@@ -411,8 +429,9 @@ echo dist\status-random\status-random.exe
 echo dist\status-marquee\status-marquee.exe
 echo dist\status-changer\status-changer.exe
 echo dist\im-autoreply\im-autoreply.exe
-echo dist\music-dj\music-dj.exe
+echo dist\auto-dj\AutoDJ.exe
 echo dist\web-status\web-status.exe
+echo dist\cloudbot-manager\CloudBot-Manager.exe
 echo dist\name-color-changer\name-color-changer.exe
 echo dist\icon-changer\icon-changer.exe
 echo dist\name-changer\name-changer.exe

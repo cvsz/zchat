@@ -1,4 +1,4 @@
-"""Local Web Status integrations for Music DJ and vMix."""
+"""Local Web Status integrations for AutoDJ and vMix."""
 import json
 import sys
 import time
@@ -11,7 +11,7 @@ import web_status_gui as wsg  # noqa: E402
 
 
 def test_music_dj_control_request_uses_protocol_and_cleans_up(tmp_path):
-    executable = tmp_path / "music-dj.exe"
+    executable = tmp_path / "AutoDJ.exe"
 
     def simulate_worker(_delay):
         request_path = next((tmp_path / "dj-control").glob("*.request.json"))
@@ -35,7 +35,7 @@ def test_music_dj_control_request_uses_protocol_and_cleans_up(tmp_path):
 
 
 def test_music_dj_control_request_sends_bounded_voice_text(tmp_path):
-    executable = tmp_path / "music-dj.exe"
+    executable = tmp_path / "AutoDJ.exe"
     seen = {}
 
     def simulate_worker(_delay):
@@ -82,13 +82,13 @@ def test_music_dj_voice_summary_includes_requester_time_and_next_song():
 
 def test_music_dj_control_refuses_unknown_actions_and_wrong_executables(tmp_path):
     with pytest.raises(ValueError, match="Unsupported"):
-        wsg.music_dj_control_request(tmp_path / "music-dj.exe", "restart")
-    with pytest.raises(ValueError, match="packaged music-dj.exe"):
+        wsg.music_dj_control_request(tmp_path / "AutoDJ.exe", "restart")
+    with pytest.raises(ValueError, match="packaged AutoDJ.exe"):
         wsg.music_dj_control_request(tmp_path / "other.exe", "status")
 
 
 def test_music_dj_state_requires_a_fresh_valid_snapshot(tmp_path, monkeypatch):
-    executable = tmp_path / "music-dj.exe"
+    executable = tmp_path / "AutoDJ.exe"
     state_dir = tmp_path / "dj-control"
     state_dir.mkdir()
     state = {

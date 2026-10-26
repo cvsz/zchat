@@ -1,4 +1,4 @@
-"""Music DJ GUI tests: self-containment, profile, CLI passthrough, smoke."""
+"""AutoDJ GUI tests: self-containment, profile, CLI passthrough, smoke."""
 import copy
 import json
 import sys
