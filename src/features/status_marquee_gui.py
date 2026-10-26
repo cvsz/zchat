@@ -1871,7 +1871,7 @@ PROFILE_ASSETS = {
     "room": "room-control.exe",
     "im_reply": "im-autoreply.exe",
     "status": "status-{mode}.exe",
-    "music": "music-dj.exe",
+    "music": "AutoDJ.exe",
     "chat_im_private": "chat-im-private.exe",
     "full": "",
 }

@@ -4,12 +4,13 @@
 - **100% Functionality Validation & Robustness across all 8 Core Modules**:
   - `chat-im-private`: Real Auto-Reply & private window routing with keyboard protection.
   - `im-autoreply`: Unattended background reply engine with session retention.
-  - `music-dj`: DJ auto-broadcast, media player integration, automated track titles.
+  - `auto-dj` (AutoDJ.exe, was music-dj): DJ auto-broadcast, media player integration, automated track titles.
   - `room-control`: Operator room management with automated moderator actions.
   - `status-changer`: Direct-memory & non-invasive status updating.
   - `status-marquee`: Text animation engine with background ticker scheduling.
   - `status-random`: Randomized status selection with blacklist/whitelist filtering.
   - `web-status`: Web profile crawler, automatic updater, and rich text formatting.
+  - `cloudbot-manager` (CloudBot-Manager.exe): stand-alone window with only the Bot Manager page; remote cloudbot forms focus without web-status widgets.
 - **Hotkeys F3 & F4**: Integrated across all feature GUIs (`F3` = Start/Refresh, `F4` = Stop/Clear).
 - **User Activity Guard**: Prevents keystroke collision and mouse fighting. Deferral happens gracefully and continues without stopping the worker.
 - **Dynamic Color Looping**: Added Auto Loop Color toggle for profile status customization.

@@ -3,7 +3,7 @@
 Tests that need Windows (tkinter GUI, DPAPI, Chrome store, named mutex) skip
 on Linux. This script runs them where they pass instead:
 
-  python tools/run_remote_tests.py                          # web-status GUI tests
+  python tools/run_remote_tests.py                          # CloudBot-Manager GUI tests
   python tools/run_remote_tests.py tests/test_update.py -q  # any pytest args
 
 Host/user/repo are supplied by the operator through the environment:

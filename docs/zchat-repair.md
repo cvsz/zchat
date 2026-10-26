@@ -516,7 +516,8 @@ dist/status-random/status-random.exe
 dist/status-marquee/status-marquee.exe
 dist/im-autoreply/im-autoreply.exe
 dist/web-status/web-status.exe
-dist/music-dj/music-dj.exe
+dist/cloudbot-manager/CloudBot-Manager.exe
+dist/auto-dj/AutoDJ.exe
 dist/status-changer/status-changer.exe
 dist/zchat-client/zchat-client.exe
 line/dist/line-status-changer.exe

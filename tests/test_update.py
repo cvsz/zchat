@@ -70,7 +70,7 @@ def test_check_for_update_finds_the_asset(monkeypatch):
 
 def test_check_for_update_ignores_missing_asset(monkeypatch):
     _fake_github(monkeypatch, RELEASE)
-    assert ca.check_for_update("music-dj.exe") is None
+    assert ca.check_for_update("AutoDJ.exe") is None
 
 
 def test_check_for_update_ignores_same_version(monkeypatch):
@@ -141,7 +141,7 @@ def test_verify_against_sums_matches_the_release_list(tmp_path, monkeypatch):
     target.write_bytes(b"payload")
     import hashlib
     digest = hashlib.sha256(b"payload").hexdigest()
-    sums = ("{0}  music-dj.exe\n{0}  room-control.exe\n".format(digest)).encode()
+    sums = ("{0}  AutoDJ.exe\n{0}  room-control.exe\n".format(digest)).encode()
 
     def fake_urlopen(request, timeout=None):
         return FakeResponse(sums)

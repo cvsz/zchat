@@ -62,12 +62,13 @@ The engine enhancements benefit all ZChat features:
 |---------|--------|-----------------|
 | chat-im-private | ✅ Supported | Name-change, color-cycle, hotkeys |
 | im-autoreply | ✅ Supported | Name-change, color-cycle, hotkeys |
-| music-dj | ✅ Supported | Name-change, color-cycle, hotkeys |
+| auto-dj | ✅ Supported | Name-change, color-cycle, hotkeys |
 | room-control | ✅ Supported | Name-change, color-cycle, hotkeys |
 | status-changer | ✅ Supported | Name-change, color-cycle, hotkeys |
 | status-marquee | ✅ Supported | Name-change, color-cycle, hotkeys |
 | status-random | ✅ Supported | Name-change, color-cycle, hotkeys |
 | web-status | ✅ Supported | Name-change, color-cycle, hotkeys |
+| cloudbot-manager | ✅ Supported | Bot Manager page only (stand-alone window mode) |
 
 ## Technical Details
 

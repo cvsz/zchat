@@ -1,4 +1,4 @@
-"""Camfrog Music DJ bot - self-contained (engine + clipboard + GUI inlined, profile: music)."""
+"""Camfrog AutoDJ bot - self-contained (engine + clipboard + GUI inlined, profile: music)."""
 import argparse
 import base64
 import copy
@@ -658,7 +658,7 @@ def _validate_dj(cfg, errs, warns):
     try:
         dj_queue_path_for_config(cfg)
     except (OSError, ValueError):
-        errs.append("dj.queue_file must stay inside the Music DJ data folder")
+        errs.append("dj.queue_file must stay inside the AutoDJ data folder")
     if not dj["enabled"]:
         return
     if not cfg["autoreply"]["enabled"]:
@@ -1671,7 +1671,7 @@ PROFILE_ASSETS = {
     "room": "room-control.exe",
     "im_reply": "im-autoreply.exe",
     "status": "status-{mode}.exe",
-    "music": "music-dj.exe",
+    "music": "AutoDJ.exe",
     "chat_im_private": "chat-im-private.exe",
     "full": "",
 }
@@ -1881,7 +1881,7 @@ def dj_queue_path_for_config(cfg, base=None):
     try:
         path.relative_to(data_dir)
     except ValueError:
-        raise ValueError("dj.queue_file must stay inside the Music DJ data folder") from None
+        raise ValueError("dj.queue_file must stay inside the AutoDJ data folder") from None
     return path
 
 
@@ -1943,7 +1943,7 @@ def process_dj_control_request(cfg, now=None, base=None, runner=None):
             action = request["action"]
             if action == "skip":
                 if not dj.get("enabled"):
-                    raise DJError("Music DJ is disabled in config.json.")
+                    raise DJError("AutoDJ is disabled in config.json.")
                 owner = str(cfg["autoreply"].get("own_nickname", "")).strip()
                 queue.skip(owner, owner)
                 started = (runner.dj_start_playback(queue, dj) if runner is not None
@@ -1962,7 +1962,7 @@ def process_dj_control_request(cfg, now=None, base=None, runner=None):
                     raise OSError("Could not persist the DJ queue.")
             elif action == "speak":
                 if runner is None:
-                    raise RuntimeError("The Music DJ worker cannot start voice output.")
+                    raise RuntimeError("The AutoDJ worker cannot start voice output.")
                 speech_text = validate_room_speech_text(request.get("text", ""))
                 start_room_speech(speech_text)
             payload = {
@@ -2050,7 +2050,7 @@ def publish_dj_control_state(cfg, now=None, base=None, runner=None):
 
 
 def dj_playback_times(base=None, now=None, max_age=10.0):
-    """Read fresh elapsed/duration data from the local Music DJ state snapshot."""
+    """Read fresh elapsed/duration data from the local AutoDJ state snapshot."""
     try:
         state = json.loads((dj_control_directory(base) / "state.json").read_text(
             encoding="utf-8"))
@@ -2316,7 +2316,7 @@ YOUTUBE_PLAYER_HTML = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Music DJ YouTube Player</title>
+<title>AutoDJ YouTube Player</title>
 <style>
 html,body{margin:0;background:#101820;color:#edf3f7;font:15px "Segoe UI",sans-serif}
 main{max-width:960px;margin:0 auto;padding:12px;box-sizing:border-box}
@@ -2328,7 +2328,7 @@ h1{font-size:18px;margin:0 0 5px}.hint{margin:0 0 10px;color:#c2d0da}
 </head>
 <body>
 <main>
-<h1>Music DJ YouTube Player</h1>
+<h1>AutoDJ YouTube Player</h1>
 <p class="hint">Keep this player visible. Use the standard YouTube controls. Press Play if autoplay is blocked.</p>
 <p id="state" aria-live="polite">Connecting to YouTube…</p>
 <div id="player"></div>
@@ -2357,7 +2357,7 @@ async function pollCommand(){
   try{
     const response=await fetch('/state?token='+encodeURIComponent(token),{cache:'no-store'});
     const state=await response.json();
-    if(state.closing){player.pauseVideo();say('Music DJ stopped. You can close this window.');postEvent('stopped');return;}
+    if(state.closing){player.pauseVideo();say('AutoDJ stopped. You can close this window.');postEvent('stopped');return;}
     if(state.revision>lastRevision){
       lastRevision=state.revision;
       activeVideoId=state.video_id||'';
@@ -2574,7 +2574,7 @@ class YouTubePlayerHost:
             self._server = LocalHTTPServer(("127.0.0.1", 0), Handler)
             self._server_thread = threading.Thread(
                 target=self._server.serve_forever,
-                name="music-dj-youtube-http", daemon=True)
+                name="autodj-youtube-http", daemon=True)
             self._server_thread.start()
         except OSError:
             self._server = None
@@ -3222,7 +3222,8 @@ class Runner:
 
     def dj_command(self, queue, dj, cmd, arg, nick, owner):
         """One DJ chat command -> reply text (None = not a DJ command)."""
-        if cmd in ("randommusic", "musicrandom", "ytmusic"):
+        if cmd in ("randommusic", "musicrandom", "ytmusic",
+            "musicสุ่ม", "musicสุ่ม neck"):
             query, url = random_youtube_music_link()
             try:
                 save_random_youtube_music_link(query, url)
@@ -3241,7 +3242,24 @@ class Runner:
                     log.warning("Could not open YouTube search browser: %s", exc)
             return bi("[dj] Random YouTube search opened: {url}|"
                       "[dj] เปิดค้นหาเพลง YouTube แล้ว: {url} ใช้ !request <YouTube URL> เพื่อเล่นอัตโนมัติ").format(url=url)
-        if cmd in ("play", "request", "req", "song"):
+        if cmd in ("search", "youtube", "yt", "ค้นหา", "หาเพลง", "ค้นหาเพลง",
+            "หาคำตอบ", "หาคำตอบ"):
+            if not arg:
+                raise DJError(bi("give a search phrase: !search <query>|"
+                                 "ระบุคำค้นหา: !search <คำค้นหา>"))
+            url = youtube_search_url(arg)
+            backend = dj.get("audio_backend", "chat")
+            if backend == "youtube":
+                try:
+                    open_youtube_search(arg)
+                except (OSError, FileNotFoundError) as exc:
+                    log.warning("Could not open YouTube search browser: %s", exc)
+            return bi("[dj] YouTube search opened: {url} ใช้ !request <YouTube URL> เพื่อเล่นอัตโนมัติ|"
+                      "[dj] YouTube search opened: {url} use !request <YouTube URL> to play").format(url=url)
+        if cmd in ("play", "request", "req", "song",
+            "ขอเพลง", "ขอเพลง YouTube", "ขอเพลง YouTube หรือ ID",
+            "เล่นเพลง", "เล่นเพลง YouTube", "เล่น",
+            "ข้ามเพลง", "ข้าม", "skip ไทย"):
             title = arg
             video_id = None
             backend = dj.get("audio_backend", "chat")
@@ -3281,7 +3299,7 @@ class Runner:
                 return dj["announce_now"].format(title=queue.current["title"],
                                                 user=queue.current["user"])
             return dj["announce_queued"].format(pos=pos, title=title)
-        if cmd == "queue":
+        if cmd in ("queue", "คิว", "ดูคิว"):
             if not queue.queue:
                 return "[dj] queue is empty"
             lines = [f"{i}. {q['title']} ({q['user']})"
@@ -3294,7 +3312,7 @@ class Runner:
                        if self.dj_started else None)
             return dj_status_summary(queue.current, queue.queue[0] if queue.queue else None,
                                      elapsed, self.dj_length)
-        if cmd == "skip":
+        if cmd in ("skip", "ข้ามเพลง", "ข้าม", "skip ไทย"):
             nxt = queue.skip(nick, owner)
             if not self.dj_start_playback(queue, dj):
                 queue.current = None
@@ -3308,10 +3326,13 @@ class Runner:
                           "[dj] กำลังโหลดวิดีโอ YouTube {title} หากระบบไม่เล่นอัตโนมัติให้กด Play ในหน้าต่างผู้เล่น").format(
                               title=nxt["title"])
             return dj["announce_now"].format(title=nxt["title"], user=nxt["user"])
+        if cmd in ("stop", "หยุดเพลง", "หยุด", "หยุดเล่น"):
+            self.dj_stop_playback()
+            return "[dj] stopped"
         if cmd == "help":
             request_help = ("<YouTube video URL or ID>" if
                             dj.get("audio_backend", "chat") == "youtube" else "<song>")
-            return "[dj] commands: !request {0} !randommusic !queue !current !skip !help".format(
+            return "[dj] commands: !request {0} !randommusic !queue !current !skip !stop !help".format(
                 request_help)
         return None
 
@@ -3586,7 +3607,7 @@ class Runner:
         control_watch_stop = threading.Event()
         control_watch = threading.Thread(
             target=self._watch_dj_control_requests,
-            args=(control_watch_stop,), name="music-dj-control-watch", daemon=True)
+            args=(control_watch_stop,), name="autodj-control-watch", daemon=True)
         control_watch.start()
         try:
             while not self.stop_file.exists():
@@ -4618,7 +4639,7 @@ class ClipboardController:
 
 
 
-APP_NAME = "ZeaZDev room Music DJ"
+APP_NAME = "ZeaZDev room AutoDJ"
 
 
 
@@ -4989,7 +5010,7 @@ def build_app():
             tab_specs = (("Dashboard|แดชบอร์ด", "Dashboard", self.tab_dashboard),
                          ("Setup|ตั้งค่าเริ่มต้น", "Setup", self.tab_setup),
                          ("Auto-reply|ตอบอัตโนมัติ", "Auto-reply", self.tab_reply),
-                         ("Music DJ|ดีเจเพลง", "Music", self.tab_music),
+                         ("AutoDJ|ดีเจเพลง", "Music", self.tab_music),
                          ("Advanced|ขั้นสูง", "Advanced", self.tab_advanced))
             for name, key, fn in tab_specs:
                 f = ttk.Frame(self.nb, padding=8)
@@ -5281,7 +5302,7 @@ def build_app():
             except (OSError, tk.TclError):
                 self.zeazdev_room_photo = None
             ttk.Label(brand, text="ZeaZDev room", font=("Segoe UI", 12, "bold")).pack(side="left")
-            ttk.Label(brand, text=bi("Music DJ|ดีเจเพลง"), foreground="#8b672b").pack(
+            ttk.Label(brand, text=bi("AutoDJ|ดีเจเพลง"), foreground="#8b672b").pack(
                 side="left", padx=8)
             g = ttk.Frame(f)
             g.pack(fill="x")
@@ -5451,7 +5472,7 @@ def build_app():
 
         def check_update(self):
             def do():
-                state, message = self_update("music-dj.exe", confirm=self._confirm_update)
+                state, message = self_update("AutoDJ.exe", confirm=self._confirm_update)
                 print(message)
                 if state == "ready":
                     print("restart the app to run the new version.")
@@ -5461,7 +5482,7 @@ def build_app():
         def auto_update_check(self):
             """Silent banner at startup: only speak up when something is newer."""
             def probe():
-                found = check_for_update("music-dj.exe")
+                found = check_for_update("AutoDJ.exe")
                 print("update" if found else "none")
                 return 0
             self.run_bg(probe, "auto-update")

@@ -1,4 +1,4 @@
-"""Launch the Music DJ application."""
+"""Launch the AutoDJ application (folder names below stay for existing installs)."""
 import os
 import sys
 from pathlib import Path

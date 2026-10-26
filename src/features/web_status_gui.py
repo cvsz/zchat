@@ -96,6 +96,9 @@ HOME_URL = "https://profiles.camfrog.com/home.php"
 DJ_CONTROL_PROTOCOL = 1
 DJ_CONTROL_REQUEST_TTL_SECONDS = 30
 LOCAL_MEDIA_SETTINGS = "web_status_media.json"
+# Stand-alone CloudBot-Manager.exe reuses this GUI with only the Bot Manager
+# page visible; the flag is set by cloudbot_manager_entry.py before import.
+BOT_MANAGER_ONLY = os.environ.get("ZCHAT_BOT_MANAGER_ONLY", "").strip() == "1"
 
 EXIT_OK = 0
 EXIT_USAGE = 2
@@ -504,9 +507,13 @@ def web_status_frames(text, enabled=True):
 
 
 def default_music_dj_executable(base=None):
-    """Find the sibling Music DJ package produced by build.bat."""
+    """Find the sibling AutoDJ package produced by build.bat."""
     root = Path(base or BASE)
     candidates = (
+        root / "AutoDJ.exe",
+        root.parent / "auto-dj" / "AutoDJ.exe",
+        root / "dist" / "auto-dj" / "AutoDJ.exe",
+        # Legacy pre-rename layouts kept first-party for upgrade windows.
         root / "music-dj.exe",
         root.parent / "music-dj" / "music-dj.exe",
         root / "dist" / "music-dj" / "music-dj.exe",
@@ -516,9 +523,9 @@ def default_music_dj_executable(base=None):
 
 def music_dj_control_request(executable, action, timeout=4.0, clock=None,
                              sleep=None, text=None):
-    """Send a one-shot command to the Music DJ worker through its private data folder."""
+    """Send a one-shot command to the AutoDJ worker through its private data folder."""
     if action not in {"status", "skip", "clear", "speak"}:
-        raise ValueError("Unsupported Music DJ control action.")
+        raise ValueError("Unsupported AutoDJ control action.")
     if action == "speak":
         text = str(text or "").strip()
         if not text or len(text) > 240 or any(ord(char) < 32 or ord(char) == 127
@@ -527,8 +534,8 @@ def music_dj_control_request(executable, action, timeout=4.0, clock=None,
     elif text is not None:
         raise ValueError("Voice text is only valid for the speak action.")
     executable = Path(executable).expanduser().resolve()
-    if executable.name.casefold() != "music-dj.exe":
-        raise ValueError("Select the packaged music-dj.exe application.")
+    if executable.name.casefold() not in ("autodj.exe", "AutoDJ.exe"):
+        raise ValueError("Select the packaged AutoDJ.exe application.")
     directory = executable.parent / "dj-control"
     request_id = uuid.uuid4().hex
     request_path = directory / (request_id + ".request.json")
@@ -557,14 +564,14 @@ def music_dj_control_request(executable, action, timeout=4.0, clock=None,
                 if (not isinstance(response, dict) or
                         response.get("protocol") != DJ_CONTROL_PROTOCOL or
                         response.get("request_id") != request_id):
-                    raise RuntimeError("Music DJ returned an invalid control response.")
+                    raise RuntimeError("AutoDJ returned an invalid control response.")
                 if not response.get("ok"):
                     raise RuntimeError(str(response.get("error") or
-                                           "Music DJ rejected the command."))
+                                           "AutoDJ rejected the command."))
                 return response
             except FileNotFoundError:
                 wait(0.1)
-        raise TimeoutError("Music DJ is not running or did not answer the request.")
+        raise TimeoutError("AutoDJ is not running or did not answer the request.")
     finally:
         temp_path.unlink(missing_ok=True)
         request_path.unlink(missing_ok=True)
@@ -591,10 +598,10 @@ def music_dj_worker_state(executable, stale_after=4.0):
 
 
 def music_dj_speech_summary(state, now=None):
-    """Build a short TTS summary from the Music DJ status response."""
+    """Build a short TTS summary from the AutoDJ status response."""
     current = state.get("current") if isinstance(state, dict) else None
     if not isinstance(current, dict) or not str(current.get("title", "")).strip():
-        raise ValueError("Music DJ has no current song to speak.")
+        raise ValueError("AutoDJ has no current song to speak.")
 
     def clip(value, limit):
         value = " ".join(str(value or "").split())
@@ -639,12 +646,12 @@ def music_dj_speech_summary(state, now=None):
 def run_music_dj_command(executable, action, timeout=30.0):
     """Run only the packaged app's start/stop CLI commands without a shell."""
     if action not in {"start", "stop"}:
-        raise ValueError("Unsupported Music DJ command.")
+        raise ValueError("Unsupported AutoDJ command.")
     if os.name != "nt":
-        raise OSError("Music DJ process control requires Windows.")
+        raise OSError("AutoDJ process control requires Windows.")
     executable = Path(executable).expanduser().resolve()
-    if executable.name.casefold() != "music-dj.exe" or not executable.is_file():
-        raise ValueError("Select an existing packaged music-dj.exe application.")
+    if executable.name.casefold() not in ("autodj.exe", "AutoDJ.exe") or not executable.is_file():
+        raise ValueError("Select an existing packaged AutoDJ.exe application.")
     flags = 0x08000000  # CREATE_NO_WINDOW
     result = subprocess.run(
         [str(executable), action], cwd=str(executable.parent),
@@ -652,7 +659,7 @@ def run_music_dj_command(executable, action, timeout=30.0):
         stderr=subprocess.DEVNULL, close_fds=True,
         creationflags=flags, timeout=timeout, check=False)
     if result.returncode:
-        raise RuntimeError("Music DJ {0} failed with exit code {1}.".format(
+        raise RuntimeError("AutoDJ {0} failed with exit code {1}.".format(
             action, result.returncode))
     return True
 
@@ -775,18 +782,18 @@ WEB_STATUS_GUI_TEXT_TH = {
     "Session": "เซสชัน",
     "Bot Manager": "ตัวจัดการบอท",
     "Bot": "บอท",
-    "Music DJ": "ดีเจเพลง",
-    "Local Music DJ": "Music DJ ในเครื่องนี้",
-    "Local ZeaZDev room Music DJ": "ZeaZDev room Music DJ ในเครื่องนี้",
-    "Select music-dj.exe": "เลือก music-dj.exe",
-    "Select music-dj.exe to connect to the local DJ.":
-        "เลือก music-dj.exe เพื่อเชื่อมต่อกับ DJ ในเครื่อง",
-    "Select an existing packaged music-dj.exe application.":
-        "เลือกไฟล์ music-dj.exe ที่แพ็กไว้แล้ว",
-    "Opened the Music DJ window.": "เปิดหน้าต่าง Music DJ แล้ว",
-    "DJ worker connected; queue read from the Music DJ owner.":
-        "เชื่อมต่อกับบอท DJ แล้ว อ่านคิวจากโปรแกรม Music DJ",
-    "Music DJ worker stopped.": "หยุดบอท Music DJ แล้ว",
+    "AutoDJ": "ดีเจเพลง",
+    "Local AutoDJ": "AutoDJ ในเครื่องนี้",
+    "Local ZeaZDev room AutoDJ": "ZeaZDev room AutoDJ ในเครื่องนี้",
+    "Select AutoDJ.exe": "เลือก AutoDJ.exe",
+    "Select AutoDJ.exe to connect to the local DJ.":
+        "เลือก AutoDJ.exe เพื่อเชื่อมต่อกับ DJ ในเครื่อง",
+    "Select an existing packaged AutoDJ.exe application.":
+        "เลือกไฟล์ AutoDJ.exe ที่แพ็กไว้แล้ว",
+    "Opened the AutoDJ window.": "เปิดหน้าต่าง AutoDJ แล้ว",
+    "DJ worker connected; queue read from the AutoDJ owner.":
+        "เชื่อมต่อกับบอท DJ แล้ว อ่านคิวจากโปรแกรม AutoDJ",
+    "AutoDJ worker stopped.": "หยุดบอท AutoDJ แล้ว",
     "Now playing": "กำลังเล่น",
     "Song": "เพลง",
     "Requested by": "ผู้ขอ",
@@ -804,7 +811,7 @@ WEB_STATUS_GUI_TEXT_TH = {
     "Could not reach the local vMix HTTP API.":
         "เชื่อมต่อ vMix HTTP API ในเครื่องไม่ได้",
     "Browse...": "เลือกไฟล์...",
-    "Open Music DJ": "เปิด Music DJ",
+    "Open AutoDJ": "เปิด AutoDJ",
     "Start DJ worker": "เริ่มบอท DJ",
     "Stop DJ worker": "หยุดบอท DJ",
     "Refresh queue": "โหลดคิวใหม่",
@@ -815,8 +822,8 @@ WEB_STATUS_GUI_TEXT_TH = {
     "Speak current song": "พูดข้อมูลเพลงปัจจุบัน",
     "Voice text: up to 240 characters. Route Windows output to the Camfrog mic.":
         "ข้อความเสียงไม่เกิน 240 ตัวอักษร ต่อเอาต์พุต Windows เข้าไมค์ Camfrog",
-    "Voice request accepted by Music DJ.": "Music DJ รับคำขอเสียงแล้ว",
-    "Music DJ executable": "ไฟล์โปรแกรม Music DJ",
+    "Voice request accepted by AutoDJ.": "AutoDJ รับคำขอเสียงแล้ว",
+    "AutoDJ executable": "ไฟล์โปรแกรม AutoDJ",
     "vMix HTTP API": "vMix HTTP API",
     "Refresh inputs": "โหลดอินพุตใหม่",
     "Preview input": "ดูตัวอย่างอินพุต",
@@ -3116,7 +3123,12 @@ class WebStatusManager:
         self.nb.add(self.bot_manager_tab, text=self._text("bot_manager"))
         self._register_language_widget(self.bot_manager_tab, "bot_manager", notebook_tab=True)
         self._create_bot_manager_content(self.bot_manager_tab)
-        self._create_main_ui(setup_tab, session_tab)
+        if not BOT_MANAGER_ONLY:
+            self._create_main_ui(setup_tab, session_tab)
+        if BOT_MANAGER_ONLY:
+            for tab in (setup_tab, session_tab):
+                self.nb.hide(tab)
+            self.root.title("ZeaZDev CloudBot Manager")
         self._install_clipboard_shortcuts(self.root)
         self.nb.bind("<<NotebookTabChanged>>", self._on_main_tab_changed)
         self.root.bind("<Configure>", self._on_root_resize, add="+")
@@ -3374,7 +3386,8 @@ class WebStatusManager:
 
     def _apply_language(self):
         """Apply the selected language to static labels and current messages."""
-        self.root.title(self._ui_text("ZChat Web Status"))
+        self.root.title(self._ui_text(
+            "ZeaZDev CloudBot Manager" if BOT_MANAGER_ONLY else "ZChat Web Status"))
 
         def visit(widget):
             try:
@@ -4276,7 +4289,7 @@ class WebStatusManager:
 
         for column, (key, title) in enumerate((
                 ("room", "Room"), ("profile", "Profile"),
-                ("plugins", "Plugins"), ("music_dj", "Music DJ"))):
+                ("plugins", "Plugins"), ("music_dj", "AutoDJ"))):
             button = self.ttk.Button(
                 navigation, text=self._ui_text(title), style="BotTab.TButton",
                 state="normal" if key == "music_dj" else "disabled",
@@ -4339,16 +4352,16 @@ class WebStatusManager:
         self.music_dj_exe_var = self.tk.StringVar(value=executable)
         self.music_dj_speech_var = self.tk.StringVar()
         self.music_dj_status_var = self.tk.StringVar(
-            value=self._ui_text("Select music-dj.exe to connect to the local DJ."))
+            value=self._ui_text("Select AutoDJ.exe to connect to the local DJ."))
 
         app_panel = self.ttk.LabelFrame(
-            parent, text=self._ui_text("Local ZeaZDev room Music DJ"), padding=6)
+            parent, text=self._ui_text("Local ZeaZDev room AutoDJ"), padding=6)
         app_panel.pack(fill="both", expand=True, pady=(0, 6))
         app_panel.columnconfigure(0, weight=1)
         path_row = self.ttk.Frame(app_panel)
         path_row.grid(row=0, column=0, sticky="ew")
         path_row.columnconfigure(1, weight=1)
-        self.ttk.Label(path_row, text=self._ui_text("Music DJ executable")).grid(
+        self.ttk.Label(path_row, text=self._ui_text("AutoDJ executable")).grid(
             row=0, column=0, sticky="w", padx=(0, 6))
         self.ttk.Entry(path_row, textvariable=self.music_dj_exe_var).grid(
             row=0, column=1, sticky="ew")
@@ -4359,7 +4372,7 @@ class WebStatusManager:
         action_row = self.ttk.Frame(app_panel)
         action_row.grid(row=1, column=0, sticky="ew", pady=(5, 2))
         actions = (
-            ("Open Music DJ", self._open_music_dj),
+            ("Open AutoDJ", self._open_music_dj),
             ("Start DJ worker", self._start_music_dj),
             ("Stop DJ worker", self._stop_music_dj),
             ("Refresh queue", self._refresh_music_dj),
@@ -4480,8 +4493,8 @@ class WebStatusManager:
     def _browse_music_dj(self):
         from tkinter import filedialog
         selected = filedialog.askopenfilename(
-            parent=self.root, title=self._ui_text("Select music-dj.exe"),
-            filetypes=(("Music DJ", "music-dj.exe"), ("Executable", "*.exe")))
+            parent=self.root, title=self._ui_text("Select AutoDJ.exe"),
+            filetypes=(("AutoDJ", "AutoDJ.exe"), ("Executable", "*.exe")))
         if selected:
             self.music_dj_exe_var.set(selected)
             self._save_local_media_settings()
@@ -4494,9 +4507,9 @@ class WebStatusManager:
                 self.music_dj_exe_var.set(str(found))
                 raw = str(found)
         path = Path(raw).expanduser().resolve() if raw else None
-        if path is None or path.name.casefold() != "music-dj.exe" or not path.is_file():
+        if path is None or path.name.casefold() not in ("autodj.exe", "AutoDJ.exe") or not path.is_file():
             raise FileNotFoundError(self._ui_text(
-                "Select an existing packaged music-dj.exe application."))
+                "Select an existing packaged AutoDJ.exe application."))
         self._save_local_media_settings()
         return path
 
@@ -4504,12 +4517,12 @@ class WebStatusManager:
         try:
             executable = self._music_dj_executable()
             if os.name != "nt":
-                raise OSError("Music DJ applications run on Windows.")
+                raise OSError("AutoDJ applications run on Windows.")
             subprocess.Popen([str(executable)], cwd=str(executable.parent),
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, close_fds=True,
                              creationflags=0x08000000)
-            self.music_dj_status_var.set(self._ui_text("Opened the Music DJ window."))
+            self.music_dj_status_var.set(self._ui_text("Opened the AutoDJ window."))
         except (OSError, ValueError) as exc:
             self.music_dj_status_var.set(str(exc))
 
@@ -4544,7 +4557,7 @@ class WebStatusManager:
                                           values=(index, item.get("title", ""),
                                                   item.get("user", "")))
         self.music_dj_status_var.set(self._ui_text(
-            "DJ worker connected; queue read from the Music DJ owner."))
+            "DJ worker connected; queue read from the AutoDJ owner."))
 
     def _refresh_music_dj(self):
         try:
@@ -4565,7 +4578,7 @@ class WebStatusManager:
             self._render_music_dj_state(state)
 
         self._start_music_dj_task(
-            "Reading the Music DJ queue...",
+            "Reading the AutoDJ queue...",
             lambda: music_dj_control_request(executable, "status"), done)
 
     def _start_music_dj(self):
@@ -4585,7 +4598,7 @@ class WebStatusManager:
             else:
                 self._render_music_dj_state(state)
 
-        self._start_music_dj_task("Starting the Music DJ worker...", work, done)
+        self._start_music_dj_task("Starting the AutoDJ worker...", work, done)
 
     def _stop_music_dj(self):
         try:
@@ -4597,10 +4610,10 @@ class WebStatusManager:
         def done(_result, error):
             self.music_dj_tree.delete(*self.music_dj_tree.get_children())
             self.music_dj_status_var.set(self._ui_text(
-                error or "Music DJ worker stopped."))
+                error or "AutoDJ worker stopped."))
 
         self._start_music_dj_task(
-            "Stopping the Music DJ worker...",
+            "Stopping the AutoDJ worker...",
             lambda: run_music_dj_command(executable, "stop"), done)
 
     def _skip_music_dj(self):
@@ -4632,7 +4645,7 @@ class WebStatusManager:
 
         def done(_result, error):
             self.music_dj_status_var.set(self._ui_text(
-                error or "Voice request accepted by Music DJ."))
+                error or "Voice request accepted by AutoDJ."))
 
         self._start_music_dj_task(
             "Preparing the current song voice summary...", work, done)
@@ -4652,10 +4665,10 @@ class WebStatusManager:
                 if action == "speak":
                     self.music_dj_speech_var.set("")
                     self.music_dj_status_var.set(self._ui_text(
-                        "Voice request accepted by Music DJ."))
+                        "Voice request accepted by AutoDJ."))
 
         self._start_music_dj_task(
-            "Sending {0} to Music DJ...".format(action),
+            "Sending {0} to AutoDJ...".format(action),
             lambda: music_dj_control_request(executable, action, text=text), done)
 
     def _refresh_vmix_inputs(self):
@@ -6263,7 +6276,8 @@ class WebStatusManager:
 
     def check_update(self):
         def do():
-            state, message = self_update("web-status.exe")
+            upward_asset = "CloudBot-Manager.exe" if BOT_MANAGER_ONLY else "web-status.exe"
+            state, message = self_update(upward_asset)
             return "{0}\n{1}".format(
                 message, "restart the app to run the new version."
                 if state == "ready" else "")

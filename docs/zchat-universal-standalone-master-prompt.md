@@ -152,7 +152,8 @@ status-random.exe
 status-marquee.exe
 im-autoreply.exe
 web-status.exe
-music-dj.exe
+CloudBot-Manager.exe
+AutoDJ.exe
 status-changer.exe
 line-status-changer.exe
 ```
@@ -428,7 +429,8 @@ dist/
   status-marquee/status-marquee.exe
   im-autoreply/im-autoreply.exe
   web-status/web-status.exe
-  music-dj/music-dj.exe
+  cloudbot-manager/CloudBot-Manager.exe
+  auto-dj/AutoDJ.exe
   status-changer/status-changer.exe
   zchat-client/zchat-client.exe
 

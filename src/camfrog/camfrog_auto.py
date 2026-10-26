@@ -1012,6 +1012,9 @@ def is_own_gui_window(win) -> bool:
                 "Camfrog Random Status",
                 "Camfrog Marquee Status",
                 "Camfrog Music DJ",
+                "ZeaZDev room AutoDJ",
+                "ZeaZDev CloudBot Manager",
+                "ZeaZDev room Music DJ",
                 "Camfrog Auto Reply",
                 "Camfrog Presence",
                 "Room Control",
@@ -2560,7 +2563,7 @@ PROFILE_ASSETS = {
     "room": "room-control.exe",
     "im_reply": "im-autoreply.exe",
     "status": "status-{mode}.exe",
-    "music": "music-dj.exe",
+    "music": "AutoDJ.exe",
     "chat_im_private": "chat-im-private.exe",
     "full": "",
 }

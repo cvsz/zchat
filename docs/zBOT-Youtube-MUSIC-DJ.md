@@ -4,9 +4,9 @@ Status: source implementation is present for the local Music DJ controls, a visi
 
 ## What owns each job
 
-`web-status.exe` contains the Camfrog Bot Manager client and its local media controls. Camfrog-hosted Room, Profile, and Plugins pages stay remote: the client reads and submits the forms Camfrog returns. The standard catalog exposes 15 server-installed plugins (IDs 1–9 and 11–16); these forms configure those installed plugins. They do not install or host custom plugin code.
+`web-status.exe` keeps the Camfrog Bot Manager client and its local media controls. The stand-alone `cloudbot-manager` app (`CloudBot-Manager.exe`) opens that same Bot Manager view alone: it wraps the shared GUI code in a `ZCHAT_BOT_MANAGER_ONLY` window titled "ZeaZDev CloudBot Manager". Camfrog-hosted Room, Profile, and Plugins pages stay remote: the client reads and submits the forms Camfrog returns. The standard catalog exposes 15 server-installed plugins (IDs 1–9 and 11–16); these forms configure those installed plugins. They do not install or host custom plugin code.
 
-`music-dj.exe` remains the only owner of its room listener, persistent DJ queue, requester/owner skip rules, and local audio playback. The two executables do not import each other. The Bot Manager page controls the packaged Music DJ executable through bounded JSON request and response files in the Music DJ app's `dj-control/` directory. The Music DJ worker checks requests on its owner loop, so chat commands and local Skip/Clear actions are serialized against the same queue. Requests expire after 30 seconds. The UI can request status, skip the current track, clear the queue, submit bounded voice text, and start or stop the worker.
+`AutoDJ.exe` remains the only owner of its room listener, persistent DJ queue, requester/owner skip rules, and local audio playback. The two executables do not import each other. The Bot Manager page controls the packaged AutoDJ executable through bounded JSON request and response files in the AutoDJ app's `dj-control/` directory. The AutoDJ worker checks requests on its owner loop, so chat commands and local Skip/Clear actions are serialized against the same queue. Requests expire after 30 seconds. The UI can request status, skip the current track, clear the queue, submit bounded voice text, and start or stop the worker.
 
 The standalone Music DJ window is branded **ZeaZDev room** and includes the microphone mascot at `assets/zeazdev-room.png`. The Windows build embeds this artwork inside the one-file executable.
 
@@ -27,11 +27,11 @@ flowchart LR
     M -. select virtual camera in Camfrog .-> C
 ```
 
-The `web_status_media.json` file stores the selected `music-dj.exe` path and vMix local address. It contains no Camfrog session data. If the apps were installed as separate release assets, use **Browse** to select the Music DJ executable. The all-features zip preserves the packaged `web-status/` and `music-dj/` directory layout so Bot Manager can try the sibling Music DJ package automatically.
+The `web_status_media.json` file stores the selected `AutoDJ.exe` path and vMix local address. It contains no Camfrog session data. If the apps were installed as separate release assets, use **Browse** to select the AutoDJ executable. The all-features zip preserves the packaged `cloudbot-manager/` and `auto-dj/` directory layout so Bot Manager can try the sibling AutoDJ package automatically.
 
 ## Music DJ controls in Bot Manager
 
-Open **Bot Manager → Music DJ**. Choose `music-dj.exe` if it was not found automatically. **Open Music DJ** opens its configuration window; use that window to set up and check the Camfrog selectors, room commands, audio backend, and music folder. **Start DJ worker** and **Stop DJ worker** call the packaged app's existing start/stop commands. **Refresh queue**, **Skip current**, **Clear queue**, and **Speak to room** use the local control channel. Speak text is limited to 240 printable characters and runs through the Music DJ worker's Windows voice output.
+Open **Bot Manager → AutoDJ**. Choose `AutoDJ.exe` if it was not found automatically. **Open AutoDJ** opens its configuration window; use that window to set up and check the Camfrog selectors, room commands, audio backend, and music folder. **Start DJ worker** and **Stop DJ worker** call the packaged app's existing start/stop commands. **Refresh queue**, **Skip current**, **Clear queue**, and **Speak to room** use the local control channel. Speak text is limited to 240 printable characters and runs through the AutoDJ worker's Windows voice output.
 
 The local control page does not need a Camfrog `cloudbot` session. Camfrog's Room, Profile, and Plugins pages still require the session as before. The Music DJ worker still needs Camfrog open and the normal Music DJ configuration. A local command response confirms the queue operation; it does not prove that Camfrog members heard audio.
 
@@ -68,7 +68,7 @@ Source-level automated coverage exercises the queue bridge, expired/invalid requ
 
 Before calling the feature production-ready on a target machine, verify:
 
-1. A clean Windows build includes both executables in the package, and Bot Manager finds or can browse to `music-dj.exe`.
+1. A clean Windows build includes the executables, and Bot Manager (in `web-status.exe` or the stand-alone `CloudBot-Manager.exe`) finds or can browse to `AutoDJ.exe`.
 2. The local controls start/stop the intended worker and queue requests remain correct across chat commands, skip, clear, and restart.
 3. The Music DJ configuration works against the target Camfrog version and the intended local audio backend.
 4. The visible YouTube iframe player opens in the separate profile, accepts a valid request, handles autoplay-blocked playback, announces a real `playing` event, and advances once on `ended`.
