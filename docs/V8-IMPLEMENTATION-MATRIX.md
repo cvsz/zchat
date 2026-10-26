@@ -1,4 +1,4 @@
-# ZChat V8 Implementation Matrix (source-backed, current main head a952443)
+# ZChat V8 Implementation Matrix (source-backed, current main head 5a02499)
 
 Evidence states follow AGENTS.md: VERIFIED / PARTIALLY VERIFIED / UNVERIFIED / BLOCKED / NOT APPLICABLE / INCONCLUSIVE.
 Unit/CI-green is never conflated with external-provider execution. "Native Camfrog E2E" means a real
@@ -52,14 +52,14 @@ State: BLOCKED in this environment; the executable procedure and gates are in
 (no simulated results are claimed). The acceptance decision itself stays with a human reviewer correlating Windows worker evidence with the
 observer bundle; the tools refuse to fabricate an EXTERNAL_EFFECT_VERIFIED state.
 
-## Phase 6 - Full feature audit (current main head a952443)
+## Phase 6 - Full feature audit (current main head 5a02499)
 
 | App / area | State | Source evidence |
 | --- | --- | --- |
-| room-control | VERIFIED (unit/CI) | `room-control.spec`, `tests/test_room_control*` + CI `test` job green at a952443 |
+| room-control | VERIFIED (unit/CI) | `room-control.spec`, `tests/test_room_control*` + CI `test` job green at 5a02499 |
 | chat-im-private | VERIFIED (unit/CI) | `chat-im-private.spec`, `tests/test_im.py`, `tests/test_private_chat_gui.py`; IM auto-reply refuses IM windows by design |
 | im-autoreply | VERIFIED (unit/CI) | `im-autoreply.spec`, `tests/test_im.py`; room rules never answer private chats (`log_kind` validation) |
-| music-dj | VERIFIED (unit/CI) | `music-dj.spec`, `tests/test_dj.py`, `tests/test_music_gui.py`; local `.wav` backend + queue |
+| music-dj | VERIFIED (unit/CI) | `music-dj.spec`, `tests/test_dj.py`, `tests/test_music_gui.py`; local `.wav` backend + queue; `!randommusic` opens visible YouTube search + posts link to room; Thai queries added |
 | status-changer | VERIFIED (unit/CI) | `status-changer.spec`, `tests/test_camfrog_status_engine.py`, `tests/test_status_gui.py`; fail-closed foreground + resource-lock gates |
 | status-marquee | VERIFIED (unit/CI) | `status-marquee.spec`, `tests/test_status_gui.py`; marquee frame rendering + UTF-8 clip |
 | status-random | VERIFIED (unit/CI) | `status-random.spec`, `tests/test_status_gui.py`; random frame selection |
@@ -79,4 +79,4 @@ observer bundle; the tools refuse to fabricate an EXTERNAL_EFFECT_VERIFIED state
 Command evidence recorded in the PR body after execution.
 
 - Windows native suite and native Camfrog acceptance: NOT RUN here (CI runners cover the packaged smoke/runtime fixtures).
-- Final CI state (main head a952443): all required checks passed (ci, control-server x2, windows-tests, build-windows x2, CodeQL, dependency-review, Analyze GitHub Actions); 0 open CodeQL alerts; pip-audit 0 CVEs; Dependabot 0 open alerts.
+- Final CI state (main head 5a02499): all required checks passed (ci, control-server x2, windows-tests, build-windows x2, CodeQL, dependency-review, Analyze GitHub Actions); 0 open CodeQL alerts; pip-audit 0 CVEs; Dependabot 0 open alerts.

@@ -714,6 +714,14 @@ class WindowsCamfrogWindowClassifier:
                         cw.is_visible = is_vis
 
                     if not self.is_own_gui_window(cw):
+                        # Skip unknown invisible windows with no signatures:
+                        # not primary Camfrog UI windows that need revalidation.
+                        if (
+                            cw.role == WindowRole.UNKNOWN
+                            and not cw.is_visible
+                            and not cw.signatures
+                        ):
+                            continue
                         classified.append(cw)
                 return classified
             except Exception:

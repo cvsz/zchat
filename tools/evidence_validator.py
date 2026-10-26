@@ -161,8 +161,9 @@ def validate_bundle(
     # --- Duplicate manifest entries -------------------------------------
     manifest_file_names = [entry.get("file") for entry in manifest_files]
     seen = set()
-    duplicates = sorted(name for name in manifest_file_names
-                        if name in seen or seen.add(name))
+    duplicates = sorted(
+        name for name in manifest_file_names if name in seen or seen.add(name)
+    )
     if duplicates:
         errors.append(f"duplicate manifest entries: {', '.join(duplicates)}")
 
@@ -191,9 +192,7 @@ def validate_bundle(
         if entry.get("size_bytes") != safe_path.stat().st_size:
             errors.append(f"size mismatch for {name}")
         if safe_path.stat().st_size > MAX_FILE_SIZE_BYTES:
-            errors.append(
-                f"file too large: {name} ({safe_path.stat().st_size} bytes)"
-            )
+            errors.append(f"file too large: {name} ({safe_path.stat().st_size} bytes)")
         checked.append(name)
 
     # --- Summary structure ----------------------------------------------
@@ -286,8 +285,7 @@ def validate_bundle(
     prev_command_id: str | None = None
     if len(samples) > MAX_SAMPLE_COUNT:
         errors.append(
-            f"sample log has too many entries: {len(samples)} "
-            f"(max {MAX_SAMPLE_COUNT})"
+            f"sample log has too many entries: {len(samples)} (max {MAX_SAMPLE_COUNT})"
         )
     for sample in samples:
         idx = sample.get("sample_index")
@@ -322,10 +320,7 @@ def validate_bundle(
         # Command ID consistency across samples
         sample_command_id = sample.get("command_id")
         if sample_command_id is not None:
-            if (
-                prev_command_id is not None
-                and sample_command_id != prev_command_id
-            ):
+            if prev_command_id is not None and sample_command_id != prev_command_id:
                 errors.append(
                     f"inconsistent command_id across samples: "
                     f"{sample_command_id!r} vs {prev_command_id!r}"

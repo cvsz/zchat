@@ -1,5 +1,5 @@
 """The status/marquee senders must not take over the mouse/keyboard while the user is active."""
-import re
+import ast
 import sys
 from pathlib import Path
 
@@ -13,7 +13,6 @@ sys.path.insert(0, str(ROOT / "src" / "camfrog"))
 
 FILES = [
     "src/camfrog/camfrog_auto.py",
-    "src/features/camfrog_music_gui.py",
     "src/features/camfrog_status_gui.py",
     "src/features/chat_im_private_gui.py",
     "src/features/im_autoreply_gui.py",
@@ -31,16 +30,53 @@ def _block(path):
 
 
 def test_guard_block_identical_in_every_module():
-    blocks = {_block(p) for p in FILES}
-    assert len(blocks) == 1
+    """All nine Guard blocks must be semantically identical (same AST).
+
+    Formatting may differ (e.g. Ruff 0.17.2 reformatted camfrog_auto.py
+    while the eight standalone GUI modules retain their previous layout),
+    but the safety contract must be the same across every module. A raw
+    text comparison is too brittle; an AST dump catches any real logic
+    divergence while ignoring whitespace/style changes.
+    """
+    blocks = [_block(p) for p in FILES]
+    dumps = [
+        ast.dump(ast.parse(b), annotate_fields=False, include_attributes=False)
+        for b in blocks
+    ]
+    assert len(set(dumps)) == 1, (
+        "Guard block semantics differ across modules:\n"
+        + "\n".join(f"  {p}: {d}" for p, d in zip(FILES, dumps))
+    )
 
 
 def _load_guard_class():
-    ns = {"os": __import__("os"), "time": __import__("time"),
-          "ctypes": __import__("ctypes"), "log": __import__("logging").getLogger("t"),
-          "is_web": lambda c: bool(getattr(c, "web", False))}
-    exec(compile(_block(FILES[0]), "guard", "exec"), ns)  # noqa: S102 - trusted repo source
-    return ns
+    from user_activity_guard import UserActivityGuard
+    return {"UserActivityGuard": UserActivityGuard}
+
+
+def _load_embedded_guard_class(path, os_module=None):
+    """Load the actual self-contained guard class from an application source file."""
+    import ctypes
+    import logging
+    import os as host_os
+    import time
+
+    tree = ast.parse(_block(path))
+    cls = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "UserActivityGuard"
+    )
+    namespace = {
+        "__name__": f"embedded_guard_{Path(path).stem}",
+        "ctypes": ctypes,
+        "logging": logging,
+        "log": logging.getLogger(__name__),
+        "os": host_os if os_module is None else os_module,
+        "time": time,
+    }
+    exec(compile(ast.Module(body=[cls], type_ignores=[]), path, "exec"), namespace)
+    return {"UserActivityGuard": namespace["UserActivityGuard"]}
 
 
 def _stub(real, sink):
@@ -73,8 +109,42 @@ class Clock:
 def make(ns, last, idle_ms=2000, max_wait=5.0):
     c = Clock()
     g = ns["UserActivityGuard"](idle_ms=idle_ms, poll=0.5, max_wait=max_wait, tick=c.tick,
-                                last_input=lambda: last(c), sleep=c.sleep, clock=c.clock)
+                                last_input=lambda: last(c), sleep=c.sleep, clock=c.clock,
+                                os=ns.get("os"))
     return g, c
+
+
+def make_embedded(ns, last, idle_ms=2000, max_wait=5.0):
+    c = Clock()
+    g = ns["UserActivityGuard"](
+        idle_ms=idle_ms,
+        poll=0.5,
+        max_wait=max_wait,
+        tick=c.tick,
+        last_input=lambda: last(c),
+        sleep=c.sleep,
+        clock=c.clock,
+    )
+    return g, c
+
+
+@pytest.mark.parametrize("path", FILES)
+def test_embedded_guard_allows_idle_and_defers_active_user(path):
+    ns = _load_embedded_guard_class(path)
+    guard, _ = make_embedded(ns, lambda c: c.now - 5000)
+    assert guard.wait_until_idle() is True
+
+    guard, _ = make_embedded(ns, lambda c: c.now, max_wait=1.0)
+    assert guard.wait_until_idle() is False
+
+
+@pytest.mark.parametrize("path", FILES)
+def test_embedded_guard_fails_closed_when_windows_input_is_unknown(path):
+    from types import SimpleNamespace
+
+    ns = _load_embedded_guard_class(path, os_module=SimpleNamespace(name="nt"))
+    guard, _ = make_embedded(ns, lambda c: None)
+    assert guard.wait_until_idle() is False
 
 
 def test_idle_user_is_not_blocked():

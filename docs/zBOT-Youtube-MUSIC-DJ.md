@@ -10,7 +10,7 @@ Status: source implementation is present for the local Music DJ controls, a visi
 
 The standalone Music DJ window is branded **ZeaZDev room** and includes the microphone mascot at `assets/zeazdev-room.png`. The Windows build embeds this artwork inside the one-file executable.
 
-The `!randommusic` command selects a music search phrase, posts a `https://www.youtube.com/results` link, and stores up to 200 generated entries in `youtube_random_music.json` under the Music DJ data folder. The link opens search results; the operator chooses a video in the visible browser.
+The `!randommusic` command selects a music search phrase (including Thai queries: "Thai country song", "Thai indie music", "Thai rock song", "Thai folk song"), opens a visible YouTube search window, posts a `https://www.youtube.com/results` link to the room with a hint to use `!request <URL>` for auto-play, and stores up to 200 generated entries in `youtube_random_music.json` under the Music DJ data folder. The link opens search results; the operator chooses a video in the visible browser.
 
 `!current` reports the current title, requester, elapsed and total time when known, and next queued song. The Music tab and Bot Manager offer Windows TTS controls for custom text; the Music tab can also speak the current queue summary. TTS uses the installed `System.Speech` voice and Windows default playback device. To make the room hear it, route that output to the Camfrog microphone input with a virtual audio cable or Stereo Mix. The action is local-operator initiated and limited to 240 printable characters.
 

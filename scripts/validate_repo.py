@@ -59,6 +59,24 @@ EXCLUDED_DIRS = {
     "line",
 }
 
+# Keep tracked report Markdown in validation while skipping generated report trees.
+EXCLUDED_PATHS = {
+    "reports/camfrog-runtime",
+    "reports/windows-runs",
+}
+
+
+def is_excluded_path(path: Path) -> bool:
+    parts = path.parts
+    if any(part in EXCLUDED_DIRS for part in parts):
+        return True
+    relative = path.as_posix()
+    return any(
+        relative == excluded or relative.startswith(f"{excluded}/")
+        for excluded in EXCLUDED_PATHS
+    )
+
+
 LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\(([^)]+)\)")
 SKIP_PREFIXES = ("http://", "https://", "mailto:", "tel:", "#", "data:")
 CHANGELOG_VERSION_RE = re.compile(r"^##\s+\[", re.MULTILINE)
@@ -100,11 +118,12 @@ def find_markdown_files() -> list[Path]:
         raise error
 
     for dirpath, dirnames, filenames in os.walk(ROOT, onerror=fail_on_walk_error):
-        dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIRS]
+        relative_dir = Path(dirpath).relative_to(ROOT)
+        dirnames[:] = [d for d in dirnames if not is_excluded_path(relative_dir / d)]
         for filename in filenames:
             if filename.endswith(".md"):
                 md = Path(dirpath) / filename
-                if not any(part in EXCLUDED_DIRS for part in md.relative_to(ROOT).parts):
+                if not is_excluded_path(md.relative_to(ROOT)):
                     md_paths.append(md)
     return sorted(md_paths)
 
@@ -116,7 +135,7 @@ def validate_markdown_links() -> list[str]:
     except OSError as exc:
         return [f"repository scan failed: {exc}"]
     for md in markdown_files:
-        if any(part in EXCLUDED_DIRS for part in md.relative_to(ROOT).parts):
+        if is_excluded_path(md.relative_to(ROOT)):
             continue
         try:
             text = md.read_text(encoding="utf-8")
