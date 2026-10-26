@@ -2088,6 +2088,10 @@ def youtube_search_url(query):
 YOUTUBE_RANDOM_MUSIC_QUERIES = (
     "Thai pop official music video",
     "Thai luk thung music",
+    "Thai country song",
+    "Thai indie music",
+    "Thai rock song",
+    "Thai folk song",
     "lofi chill instrumental music",
     "jazz piano instrumental",
     "acoustic pop songs",
