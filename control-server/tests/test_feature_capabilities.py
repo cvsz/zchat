@@ -48,7 +48,7 @@ FEATURE_BUILD_TARGETS = {
         "src/features/music_dj_entry.py",
         "build.bat",
         "src/features/music_dj_entry.py",
-        "music-dj",
+        "AutoDJ",
     ),
     "camfrog.status_changer": (
         "src/features/status_changer_entry.py",
