@@ -48,10 +48,13 @@ def test_template_match_threshold_validation(tmp_path):
 
 
 def test_template_match_images_too_small(tmp_path):
+    pytest.importorskip("cv2")
+    from PIL import Image
+
     a = tmp_path / "a.png"
     b = tmp_path / "b.png"
-    a.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 10)
-    b.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 20)
+    Image.new("RGB", (8, 8)).save(a)
+    Image.new("RGB", (12, 12)).save(b)
     with pytest.raises(ValueError, match="Template cannot be larger than screenshot"):
         template_match(a, b, threshold=0.9)
 
@@ -68,10 +71,11 @@ def _block_import(name_to_block):
     return fake_import
 
 
-def test_ocr_missing_dependency(monkeypatch):
+def test_ocr_missing_dependency(monkeypatch, tmp_path):
     """OCR should raise RuntimeError when pytesseract is unavailable."""
+    tmp = tmp_path / "x.png"
+    tmp.write_bytes(b"test image")
     monkeypatch.setattr(builtins, "__import__", _block_import("pytesseract"))
-    tmp = Path("x.png")
     with pytest.raises(RuntimeError, match="OCR dependencies are optional"):
         ocr_image(tmp)
 

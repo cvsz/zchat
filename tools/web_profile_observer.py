@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import time
 import sys
 from datetime import datetime, timezone
@@ -22,6 +23,7 @@ MAX_EXPECTED = 256
 MAX_SELECTOR = 256
 MAX_COMMAND_ID = 64
 MAX_ACCOUNT_B_REFERENCE = 128
+MAX_ACCEPTANCE_SESSION_ID = 128
 
 # Acceptance stage chain: a later stage never implies an earlier one was enforced,
 # and nothing observed here may imply a Windows-side stage.
@@ -71,6 +73,13 @@ def _validate_optional_text(value: str | None, max_len: int, label: str) -> str:
         )
     return value
 
+def _validate_source_commit_sha(value: str | None) -> str:
+    """Validate an optional Git commit object ID (SHA-1 or SHA-256)."""
+    sha = _validate_optional_text(value, 64, "source_commit_sha")
+    if sha and not re.fullmatch(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})", sha):
+        raise ValueError("source_commit_sha must be a 40- or 64-character hexadecimal commit SHA")
+    return sha.lower()
+
 
 def build_summary(result: dict, log_name: str) -> dict:
     """Reconcile an observer run into the acceptance stage-chain summary.
@@ -90,6 +99,8 @@ def build_summary(result: dict, log_name: str) -> dict:
     transition = bool(first_hash and last_hash and first_hash != last_hash)
     return {
         "run_id": result.get("run_id"),
+        "acceptance_session_id": result.get("acceptance_session_id", ""),
+        "source_commit_sha": result.get("source_commit_sha", ""),
         "command_id": result.get("command_id", ""),
         "account_b_reference": result.get("account_b_reference", ""),
         "account_a_nickname": result.get("nickname"),
@@ -214,8 +225,18 @@ def run(args) -> int:
         MAX_ACCOUNT_B_REFERENCE,
         "account_b_reference",
     )
+    acceptance_session_id = _validate_optional_text(
+        getattr(args, "acceptance_session_id", None) or None,
+        MAX_ACCEPTANCE_SESSION_ID,
+        "acceptance_session_id",
+    )
+    source_commit_sha = _validate_source_commit_sha(
+        getattr(args, "source_commit_sha", None) or None
+    )
     result = {
         "run_id": uuid4().hex,
+        "acceptance_session_id": acceptance_session_id,
+        "source_commit_sha": source_commit_sha.lower(),
         "observed_at": datetime.now(timezone.utc).isoformat(),
         "nickname": args.nickname,
         "source": "authenticated_web_profile",
@@ -382,6 +403,16 @@ def main(argv=None) -> int:
         help=f"Optional opaque Account B identity reference for the evidence "
         f"bundle (1..{MAX_ACCOUNT_B_REFERENCE} characters); never "
         f"auto-captured from the browser session",
+    )
+    parser.add_argument(
+        "--acceptance-session-id",
+        default="",
+        help=f"Shared operator-generated ID linking all observer captures in one acceptance session (1..{MAX_ACCEPTANCE_SESSION_ID} characters)",
+    )
+    parser.add_argument(
+        "--source-commit-sha",
+        default="",
+        help="Exact 40- or 64-character hexadecimal source commit SHA represented by this evidence",
     )
     args = parser.parse_args(argv)
     if not 10 <= args.refresh_seconds <= 300:

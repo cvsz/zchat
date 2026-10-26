@@ -348,3 +348,38 @@ def test_cli_propagates_optional_linkage_fields(monkeypatch, tmp_path):
         "command_id": "cmd-42",
         "account_b_reference": "oper-opaque-ref",
     }
+
+def test_build_summary_preserves_session_and_source_commit_identity():
+    commit_sha = "a" * 40
+    result = {
+        "run_id": "run-unique-1",
+        "acceptance_session_id": "session-1",
+        "source_commit_sha": commit_sha,
+        "command_id": "command-1",
+        "account_b_reference": "account-b-ref",
+        "nickname": "account-a",
+        "source": "authenticated_web_profile",
+        "finished_at": "2026-10-25T14:00:00+00:00",
+        "observed_at": "2026-10-25T13:59:00+00:00",
+        "expected_text_sha256": "expected-hash",
+        "first_observed_text_sha256": "observed-hash",
+        "last_observed_text_sha256": "observed-hash",
+        "samples": 1,
+        "matching_samples": 1,
+        "top_states": {"WEB_PROFILE_MATCH": 1},
+        "screenshot_files": [],
+    }
+    summary = observer.build_summary(result, "run-unique-1.jsonl")
+    assert summary["acceptance_session_id"] == "session-1"
+    assert summary["source_commit_sha"] == commit_sha
+    assert summary["expected_text_sha256"] == "expected-hash"
+    assert summary["stage_chain"]["WEB_PROFILE_OBSERVED"] is True
+
+
+def test_source_commit_sha_validation_accepts_git_object_ids():
+    assert observer._validate_source_commit_sha("A" * 40) == "a" * 40
+    assert observer._validate_source_commit_sha("b" * 64) == "b" * 64
+    assert observer._validate_source_commit_sha("") == ""
+    for invalid in ("a" * 39, "g" * 40, "a" * 41):
+        with pytest.raises(ValueError, match="source_commit_sha"):
+            observer._validate_source_commit_sha(invalid)

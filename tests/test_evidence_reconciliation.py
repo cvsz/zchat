@@ -33,8 +33,10 @@ def _write_bundle(
     nickname: str = "Seaza",
     account_b_ref: str = "acct-b-01",
     run_id: str = "RUN-0001",
+    acceptance_session_id: str = "SESSION-0001",
     command_id: str = "CMD-0001",
     source_commit_sha: str = "abc123def456",
+    expected_text_sha256: str | None = None,
     observed_at: datetime | None = None,
     state: str = "WEB_PROFILE_MATCH",
     screenshot_files: list[str] | None = None,
@@ -53,10 +55,16 @@ def _write_bundle(
 
     summary = {
         "run_id": run_id,
+        "acceptance_session_id": acceptance_session_id,
         "account_a_nickname": nickname,
         "command_id": command_id,
         "account_b_reference": account_b_ref,
         "source_commit_sha": source_commit_sha,
+        "expected_text_sha256": (
+            expected_text_sha256
+            if expected_text_sha256 is not None
+            else last_observed_text_sha256
+        ),
         "generated_at": observed_at.isoformat(),
         "stage_chain": {
             "COMMAND_ACCEPTED": "EXTERNAL_NOT_OBSERVED_BY_THIS_TOOL",
@@ -151,36 +159,60 @@ def _valid_bundle_set(tmp_path: Path) -> dict[str, Path]:
     bundles = {
         "baseline": _write_bundle(
             tmp_path, "baseline",
+            run_id="RUN-BASELINE-0001",
             observed_at=now,
             state="WEB_PROFILE_OBSERVED",
             last_observed_text_sha256="sha-baseline",
         ),
         "marker_a": _write_bundle(
             tmp_path, "marker_a",
+            run_id="RUN-MARKER-A-0001",
+            command_id="CMD-MARKER-A-0001",
             observed_at=now + timedelta(seconds=2),
             state="WEB_PROFILE_MATCH",
             last_observed_text_sha256="sha-marker-a",
         ),
         "marker_b": _write_bundle(
             tmp_path, "marker_b",
+            run_id="RUN-MARKER-B-0001",
+            command_id="CMD-MARKER-B-0001",
             observed_at=now + timedelta(seconds=4),
             state="WEB_PROFILE_MATCH",
             last_observed_text_sha256="sha-marker-b",
         ),
         "stop_check": _write_bundle(
             tmp_path, "stop_check",
+            run_id="RUN-STOP-CHECK-0001",
             observed_at=now + timedelta(seconds=6),
             state="WEB_PROFILE_MATCH",
             last_observed_text_sha256="sha-marker-b",
         ),
         "windows": _write_bundle(
             tmp_path, "windows",
-            observed_at=now + timedelta(seconds=4),
+            run_id="RUN-WINDOWS-0001",
+            observed_at=now + timedelta(seconds=8),
             state="WEB_PROFILE_MATCH",
             last_observed_text_sha256="sha-marker-b",
         ),
     }
     return bundles
+
+
+def _rewrite_summary_field(bundle: Path, field: str, value) -> None:
+    summary_path = bundle / "summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary[field] = value
+    summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+
+    manifest_path = bundle / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    summary_bytes = summary_path.read_bytes()
+    for entry in manifest["files"]:
+        if entry["file"] == "summary.json":
+            entry["sha256"] = hashlib.sha256(summary_bytes).hexdigest()
+            entry["size_bytes"] = len(summary_bytes)
+            break
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +227,8 @@ def test_complete_valid_reconciliation_passes(tmp_path: Path):
         expected_nickname="Seaza",
         expected_account_b_reference="acct-b-01",
         expected_source_commit_sha="abc123def456",
+        expected_marker_a_command_id="CMD-MARKER-A-0001",
+        expected_marker_b_command_id="CMD-MARKER-B-0001",
     )
     assert verdict["status"] == "TRANSITION_CANDIDATE"
     assert verdict["external_effect_verified"] is False
@@ -210,14 +244,36 @@ def test_valid_baseline_bundle(tmp_path: Path):
     assert verdict["status"] == "FAIL"
 
 
-def test_matching_command_ids(tmp_path: Path):
+def test_marker_command_ids_match_expected_requests(tmp_path: Path):
     bundles = _valid_bundle_set(tmp_path)
     verdict = reconcile_bundles(
         bundles,
         expected_nickname="Seaza",
         expected_account_b_reference="acct-b-01",
+        expected_marker_a_command_id="CMD-MARKER-A-0001",
+        expected_marker_b_command_id="CMD-MARKER-B-0001",
     )
     assert verdict["status"] == "TRANSITION_CANDIDATE"
+    linkage = next(c for c in verdict["checks"] if c["check"] == "marker_command_ids_match_expected_requests")
+    assert linkage["passed"] is True
+
+
+def test_missing_expected_marker_command_ids_are_inconclusive(tmp_path: Path):
+    verdict = reconcile_bundles(_valid_bundle_set(tmp_path))
+    assert verdict["status"] == "INCONCLUSIVE"
+    linkage = next(c for c in verdict["checks"] if c["check"] == "marker_command_ids_match_expected_requests")
+    assert linkage["passed"] is False
+    assert any("expected marker command IDs were not supplied" in warning for warning in verdict["warnings"])
+
+
+def test_mismatched_expected_marker_command_ids_fail(tmp_path: Path):
+    verdict = reconcile_bundles(
+        _valid_bundle_set(tmp_path),
+        expected_marker_a_command_id="CMD-MARKER-A-0001",
+        expected_marker_b_command_id="CMD-UNRELATED",
+    )
+    assert verdict["status"] == "FAIL"
+    assert any("do not match expected request IDs" in error for error in verdict["errors"])
 
 
 def test_correct_utc_ordering(tmp_path: Path):
@@ -267,6 +323,8 @@ def test_missing_windows_evidence_returns_inconclusive(tmp_path: Path):
         expected_nickname="Seaza",
         expected_account_b_reference="acct-b-01",
         expected_source_commit_sha="abc123def456",
+        expected_marker_a_command_id="CMD-MARKER-A-0001",
+        expected_marker_b_command_id="CMD-MARKER-B-0001",
     )
     # Without Windows evidence, cannot be TRANSITION_CANDIDATE
     assert verdict["status"] != "TRANSITION_CANDIDATE"
@@ -391,6 +449,8 @@ def test_missing_source_sha(tmp_path: Path):
     verdict = reconcile_bundles(
         bundles,
         expected_source_commit_sha="abc123def456",
+        expected_marker_a_command_id="CMD-MARKER-A-0001",
+        expected_marker_b_command_id="CMD-MARKER-B-0001",
     )
     assert verdict["status"] == "FAIL"
 
@@ -507,3 +567,136 @@ def test_verdict_levels_are_ordered():
     assert VERDICT_LEVELS["INCONCLUSIVE"] < VERDICT_LEVELS["STRUCTURALLY_VALID"]
     assert VERDICT_LEVELS["STRUCTURALLY_VALID"] < VERDICT_LEVELS["CORRELATION_VALID"]
     assert VERDICT_LEVELS["CORRELATION_VALID"] < VERDICT_LEVELS["TRANSITION_CANDIDATE"]
+
+def test_distinct_observer_run_ids_share_acceptance_session(tmp_path: Path):
+    bundles = _valid_bundle_set(tmp_path)
+    verdict = reconcile_bundles(
+        bundles,
+        expected_nickname="Seaza",
+        expected_account_b_reference="acct-b-01",
+        expected_source_commit_sha="abc123def456",
+        expected_marker_a_command_id="CMD-MARKER-A-0001",
+        expected_marker_b_command_id="CMD-MARKER-B-0001",
+    )
+    assert verdict["status"] == "TRANSITION_CANDIDATE"
+    run_check = next(c for c in verdict["checks"] if c["check"] == "run_id_present_per_bundle")
+    session_check = next(c for c in verdict["checks"] if c["check"] == "acceptance_session_lineage_consistency")
+    assert run_check["passed"] is True
+    assert session_check["passed"] is True
+
+
+def test_inconsistent_acceptance_session_ids_fail(tmp_path: Path):
+    bundles = _valid_bundle_set(tmp_path)
+    _rewrite_summary_field(bundles["marker_b"], "acceptance_session_id", "SESSION-OTHER")
+    verdict = reconcile_bundles(bundles)
+    assert verdict["status"] == "FAIL"
+    assert any("acceptance_session_id" in error for error in verdict["errors"])
+
+
+def test_marker_observation_must_match_expected_hash(tmp_path: Path):
+    bundles = _valid_bundle_set(tmp_path)
+    _rewrite_summary_field(bundles["marker_a"], "expected_text_sha256", "not-the-observed-hash")
+    verdict = reconcile_bundles(bundles)
+    assert verdict["status"] == "FAIL"
+    assert any("does not match expected marker" in error for error in verdict["errors"])
+
+
+def test_marker_observation_state_must_confirm_match(tmp_path: Path):
+    bundles = _valid_bundle_set(tmp_path)
+    summary_path = bundles["marker_a"] / "summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary["stage_chain"]["WEB_PROFILE_OBSERVED"] = "WEB_PROFILE_MISMATCH"
+    summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    manifest_path = bundles["marker_a"] / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    data = summary_path.read_bytes()
+    for entry in manifest["files"]:
+        if entry["file"] == "summary.json":
+            entry["sha256"] = hashlib.sha256(data).hexdigest()
+            entry["size_bytes"] = len(data)
+            break
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    verdict = reconcile_bundles(bundles)
+    assert verdict["status"] == "FAIL"
+    assert any("WEB_PROFILE_OBSERVED" in error for error in verdict["errors"])
+
+
+def test_stop_check_without_observed_hash_fails_closed(tmp_path: Path):
+    bundles = _valid_bundle_set(tmp_path)
+    _rewrite_summary_field(bundles["stop_check"], "last_observed_text_sha256", None)
+    verdict = reconcile_bundles(bundles)
+    assert verdict["status"] == "FAIL"
+    assert any("stop_check: missing observed text SHA" in error for error in verdict["errors"])
+
+
+def test_windows_manifest_content_is_validated(tmp_path: Path):
+    bundles = _valid_bundle_set(tmp_path)
+    manifest_path = bundles["windows"] / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"] = []
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    verdict = reconcile_bundles(bundles)
+    assert verdict["status"] == "FAIL"
+    assert verdict["windows_evidence"]["valid"] is False
+
+
+def test_marker_command_ids_required_even_when_baseline_has_one(tmp_path: Path):
+    now = datetime.now(UTC)
+    bundles = {
+        "baseline": _write_bundle(
+            tmp_path, "baseline", command_id="CMD-BASELINE",
+            observed_at=now, state="WEB_PROFILE_OBSERVED",
+            last_observed_text_sha256="sha-base",
+        ),
+        "marker_a": _write_bundle(
+            tmp_path, "marker_a", command_id="",
+            observed_at=now + timedelta(seconds=2), state="WEB_PROFILE_MATCH",
+            last_observed_text_sha256="sha-a",
+        ),
+        "marker_b": _write_bundle(
+            tmp_path, "marker_b", command_id="",
+            observed_at=now + timedelta(seconds=4), state="WEB_PROFILE_MATCH",
+            last_observed_text_sha256="sha-b",
+        ),
+        "stop_check": _write_bundle(
+            tmp_path, "stop_check", command_id="CMD-STOP",
+            observed_at=now + timedelta(seconds=6), state="WEB_PROFILE_MATCH",
+            last_observed_text_sha256="sha-b",
+        ),
+        "windows": _write_bundle(
+            tmp_path, "windows", command_id="CMD-STOP",
+            observed_at=now + timedelta(seconds=8), state="WEB_PROFILE_MATCH",
+            last_observed_text_sha256="sha-b",
+        ),
+    }
+    verdict = reconcile_bundles(bundles)
+    assert verdict["status"] == "FAIL"
+    assert any("marker bundles missing command_id" in error for error in verdict["errors"])
+
+
+def test_missing_timestamp_on_any_ordered_bundle_fails(tmp_path: Path):
+    bundles = _valid_bundle_set(tmp_path)
+    _rewrite_summary_field(bundles["marker_a"], "generated_at", "")
+    verdict = reconcile_bundles(bundles)
+    assert verdict["status"] == "FAIL"
+    assert any("marker_a: missing or invalid generated_at" in error for error in verdict["errors"])
+
+
+def test_partial_source_sha_missing_fails_when_expected_sha_is_supplied(tmp_path: Path):
+    bundles = _valid_bundle_set(tmp_path)
+    _rewrite_summary_field(bundles["marker_a"], "source_commit_sha", "")
+    verdict = reconcile_bundles(
+        bundles,
+        expected_source_commit_sha="abc123def456",
+        expected_marker_a_command_id="CMD-MARKER-A-0001",
+        expected_marker_b_command_id="CMD-MARKER-B-0001",
+    )
+    assert verdict["status"] == "FAIL"
+    assert any("source_commit_sha missing from bundles" in error for error in verdict["errors"])
+
+def test_non_string_identity_field_fails_closed(tmp_path: Path):
+    bundles = _valid_bundle_set(tmp_path)
+    _rewrite_summary_field(bundles["marker_a"], "account_a_nickname", ["Seaza"])
+    verdict = reconcile_bundles(bundles)
+    assert verdict["status"] == "FAIL"
+    assert verdict["external_effect_verified"] is False

@@ -651,3 +651,38 @@ def test_valid_bundle_still_passes_after_hardening(tmp_path):
     )
     assert verdict["status"] == "PASS"
     assert verdict["errors"] == []
+
+
+def test_sample_log_path_traversal_is_rejected(tmp_path):
+    out = _write_bundle(tmp_path)
+    outside = tmp_path / "outside.jsonl"
+    outside.write_text(
+        (out / "RUN-0001.jsonl").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    summary_path = out / "summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary["sample_log"] = "../outside.jsonl"
+    summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+
+    # Keep the manifest internally consistent so the assertion targets the
+    # path-containment guard rather than an unrelated hash mismatch.
+    manifest_path = out / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    summary_bytes = summary_path.read_bytes()
+    for entry in manifest["files"]:
+        if entry["file"] == "summary.json":
+            entry["sha256"] = hashlib.sha256(summary_bytes).hexdigest()
+            entry["size_bytes"] = len(summary_bytes)
+            break
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+    )
+
+    verdict = validate_bundle(out)
+    assert verdict["status"] == "FAIL"
+    assert any(
+        "sample_log" in error and "safe filename" in error
+        for error in verdict["errors"]
+    )
