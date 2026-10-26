@@ -13,7 +13,6 @@ sys.path.insert(0, str(ROOT / "src" / "camfrog"))
 
 FILES = [
     "src/camfrog/camfrog_auto.py",
-    "src/features/camfrog_music_gui.py",
     "src/features/camfrog_status_gui.py",
     "src/features/chat_im_private_gui.py",
     "src/features/im_autoreply_gui.py",
