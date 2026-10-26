@@ -7,7 +7,15 @@
 
 ## [ยังไม่ได้เผยแพร่ (Unreleased)]
 
-## [2.19.3] - 19 ตุลาคม 2026
+### เพิ่ม
+* เพิ่มโมดูลนโยบายการกระทำแบบ fail-closed สำหรับ Camfrog (`src/camfrog/action_policy.py`): เงื่อนไขการอนุมัติจากมนุษย์, การยืนยันผู้กระทำ, รายชื่อห้องที่อนุญาต, และการตรวจสอบ adapter; ต้องผ่านทุกเงื่อนไข และโหมด dry-run ปฏิเสธการทำงานเสมอ
+* เพิ่มตัวแยกวิเคราะห์สถานะเพือนแบบระมัดระวัง (`src/camfrog/friend_presence_parser.py`): ปรับสถานะที่สังเกตจาก UIA/OCR ให้เป็นค่ามาตรฐาน, ค่าที่ไม่รู้จักคืนค่า `unknown`, ไม่สรุปว่า offline จากการไม่ปรากฏ
+* เพิ่มเครื่องมือ CV/OCR เสริม (`src/camfrog/vision_helpers.py`): ผลรวม SHA-256 ของภาพ, OCR ด้วย Tesseract พร้อมข้อมูลความเชื่อมั่น, template match ด้วย OpenCD พร้อมการตรวจสอบเกณฑ์; สถานะเชิงความหมายทั้งหมดถูกกำหนดว่ายังไม่ได้ตรวจสอบ
+* เพิ่มการถ่ายภาพหน้าจอ Camfrog พร้อมหลักฐาน SHA-256 (`src/camfrog/camfrog_screenshot.py`): ถ่ายภาพหน้าต่าง Camfrog ที่มองเห็นได้และจัดประเภทแล้ว โดยใช้ `camfrog_windows_runtime` บันทึกเป็นไฟล์ PNG พร้อมผลรวม SHA-256 และข้อมูลหลักฐาน
+* เพิ่มชุดทดสอบยูนิตสำหรับโมดูลใหม่ทั้งสี่ (`tests/test_action_policy.py`, `tests/test_friend_presence_parser.py`, `tests/test_vision_helpers.py`, `tests/test_camfrog_screenshot.py`); ทดสอบ 96 รายการ ผ่านบน Linux
+* เพิ่มคำค้นหาเพลงไทย 4 รายการใน `YOUTUBE_RANDOM_MUSIC_QUERIES` ใน `camfrog_music_gui.py`: "Thai country song", "Thai indie music", "Thai rock song", "Thai folk song"
+* แก้ไขคำสั่ง `!randommusic`: ตอนนี้คำสั่งจะเปิดหน้าค้นหา YouTube ที่มองเห็นได้ และโพสต์ลิงก์ค้นหาเข้าห้องพร้อมคำแนะนำให้ใช้ `!request <URL>` สำหรับการเล่นอัตโนมัติ เดิมทีคำสั่งนี้เพียงบันทึกลิงก์เท่านั้น หน้าผลลัพธ์การค้นหาไม่มี video ID ที่เล่นได้ ดังนั้นการเล่นอัตโนมัติจึงไม่ถูกกระตุ้น
+* เพิ่มแอปพลิเคชัน standalone `name-color-changer.exe` พร้อม GUI และ CLI เฉพาะสำหรับสลับสี flair ของชื่อเล่น Camfrog ผ่าน `profiles.camfrog.com` พร้อมการ์ดความปลอดภัยแบบ fail-closed, การหน่วงเวลาของ HTTP 429, การส่งออกคุกกี้ Netscape และการแยกวิเคราะห์คุกกี้ดิบ, การคืนสี flair เริ่มต้นเมื่อการรันเสร็จสิ้น
 
 ### แก้ไข
 * ปฏิเสธการส่งสถานะ live ผ่าน `best_effort_background` และ targeted combo-post เมื่อ Camfrog ไม่ได้อยู่หน้าสุด หลักฐานทดสอบบน Windows พบว่า combo-post อาจ activate Camfrog และขัดจังหวะการพิมพ์ worker จึง fail-closed ก่อนเขียนข้อความสถานะ

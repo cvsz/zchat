@@ -8,6 +8,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 ### Added
+- Added Camfrog fail-closed action policy module (`src/camfrog/action_policy.py`): explicit human approval, actor authorization, room allowlisting, and adapter verification gates; every gate must pass and dry-run mode always denies execution.
+- Added conservative friend/presence parser (`src/camfrog/friend_presence_parser.py`): normalizes UIA/OCR presence labels, unknown labels return `unknown`, never infers offline from absence.
+- Added optional CV/OCR helpers (`src/camfrog/vision_helpers.py`): SHA-256 image digest, Tesseract OCR with confidence metadata, OpenCV template match with threshold validation; all semantic state marked unverified.
+- Added Camfrog screenshot capture with SHA-256 evidence (`src/camfrog/camfrog_screenshot.py`): captures a visible classified Camfrog window using `camfrog_windows_runtime`, saves PNG evidence with SHA-256 digest and metadata.
+- Added comprehensive unit test suites for all four new modules (`tests/test_action_policy.py`, `tests/test_friend_presence_parser.py`, `tests/test_vision_helpers.py`, `tests/test_camfrog_screenshot.py`); 96 tests passed on Linux.
+- Added four Thai music queries to `YOUTUBE_RANDOM_MUSIC_QUERIES` in `camfrog_music_gui.py`: "Thai country song", "Thai indie music", "Thai rock song", "Thai folk song".
+- Added `!randommusic` fix: the command now opens a visible YouTube search window and posts the search link to the room with a hint to use `!request <URL>` for auto-play; previously only logged the link. The search results page contains no playable video ID, so auto-play is not triggered.
 - Added standalone `name-color-changer.exe` application with dedicated GUI and CLI for alternating Camfrog nickname flair colors via `profiles.camfrog.com` with fail-closed security guards, HTTP 429 rate limit backoff halts, Netscape cookie export & raw cookie parsing, CSRF extraction, and best-effort restoration of initial flair color upon completed runs.
 - Added standalone `icon-changer.exe` application with dedicated GUI and CLI for alternating room user-list flair icons via `profiles.camfrog.com` with dynamic external data parsing and best-effort initial icon restoration upon completed runs.
 - Added standalone `name-changer.exe` application providing a local-only prototype GUI and CLI for manual and sequential display-name / nickname switching in-memory with full Thai script (ภาษาไทย, Tahoma typography, UTF-8) and English support, custom name application, and preset pool management (without live profile/client automation).
