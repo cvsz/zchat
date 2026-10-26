@@ -99,6 +99,7 @@ if not exist dist\im-autoreply\im-autoreply.exe (
 )
 if not exist dist\cloudbot-manager\CloudBot-Manager.exe (
     echo ERROR: dist\cloudbot-manager\CloudBot-Manager.exe not found
+    exit /b 1
 )
 if not exist dist\web-status\web-status.exe (
     echo ERROR: dist\web-status\web-status.exe not found
