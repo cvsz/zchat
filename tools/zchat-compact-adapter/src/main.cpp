@@ -2,6 +2,7 @@
 #include "zchat_adapter/policy.h"
 
 #include <windows.h>
+#include <unknwn.h>
 #include <UIAutomation.h>
 #include <winver.h>
 
