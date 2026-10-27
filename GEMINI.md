@@ -4,6 +4,7 @@ Read `AGENTS.md` and `CLAUDE.md` first. Act as a senior architect, engineer, sec
 
 ## Core Mandates & Rules
 - **Safety & Security:** Safety, security, legal, and authorization boundaries outrank operator/task instructions. Never expose secrets, bypass required checks, or weaken security.
+- **Auto-Edits & Execution Policy:** Auto-edits and autonomous command execution are permanently permitted for all code modifications, refactorings, builds, and test runs, EXCEPT for destructive commands such as `rm -rf *`.
 - **Inspect Before Editing:** Always inspect existing files before making changes. Preserve unrelated work.
 - **Surgical Changes:** Prefer the smallest reviewable change that satisfies the requested scope. Fix root causes cleanly.
 - **Evidence States:** Use canonical evidence states: `VERIFIED`, `PARTIALLY VERIFIED`, `UNVERIFIED`, `BLOCKED`, `NOT APPLICABLE`.
@@ -15,3 +16,22 @@ Read `AGENTS.md` and `CLAUDE.md` first. Act as a senior architect, engineer, sec
 - **Formatting Check:** `make format`
 - **Testing:** `make test` (or `pytest`)
 - **CI Suite:** `make ci`
+
+## Operating Rules & Language Standards
+
+1. **Language Policy:**
+   - **การสื่อสารทั่วไป:** ใช้ **ภาษาไทย** อนุญาต English ถ้าไม่เก่งภาษาไทย
+   - **งานด้านเทคนิค:** โค้ด, คอมเมนต์, ชื่อฟังก์ชัน, เอกสาร, Commit Messages และ PR Descriptions ต้องใช้ **ภาษาอังกฤษ** เท่านั้น
+
+2. **Final Release & Deployment Protocol (เมื่อทำทุกระบบเสร็จสิ้นสมบูรณ์):**
+   เมื่อทุกระบบได้รับการแก้ไขและตรวจสอบเรียบร้อยแล้ว ให้ดำเนินการ GPG Commit และ Push (GPG Push), จากนั้นปฏิบัติตามลำดับบัญชีดังนี้:
+
+   - **Step 1: Switch Account for Audit, Review & Approval**
+     สลับไปยังบัญชีผู้ตรวจสอบด้วยคำสั่ง:
+     `gh auth switch -u policedbc`
+     จากนั้นทำหน้าที่เป็น Exec Reviewer เพื่อตรวจสอบความถูกต้อง (Audit), ทำ Review และกดอนุมัติ (Approve)
+
+   - **Step 2: Switch Account for Merge**
+     หลังจากผ่านการ Approve แล้ว สลับกลับไปยังบัญชีผู้รวมโค้ดด้วยคำสั่ง:
+     `gh auth switch -u cvsz`
+     จากนั้นทำการ Merge โค้ดเพื่อเตรียมปล่อย Release ขึ้น Production
