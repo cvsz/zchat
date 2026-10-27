@@ -199,9 +199,11 @@ def test_windows_status_resource_lock_serializes_separate_processes():
 # ---------- StatusControlAdapter Non-Windows Fallback Tests ----------
 
 
-def test_status_control_adapter_linux_safety():
+def test_status_control_adapter_linux_safety(monkeypatch):
+    monkeypatch.setattr(cse.sys, "platform", "linux")
+
     adapter = StatusControlAdapter(combo_hwnd=123, edit_hwnd=456)
-    # On non-Windows platforms, low-level Win32 calls safely return empty/False
+
     assert adapter.write_text_no_focus("Hello") is False
     assert adapter.read_edit_text() == ""
     assert adapter.read_applied_status() == ""
@@ -270,9 +272,7 @@ def test_status_control_adapter_rejects_control_class_or_id_mismatch(monkeypatch
         GetDlgCtrlID=lambda hwnd: control_ids[hwnd],
         GetClassName=lambda hwnd: classes[hwnd],
     )
-    win32process = SimpleNamespace(
-        GetWindowThreadProcessId=lambda hwnd: (1, 55)
-    )
+    win32process = SimpleNamespace(GetWindowThreadProcessId=lambda hwnd: (1, 55))
     monkeypatch.setattr(cse.sys, "platform", "win32")
     monkeypatch.setitem(sys.modules, "win32gui", win32gui)
     monkeypatch.setitem(sys.modules, "win32process", win32process)
