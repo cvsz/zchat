@@ -16,6 +16,7 @@
 #pragma comment(lib, "version.lib")
 
 namespace {
+using zchat::adapter::MutationResult;
 using zchat::adapter::Size;
 std::wofstream log_file;
 
@@ -48,9 +49,7 @@ std::wstring file_version(const std::wstring& path) {
            std::to_wstring(LOWORD(info->dwFileVersionLS));
 }
 
-std::wstring process_image_path(HWND hwnd) {
-    DWORD pid = 0;
-    GetWindowThreadProcessId(hwnd, &pid);
+std::wstring process_image_path(DWORD pid) {
     if (!pid) return {};
     HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
     if (!process) return {};
@@ -61,6 +60,21 @@ std::wstring process_image_path(HWND hwnd) {
     if (!ok) return {};
     path.resize(length);
     return path;
+}
+
+bool process_creation_time(DWORD pid, FILETIME& creation_time) {
+    if (!pid) return false;
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!process) return false;
+    FILETIME exit_time{}, kernel_time{}, user_time{};
+    const BOOL ok = GetProcessTimes(process, &creation_time, &exit_time, &kernel_time, &user_time);
+    CloseHandle(process);
+    return ok != FALSE;
+}
+
+bool same_filetime(const FILETIME& left, const FILETIME& right) {
+    return left.dwHighDateTime == right.dwHighDateTime &&
+           left.dwLowDateTime == right.dwLowDateTime;
 }
 
 bool canonicalize_existing_image_path(std::wstring& path) {
@@ -136,6 +150,16 @@ BOOL CALLBACK scan_window(HWND hwnd, LPARAM param) {
     const auto title = window_text(hwnd);
     if (!zchat::adapter::is_managed_window_title(title)) return TRUE;
     ++ctx->seen;
+    DWORD owner_pid = 0;
+    if (GetWindowThreadProcessId(hwnd, &owner_pid) == 0 || owner_pid == 0) {
+        log_event(L"window_identity_unavailable", title);
+        return TRUE;
+    }
+    FILETIME owner_creation_time{};
+    if (ctx->options->apply && !process_creation_time(owner_pid, owner_creation_time)) {
+        log_event(L"window_process_identity_unavailable", title);
+        return TRUE;
+    }
 
     // Confirm the HWND can be represented by UI Automation before acting.
     IUIAutomationElement* element = nullptr;
@@ -154,7 +178,7 @@ BOOL CALLBACK scan_window(HWND hwnd, LPARAM param) {
     }
     const auto width = ctx->options->size.width;
     const auto height = ctx->options->size.height;
-    auto image_path = process_image_path(hwnd);
+    auto image_path = process_image_path(owner_pid);
     if (!image_path.empty() && !canonicalize_existing_image_path(image_path)) image_path.clear();
     const auto version = image_path.empty() ? std::wstring(L"unknown") : file_version(image_path);
     const std::wstring detail = title + L" [exe_version=" + version + L"] (" + std::to_wstring(current.right-current.left) +
@@ -165,9 +189,34 @@ BOOL CALLBACK scan_window(HWND hwnd, LPARAM param) {
         zchat::adapter::is_managed_window_title(title),
         image_path,
         ctx->options->allowed_images,
-        [&]() {
-            return SetWindowPos(hwnd, nullptr, 0, 0, width, height,
-                                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE) != FALSE;
+        [&]() -> MutationResult {
+            // Revalidate the HWND and its owning process immediately before mutation.
+            if (!IsWindow(hwnd)) return MutationResult::identity_changed;
+            DWORD current_pid = 0;
+            if (GetWindowThreadProcessId(hwnd, &current_pid) == 0 || current_pid != owner_pid) {
+                return MutationResult::identity_changed;
+            }
+            FILETIME current_creation_time{};
+            if (!process_creation_time(current_pid, current_creation_time) ||
+                !same_filetime(owner_creation_time, current_creation_time)) {
+                return MutationResult::identity_changed;
+            }
+            const auto current_title = window_text(hwnd);
+            if (!zchat::adapter::is_managed_window_title(current_title)) {
+                return MutationResult::identity_changed;
+            }
+            auto current_image_path = process_image_path(current_pid);
+            if (current_image_path.empty() ||
+                !canonicalize_existing_image_path(current_image_path) ||
+                !zchat::adapter::is_allowed_process_image(
+                    current_image_path, ctx->options->allowed_images)) {
+                return MutationResult::identity_changed;
+            }
+            if (!SetWindowPos(hwnd, nullptr, 0, 0, width, height,
+                              SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE)) {
+                return MutationResult::failed;
+            }
+            return MutationResult::resized;
         });
     switch (outcome) {
     case zchat::adapter::ResizeOutcome::title_not_managed:
@@ -179,6 +228,10 @@ BOOL CALLBACK scan_window(HWND hwnd, LPARAM param) {
     case zchat::adapter::ResizeOutcome::process_image_not_allowed:
         log_event(L"process_image_not_allowed", title + L" [exe_version=" + version + L"]");
         std::wcout << L"SKIPPED (process image not allowlisted) " << title << L"\n";
+        return TRUE;
+    case zchat::adapter::ResizeOutcome::identity_changed:
+        log_event(L"window_identity_changed", title);
+        std::wcout << L"SKIPPED (window identity changed) " << title << L"\\n";
         return TRUE;
     case zchat::adapter::ResizeOutcome::resized:
         ++ctx->changed;
