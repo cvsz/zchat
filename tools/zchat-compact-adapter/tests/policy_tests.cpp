@@ -28,7 +28,7 @@ int main() {
     int resize_calls = 0;
     const auto successful_resize = [&]() {
         ++resize_calls;
-        return true;
+        return MutationResult::resized;
     };
     check(execute_resize_if_authorized(false, true,
               L"C:\\Program Files\\ZChat\\zchat.exe", allowed_images,
@@ -49,9 +49,22 @@ int main() {
               successful_resize) == ResizeOutcome::resized,
           "allowlisted apply mode invokes resize callback");
     check(resize_calls == 1, "authorized apply calls resize exactly once");
+    int stale_identity_resize_calls = 0;
+    const auto stale_identity = [&]() {
+        const bool identity_still_matches = false;
+        if (!identity_still_matches) return MutationResult::identity_changed;
+        ++stale_identity_resize_calls;
+        return MutationResult::resized;
+    };
     check(execute_resize_if_authorized(true, true,
               L"C:\\Program Files\\ZChat\\zchat.exe", allowed_images,
-              []() { return false; }) == ResizeOutcome::resize_failed,
+              stale_identity) == ResizeOutcome::identity_changed,
+          "stale HWND/process identity fails closed");
+    check(stale_identity_resize_calls == 0,
+          "stale HWND/process identity never resizes a window");
+    check(execute_resize_if_authorized(true, true,
+              L"C:\\Program Files\\ZChat\\zchat.exe", allowed_images,
+              []() { return MutationResult::failed; }) == ResizeOutcome::resize_failed,
           "failed Win32 resize is reported as failure");
     check(is_valid_size(kCompactDefault), "accept compact default");
     check(is_valid_size({320, 240}), "accept lower bound");
