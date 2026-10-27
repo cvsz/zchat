@@ -78,7 +78,9 @@ English version: `USER-MANUAL-EN.md`.
 - **Audio backend** `chat` (ค่าเริ่มต้น) จะประกาศในแชทอย่างเดียว `local` เล่นไฟล์ที่ Windows MCI เปิดได้และเริ่มเพลงถัดไปเมื่อเพลงจบ ส่วน `youtube` รับ URL หรือ ID วิดีโอ YouTube ผ่าน `!request` เปิด player มาตรฐานที่มองเห็นได้ใน Edge/Chrome แยกหน้าต่าง ประกาศหลัง player แจ้งว่าเริ่มเล่น และข้ามต่อเมื่อ YouTube แจ้งว่าวิดีโอจบ หาก autoplay ถูกปิด ให้กด **Play** ในหน้าต่าง player เพื่อให้ห้องได้ยินเสียงจาก player หรือไฟล์ในเครื่อง ต้องส่งเสียงของเครื่องนี้เข้า input ของ Camfrog ด้วย virtual cable หรือ "Stereo Mix" การทำงานขึ้นกับ Windows MCI เบราว์เซอร์ อุปกรณ์เสียง และ codec ที่ติดตั้ง
 - เริ่มแบบ dry-run ก่อน: บอทจะแค่บันทึกว่าจะประกาศอะไร คำขอเพลงยังเข้าคิว แต่ไม่พิมพ์อะไรเข้าห้อง
 - ในหน้า **Bot Manager → AutoDJ** เลือก `AutoDJ.exe` (ถ้าใช้โครงสร้างโฟลเดอร์จาก zip ระบบจะลองหาให้อัตโนมัติ และยังหา `autodj.exe` รุ่นเก่าให้) หน้านี้เปิดหน้าต่างตั้งค่า AutoDJ เริ่ม/หยุด worker อ่านคิว ข้ามหรือล้างคิว และส่งข้อความไม่เกิน 240 ตัวอักษรให้ Windows TTS อ่านเสียงได้ หากต้องการให้ห้องได้ยิน ให้ต่อเอาต์พุตเสียง Windows เข้าไมโครโฟน Camfrog worker ของ AutoDJ ยังคงเป็นเจ้าของคำสั่งแชทและคิวเพียงตัวเดียว หากติดตั้งแยกกัน ให้กด **Browse** แล้วเลือกไฟล์โปรแกรม
+<<<<<<< HEAD
 - **YouTube assisted search** เปิดหน้าค้นหา Edge หรือ Chrome ที่มองเห็นได้และใช้โปรไฟล์แยก เลือกผลค้นหาแล้วคัดลอก URL มาใส่ใน `!request` player ของคิวใช้ตัวควบคุมมาตรฐานที่มองเห็นได้และรับ event เล่น/จบเพลง โปรไฟล์แยกเก็บที่ `%LOCALAPPDATA%\Camfrog\AutoDJ\YouTubeProfile` และไม่ใช้โปรไฟล์ล็อกอิน Camfrog ดูขอบเขตและการตรวจรับที่ [`zbot-youtube-autodj.md`](zbot-youtube-autodj.md)
+>>>>>>> 1e4b0d7 (refactor(autodj): rename music-dj to autodj, add playlist_file config, and refine commit_web focus handling)
 
 ## 10. สถานะผ่านเว็บและ Bot Manager
 
