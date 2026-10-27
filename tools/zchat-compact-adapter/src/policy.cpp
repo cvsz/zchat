@@ -45,14 +45,22 @@ ResizeOutcome execute_resize_if_authorized(
     bool title_managed,
     std::wstring_view image_path,
     const std::vector<std::wstring>& allowed_images,
-    const std::function<bool()>& resize) {
+    const std::function<MutationResult()>& mutate_if_identity_current) {
     if (!title_managed) return ResizeOutcome::title_not_managed;
     if (!apply) return ResizeOutcome::dry_run;
     if (!is_allowed_process_image(image_path, allowed_images)) {
         return ResizeOutcome::process_image_not_allowed;
     }
-    if (!resize) return ResizeOutcome::resize_failed;
-    return resize() ? ResizeOutcome::resized : ResizeOutcome::resize_failed;
+    if (!mutate_if_identity_current) return ResizeOutcome::resize_failed;
+    switch (mutate_if_identity_current()) {
+    case MutationResult::identity_changed:
+        return ResizeOutcome::identity_changed;
+    case MutationResult::resized:
+        return ResizeOutcome::resized;
+    case MutationResult::failed:
+        return ResizeOutcome::resize_failed;
+    }
+    return ResizeOutcome::resize_failed;
 }
 
 bool is_valid_size(Size size) {
