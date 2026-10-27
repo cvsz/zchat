@@ -4,7 +4,7 @@ English version: `USER-MANUAL-EN.md`.
 
 แปดแอป หนึ่งคู่มือ
 
-แอป: `room-control`, `chat-im-private`, `status-random`, `status-marquee`, `status-changer`, `im-autoreply`, `auto-dj` (`AutoDJ.exe` เดิมชื่อ `music-dj.exe`), `web-status` และแอปสแตนด์อโลน `cloudbot-manager` (`CloudBot-Manager.exe`, เปิดเฉพาะหน้า Bot Manager) ทุกแอปใช้ได้เฉพาะ Windows และต้องเปิด Camfrog ไว้ ยกเว้น `web-status` และ `cloudbot-manager` ที่ทำงานผ่านเว็บไซต์
+แอป: `room-control`, `chat-im-private`, `status-random`, `status-marquee`, `status-changer`, `im-autoreply`, `auto-dj` (`AutoDJ.exe` เดิมชื่อ `autodj.exe`), `web-status` และแอปสแตนด์อโลน `cloudbot-manager` (`CloudBot-Manager.exe`, เปิดเฉพาะหน้า Bot Manager) ทุกแอปใช้ได้เฉพาะ Windows และต้องเปิด Camfrog ไว้ ยกเว้น `web-status` และ `cloudbot-manager` ที่ทำงานผ่านเว็บไซต์
 
 **อัปเดต** ทุกแอปตรวจ GitHub release ตอนเปิด (ขึ้น banner เฉพาะเมื่อมีเวอร์ชันใหม่) และมีปุ่ม **Check for updates** ส่วน CLI ใช้คำสั่ง `<app> update` การอัปเดตดาวน์โหลดเฉพาะไฟล์ของแอปนั้น ตรวจกับ `SHA256SUMS.txt` ของ release แล้วติดตั้งตอนปิดแอป (`<app>.new` กับ `camfrog-update.cmd` เป็นตัวสลับไฟล์) ไม่ต้องมีบัญชีหรือโทเคน และไม่ส่งข้อมูลอะไรขึ้น GitHub เลย เผยแพร่ release ด้วย `python tools/release.py`
 
@@ -77,8 +77,8 @@ English version: `USER-MANUAL-EN.md`.
 - โฟลเดอร์เพลง: กด **Browse** เพื่อเลือกโฟลเดอร์ แล้ว `!request` จะจับคู่ชื่อไฟล์เสียงที่รองรับ (ตรงบางส่วนของชื่อและไม่สนตัวพิมพ์เล็กใหญ่) แอปค้นหานามสกุลเสียงทั่วไป เช่น WAV, MP3, WMA, AAC/M4A, AIFF/AU, FLAC, OGG/Opus และ MIDI
 - **Audio backend** `chat` (ค่าเริ่มต้น) จะประกาศในแชทอย่างเดียว `local` เล่นไฟล์ที่ Windows MCI เปิดได้และเริ่มเพลงถัดไปเมื่อเพลงจบ ส่วน `youtube` รับ URL หรือ ID วิดีโอ YouTube ผ่าน `!request` เปิด player มาตรฐานที่มองเห็นได้ใน Edge/Chrome แยกหน้าต่าง ประกาศหลัง player แจ้งว่าเริ่มเล่น และข้ามต่อเมื่อ YouTube แจ้งว่าวิดีโอจบ หาก autoplay ถูกปิด ให้กด **Play** ในหน้าต่าง player เพื่อให้ห้องได้ยินเสียงจาก player หรือไฟล์ในเครื่อง ต้องส่งเสียงของเครื่องนี้เข้า input ของ Camfrog ด้วย virtual cable หรือ "Stereo Mix" การทำงานขึ้นกับ Windows MCI เบราว์เซอร์ อุปกรณ์เสียง และ codec ที่ติดตั้ง
 - เริ่มแบบ dry-run ก่อน: บอทจะแค่บันทึกว่าจะประกาศอะไร คำขอเพลงยังเข้าคิว แต่ไม่พิมพ์อะไรเข้าห้อง
-- ในหน้า **Bot Manager → AutoDJ** เลือก `AutoDJ.exe` (ถ้าใช้โครงสร้างโฟลเดอร์จาก zip ระบบจะลองหาให้อัตโนมัติ และยังหา `music-dj.exe` รุ่นเก่าให้) หน้านี้เปิดหน้าต่างตั้งค่า AutoDJ เริ่ม/หยุด worker อ่านคิว ข้ามหรือล้างคิว และส่งข้อความไม่เกิน 240 ตัวอักษรให้ Windows TTS อ่านเสียงได้ หากต้องการให้ห้องได้ยิน ให้ต่อเอาต์พุตเสียง Windows เข้าไมโครโฟน Camfrog worker ของ AutoDJ ยังคงเป็นเจ้าของคำสั่งแชทและคิวเพียงตัวเดียว หากติดตั้งแยกกัน ให้กด **Browse** แล้วเลือกไฟล์โปรแกรม
-- **YouTube assisted search** เปิดหน้าค้นหา Edge หรือ Chrome ที่มองเห็นได้และใช้โปรไฟล์แยก เลือกผลค้นหาแล้วคัดลอก URL มาใส่ใน `!request` player ของคิวใช้ตัวควบคุมมาตรฐานที่มองเห็นได้และรับ event เล่น/จบเพลง โปรไฟล์แยกเก็บที่ `%LOCALAPPDATA%\Camfrog\MusicDJ\YouTubeProfile` และไม่ใช้โปรไฟล์ล็อกอิน Camfrog ดูขอบเขตและการตรวจรับที่ [`zBOT-Youtube-MUSIC-DJ.md`](zBOT-Youtube-MUSIC-DJ.md)
+- ในหน้า **Bot Manager → AutoDJ** เลือก `AutoDJ.exe` (ถ้าใช้โครงสร้างโฟลเดอร์จาก zip ระบบจะลองหาให้อัตโนมัติ และยังหา `autodj.exe` รุ่นเก่าให้) หน้านี้เปิดหน้าต่างตั้งค่า AutoDJ เริ่ม/หยุด worker อ่านคิว ข้ามหรือล้างคิว และส่งข้อความไม่เกิน 240 ตัวอักษรให้ Windows TTS อ่านเสียงได้ หากต้องการให้ห้องได้ยิน ให้ต่อเอาต์พุตเสียง Windows เข้าไมโครโฟน Camfrog worker ของ AutoDJ ยังคงเป็นเจ้าของคำสั่งแชทและคิวเพียงตัวเดียว หากติดตั้งแยกกัน ให้กด **Browse** แล้วเลือกไฟล์โปรแกรม
+- **YouTube assisted search** เปิดหน้าค้นหา Edge หรือ Chrome ที่มองเห็นได้และใช้โปรไฟล์แยก เลือกผลค้นหาแล้วคัดลอก URL มาใส่ใน `!request` player ของคิวใช้ตัวควบคุมมาตรฐานที่มองเห็นได้และรับ event เล่น/จบเพลง โปรไฟล์แยกเก็บที่ `%LOCALAPPDATA%\Camfrog\AutoDJ\YouTubeProfile` และไม่ใช้โปรไฟล์ล็อกอิน Camfrog ดูขอบเขตและการตรวจรับที่ [`zBOT-Youtube-AUTODJ.md`](zBOT-Youtube-AUTODJ.md)
 
 ## 10. สถานะผ่านเว็บและ Bot Manager
 

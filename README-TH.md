@@ -23,7 +23,7 @@
 | `icon-changer\icon-changer.exe` | สลับไอคอนหน้าชื่อใน Room User List (Icon A <-> Icon B) ผ่าน API `profiles.camfrog.com` มี GUI และ CLI พร้อมการป้องกัน rate limit และคืนค่าไอคอนเริ่มต้นเมื่อทำงานครบรอบ |
 | `name-changer\name-changer.exe` | ตัวต้นแบบสลับชื่อและจัดการชุดรายชื่อในหน่วยความจำ (Local Prototype) รองรับภาษาไทยสมบูรณ์แบบ (ฟอนต์ Tahoma / UTF-8) สลับชื่อก่อนหน้า-ถัดไป และจัดการ Preset Pool (ยังไม่เชื่อมต่อ client/profile อัตโนมัติ) |
 
-หน้า **Bot Manager** ของ Web Status — และแอปสแตนด์อโลน `cloudbot-manager\CloudBot-Manager.exe` — ควบคุมคิวใน `AutoDJ.exe` แยกตัวผ่านไฟล์ในเครื่อง และอ่าน/ควบคุม vMix บนเครื่องเดียวกันได้ AutoDJ รับ URL หรือ ID YouTube เข้าคิว เปิด player มาตรฐานที่มองเห็นได้ และเลื่อนคิวตาม event เล่น/จบเพลง ดูขอบเขตและรายการตรวจรับ Windows ที่ [`docs/zBOT-Youtube-MUSIC-DJ.md`](docs/zBOT-Youtube-MUSIC-DJ.md)
+หน้า **Bot Manager** ของ Web Status — และแอปสแตนด์อโลน `cloudbot-manager\CloudBot-Manager.exe` — ควบคุมคิวใน `AutoDJ.exe` แยกตัวผ่านไฟล์ในเครื่อง และอ่าน/ควบคุม vMix บนเครื่องเดียวกันได้ AutoDJ รับ URL หรือ ID YouTube เข้าคิว เปิด player มาตรฐานที่มองเห็นได้ และเลื่อนคิวตาม event เล่น/จบเพลง ดูขอบเขตและรายการตรวจรับ Windows ที่ [`docs/zBOT-Youtube-AUTODJ.md`](docs/zBOT-Youtube-AUTODJ.md)
 
 Room Control และ IM Auto-reply ใช้ `config.json` แยกกัน ส่วน Chat IM Private ใช้ `private-chat-config.json` และ Random/Marquee ใช้ `camfrog-status-config.json` ในโฟลเดอร์ข้อมูลคนละชุด แต่ละแอปแยก pool, log, ประวัติ และ worker standalone ทุกแอปที่ใช้ Camfrog controls จะลองค้นหา control หลังเปิดหน้าต่าง และบันทึก selector เมื่อ config ผ่าน validation; Web Status ใช้ control บนเว็บไซต์จึงไม่รวมอยู่ด้วย ปุ่ม **Start** สร้างโฟลเดอร์ข้อมูล เปิด worker และรอการลงทะเบียน/อนุญาต PID ก่อนเริ่มส่งสถานะ
 

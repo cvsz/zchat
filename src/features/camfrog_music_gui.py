@@ -1,40 +1,41 @@
 """Camfrog AutoDJ bot - self-contained (engine + clipboard + GUI inlined, profile: music)."""
+
 import argparse
 import base64
+import contextlib
 import copy
 import ctypes
 import datetime as dt
 import hashlib
 import hmac
 import http.server
+import io
 import json
 import logging
 import logging.handlers
-import os
 import ntpath
+import os
+import queue
 import random
 import re
 import secrets
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import unicodedata
 import urllib.parse
 import urllib.request
-import uuid
 from pathlib import Path
-from typing import Any, Optional, Union
-import contextlib
-import io
-import queue
-import threading
 from types import SimpleNamespace
+from typing import Any
 
 # Allow importing the shared user-activity guard module when run as a
 # standalone executable (src/camfrog is a sibling of src/features).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "camfrog"))
-from user_activity_guard import UserActivityGuard  # noqa: E402
+from user_activity_guard import UserActivityGuard
+
 
 def system_taskkill_path():
     """Return taskkill.exe from Windows' system directory, never from PATH/cwd."""
@@ -52,6 +53,7 @@ def system_taskkill_path():
         raise ctypes.WinError(ctypes.get_last_error())
     return os.path.join(buffer.value, "taskkill.exe")
 
+
 # ============================================================
 # Inlined engine (camfrog_auto.py) - no shared imports.
 # ============================================================
@@ -64,6 +66,7 @@ for _n in ("stdout", "stderr"):
         setattr(sys, _n, open(os.devnull, "w", encoding="utf-8"))
     elif hasattr(_s, "reconfigure"):
         _s.reconfigure(encoding="utf-8", errors="replace")
+
 
 # Frozen (PyInstaller) -> files live next to the exe, not the temp unpack dir.
 def _source_base() -> Path:
@@ -80,14 +83,18 @@ def _source_base() -> Path:
     return here
 
 
-BASE = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) \
+BASE = (
+    Path(sys.executable).resolve().parent
+    if getattr(sys, "frozen", False)
     else _source_base()
+)
 
 
 def app_resource_path(relative_path):
     """Resolve immutable assets from source or PyInstaller's extraction folder."""
     root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
     return root / relative_path
+
 
 APP_PROFILE = "music"
 APP_PROFILES = {"full", "room", "im_reply", "status", "music"}
@@ -114,168 +121,329 @@ S = {
     "cfg_ok": ("config OK", "คอนฟิกถูกต้อง"),
     "cfg_errs": ("{n} error(s)", "พบข้อผิดพลาด {n} รายการ"),
     "cfg_hint": ("config errors (run `check`):", "คอนฟิกมีข้อผิดพลาด (รัน `check`):"),
-    "cannot_load": ("cannot load config: {e}  (try `init` to create one)", "อ่านคอนฟิกไม่ได้: {e}  (ลองรัน `init` เพื่อสร้างใหม่)"),
+    "cannot_load": (
+        "cannot load config: {e}  (try `init` to create one)",
+        "อ่านคอนฟิกไม่ได้: {e}  (ลองรัน `init` เพื่อสร้างใหม่)",
+    ),
     "warn": ("WARN : {m}", "คำเตือน: {m}"),
     "err": ("ERROR: {m}", "ผิดพลาด: {m}"),
     "e_regex": ("window_title_regex invalid: {e}", "window_title_regex ไม่ถูกต้อง: {e}"),
-    "e_hours": ("active_hours start/end must be HH:MM", "active_hours start/end ต้องเป็นรูปแบบ HH:MM"),
+    "e_hours": (
+        "active_hours start/end must be HH:MM",
+        "active_hours start/end ต้องเป็นรูปแบบ HH:MM",
+    ),
     "e_msgs": ("status.messages is empty", "status.messages ว่างเปล่า"),
-    "e_interval": ("status.interval_seconds must be >= 0.3", "status.interval_seconds ต้องไม่น้อยกว่า 0.3"),
+    "e_interval": (
+        "status.interval_seconds must be >= 0.3",
+        "status.interval_seconds ต้องไม่น้อยกว่า 0.3",
+    ),
     "e_sel": ("{k} must be a selector object", "{k} ต้องเป็น object ของ selector"),
-    "e_delay": ("autoreply.delay_range_seconds must be [min, max] with 0 <= min <= max",
-                "autoreply.delay_range_seconds ต้องเป็น [min, max] โดย 0 <= min <= max"),
-    "e_hour": ("autoreply.max_per_hour must be >= 1", "autoreply.max_per_hour ต้องไม่น้อยกว่า 1"),
-    "e_cool": ("autoreply cooldowns must be >= 0", "ค่า cooldown ของ autoreply ต้องไม่ติดลบ"),
-    "e_rule": ("autoreply.rules[{i}] invalid: {e}", "autoreply.rules[{i}] ไม่ถูกต้อง: {e}"),
+    "e_delay": (
+        "autoreply.delay_range_seconds must be [min, max] with 0 <= min <= max",
+        "autoreply.delay_range_seconds ต้องเป็น [min, max] โดย 0 <= min <= max",
+    ),
+    "e_hour": (
+        "autoreply.max_per_hour must be >= 1",
+        "autoreply.max_per_hour ต้องไม่น้อยกว่า 1",
+    ),
+    "e_cool": (
+        "autoreply cooldowns must be >= 0",
+        "ค่า cooldown ของ autoreply ต้องไม่ติดลบ",
+    ),
+    "e_rule": (
+        "autoreply.rules[{i}] invalid: {e}",
+        "autoreply.rules[{i}] ไม่ถูกต้อง: {e}",
+    ),
     "e_reply": ("autoreply.rules[{i}] has no reply", "autoreply.rules[{i}] ไม่มี reply"),
-    "e_struct": ("config has a wrong value type or missing section: {e}",
-                 "คอนฟิกมีชนิดข้อมูลผิดหรือขาดส่วนที่จำเป็น: {e}"),
+    "e_struct": (
+        "config has a wrong value type or missing section: {e}",
+        "คอนฟิกมีชนิดข้อมูลผิดหรือขาดส่วนที่จำเป็น: {e}",
+    ),
     "e_lang": ("language must be auto, th or en", "language ต้องเป็น auto, th หรือ en"),
-    "e_mode": ("status.language_mode must be th, en, both or alternate",
-               "status.language_mode ต้องเป็น th, en, both หรือ alternate"),
-    "w_norules": ("autoreply.rules is empty (nothing will be replied)",
-                  "autoreply.rules ว่างเปล่า (จะไม่มีการตอบ)"),
-    "w_nick": ("autoreply.own_nickname is empty (required for live mode)",
-               "autoreply.own_nickname ว่าง (จำเป็นเมื่อรันจริง)"),
-    "w_live": ("dry_run is false: messages WILL be sent", "dry_run เป็น false: จะส่งข้อความจริง"),
+    "e_mode": (
+        "status.language_mode must be th, en, both or alternate",
+        "status.language_mode ต้องเป็น th, en, both หรือ alternate",
+    ),
+    "w_norules": (
+        "autoreply.rules is empty (nothing will be replied)",
+        "autoreply.rules ว่างเปล่า (จะไม่มีการตอบ)",
+    ),
+    "w_nick": (
+        "autoreply.own_nickname is empty (required for live mode)",
+        "autoreply.own_nickname ว่าง (จำเป็นเมื่อรันจริง)",
+    ),
+    "w_live": (
+        "dry_run is false: messages WILL be sent",
+        "dry_run เป็น false: จะส่งข้อความจริง",
+    ),
     "dry_send": ("[dry-run] would send: {text}", "[ทดลอง] จะส่ง: {text}"),
     "mismatch": ("read-back mismatch; not sending", "ข้อความที่อ่านกลับไม่ตรง จึงไม่ส่ง"),
     "not_fg": ("Camfrog not foreground; not sending", "Camfrog ไม่ได้อยู่หน้าสุด จึงไม่ส่ง"),
-    "no_window": ("Camfrog window not found (check window_title_regex)",
-                  "ไม่พบหน้าต่าง Camfrog (ตรวจ window_title_regex)"),
-    "verified_ambiguous": ("verified Camfrog discovery is ambiguous: {detail}",
-                           "การค้นหา Camfrog แบบยืนยันตัวตนกำกวม: {detail}"),
-    "no_ctrl": ("control not found: {spec} (matches={n})", "ไม่พบ control: {spec} (พบ {n} รายการ)"),
-    "status_set": ("status submission dispatched (provider outcome unverified): {text}", "ส่งคำสั่ง status แล้ว (ยังไม่ยืนยันผลจาก Camfrog): {text}"),
+    "no_window": (
+        "Camfrog window not found (check window_title_regex)",
+        "ไม่พบหน้าต่าง Camfrog (ตรวจ window_title_regex)",
+    ),
+    "verified_ambiguous": (
+        "verified Camfrog discovery is ambiguous: {detail}",
+        "การค้นหา Camfrog แบบยืนยันตัวตนกำกวม: {detail}",
+    ),
+    "no_ctrl": (
+        "control not found: {spec} (matches={n})",
+        "ไม่พบ control: {spec} (พบ {n} รายการ)",
+    ),
+    "status_set": (
+        "status submission dispatched (provider outcome unverified): {text}",
+        "ส่งคำสั่ง status แล้ว (ยังไม่ยืนยันผลจาก Camfrog): {text}",
+    ),
     "status_fail": ("status commit failed", "ตั้ง status ไม่สำเร็จ"),
     "reply_fail": ("reply commit failed", "ส่งข้อความตอบไม่สำเร็จ"),
     "replied": ("replied to {nick}: {text}", "ตอบ {nick} แล้ว: {text}"),
-    "refuse_live": ("refusing to run live: set autoreply.own_nickname first",
-                    "ไม่ยอมรันจริง: ตั้ง autoreply.own_nickname ก่อน"),
-    "running": ("running (dry_run={dry}). Stop: Ctrl+C or `stop` / {stop}",
-                "กำลังทำงาน (dry_run={dry}) หยุดด้วย Ctrl+C หรือคำสั่ง `stop` / ไฟล์ {stop}"),
+    "refuse_live": (
+        "refusing to run live: set autoreply.own_nickname first",
+        "ไม่ยอมรันจริง: ตั้ง autoreply.own_nickname ก่อน",
+    ),
+    "running": (
+        "running (dry_run={dry}). Stop: Ctrl+C or `stop` / {stop}",
+        "กำลังทำงาน (dry_run={dry}) หยุดด้วย Ctrl+C หรือคำสั่ง `stop` / ไฟล์ {stop}",
+    ),
     "stopped": ("stopped", "หยุดทำงานแล้ว"),
     "interrupted": ("interrupted", "ถูกขัดจังหวะ"),
     "fatal": ("fatal error", "เกิดข้อผิดพลาดร้ายแรง"),
     "tick_failed": ("tick failed ({n}/{m})", "รอบทำงานล้มเหลว ({n}/{m})"),
-    "too_many": ("too many consecutive failures; stopping", "ล้มเหลวติดต่อกันมากเกินไป จึงหยุด"),
+    "too_many": (
+        "too many consecutive failures; stopping",
+        "ล้มเหลวติดต่อกันมากเกินไป จึงหยุด",
+    ),
     "re_resolve": ("re-attach failed: {e}", "จับหน้าต่างใหม่ไม่สำเร็จ: {e}"),
-    "discover_done": ("wrote {p}. Copy auto_id/class_name/index into config.json selectors.",
-                      "เขียนไฟล์ {p} แล้ว คัดลอก auto_id/class_name/index ไปใส่ selector ใน config.json"),
-    "win_hdr": ("visible windows (title | class | PID); * = matches window_title_regex:",
-                "หน้าต่างที่เห็น (ชื่อ | class | PID) เครื่องหมาย * = ตรงกับ window_title_regex:"),
+    "discover_done": (
+        "wrote {p}. Copy auto_id/class_name/index into config.json selectors.",
+        "เขียนไฟล์ {p} แล้ว คัดลอก auto_id/class_name/index ไปใส่ selector ใน config.json",
+    ),
+    "win_hdr": (
+        "visible windows (title | class | PID); * = matches window_title_regex:",
+        "หน้าต่างที่เห็น (ชื่อ | class | PID) เครื่องหมาย * = ตรงกับ window_title_regex:",
+    ),
     "win_none": ("no visible windows found", "ไม่พบหน้าต่างที่มองเห็น"),
-    "win_hint": ("Camfrog not listed? Open it (not minimized to tray) and run as the same user / same admin level. "
-                 "If its title has no 'Camfrog', set window_title_regex in config.json to part of the title above.",
-                 "ไม่เห็น Camfrog? เปิดโปรแกรมให้เห็นหน้าต่าง (ไม่ซ่อนในถาดระบบ) และรันด้วยผู้ใช้/สิทธิ์ระดับเดียวกัน "
-                 "ถ้าชื่อหน้าต่างไม่มีคำว่า Camfrog ให้แก้ window_title_regex ใน config.json เป็นส่วนหนึ่งของชื่อด้านบน"),
-    "det_none": ("detect: found no candidate controls. Open a chat room (not tray-minimized) and retry.",
-                 "detect: ไม่พบ control ที่ใช่ เปิดห้องแชทให้เห็นหน้าต่างแล้วลองใหม่"),
+    "win_hint": (
+        "Camfrog not listed? Open it (not minimized to tray) and run as the same user / same admin level. "
+        "If its title has no 'Camfrog', set window_title_regex in config.json to part of the title above.",
+        "ไม่เห็น Camfrog? เปิดโปรแกรมให้เห็นหน้าต่าง (ไม่ซ่อนในถาดระบบ) และรันด้วยผู้ใช้/สิทธิ์ระดับเดียวกัน "
+        "ถ้าชื่อหน้าต่างไม่มีคำว่า Camfrog ให้แก้ window_title_regex ใน config.json เป็นส่วนหนึ่งของชื่อด้านบน",
+    ),
+    "det_none": (
+        "detect: found no candidate controls. Open a chat room (not tray-minimized) and retry.",
+        "detect: ไม่พบ control ที่ใช่ เปิดห้องแชทให้เห็นหน้าต่างแล้วลองใหม่",
+    ),
     "det_found": ("detect: {k} -> {sel}  [{why}]", "detect: {k} -> {sel}  [{why}]"),
     "det_miss": ("detect: {k} not found", "detect: ไม่พบ {k}"),
-    "det_applied": ("detect: wrote selectors to {p}. Run `check`, then test with dry_run on.",
-                    "detect: เขียน selector ลง {p} แล้ว รัน `check` แล้วทดสอบด้วย dry_run"),
-    "det_report": ("detect: structure report (no chat text) -> {p}", "detect: รายงานโครงสร้าง (ไม่มีข้อความแชท) -> {p}"),
-    "no_room": ("no chat-room window yet (status still works). Open a room; it is picked up automatically.",
-                "ยังไม่พบหน้าต่างห้องแชท (ตั้ง status ได้ตามปกติ) เปิดห้องแชทแล้วจะจับให้เอง"),
-    "room_attached": ("attached to chat room window {title}", "จับหน้าต่างห้องแชทแล้ว {title}"),
+    "det_applied": (
+        "detect: wrote selectors to {p}. Run `check`, then test with dry_run on.",
+        "detect: เขียน selector ลง {p} แล้ว รัน `check` แล้วทดสอบด้วย dry_run",
+    ),
+    "det_report": (
+        "detect: structure report (no chat text) -> {p}",
+        "detect: รายงานโครงสร้าง (ไม่มีข้อความแชท) -> {p}",
+    ),
+    "no_room": (
+        "no chat-room window yet (status still works). Open a room; it is picked up automatically.",
+        "ยังไม่พบหน้าต่างห้องแชท (ตั้ง status ได้ตามปกติ) เปิดห้องแชทแล้วจะจับให้เอง",
+    ),
+    "room_attached": (
+        "attached to chat room window {title}",
+        "จับหน้าต่างห้องแชทแล้ว {title}",
+    ),
     "ok": ("ok", "สำเร็จ"),
     "failed": ("failed", "ล้มเหลว"),
     "already_running": ("already running (PID {pid})", "ทำงานอยู่แล้ว (PID {pid})"),
-    "bg_started": ("started in background (PID {pid}). Log: {log}",
-                   "เริ่มทำงานเบื้องหลังแล้ว (PID {pid}) ล็อก: {log}"),
-    "bg_failed": ("background process exited (code {code}). See log: {log}",
-                  "โปรเซสเบื้องหลังจบการทำงาน (code {code}) ดูล็อก: {log}"),
-    "bg_needs_log": ("background mode needs log.file set in config",
-                     "โหมดเบื้องหลังต้องตั้ง log.file ใน config"),
+    "bg_started": (
+        "started in background (PID {pid}). Log: {log}",
+        "เริ่มทำงานเบื้องหลังแล้ว (PID {pid}) ล็อก: {log}",
+    ),
+    "bg_failed": (
+        "background process exited (code {code}). See log: {log}",
+        "โปรเซสเบื้องหลังจบการทำงาน (code {code}) ดูล็อก: {log}",
+    ),
+    "bg_needs_log": (
+        "background mode needs log.file set in config",
+        "โหมดเบื้องหลังต้องตั้ง log.file ใน config",
+    ),
     "win_only": ("this command is Windows-only", "คำสั่งนี้ใช้ได้เฉพาะ Windows"),
     "not_running": ("not running", "ไม่ได้ทำงานอยู่"),
     "stopping": ("stopping PID {pid} ...", "กำลังหยุด PID {pid} ..."),
     "stopped_ok": ("stopped", "หยุดแล้ว"),
     "killed": ("did not stop in time; terminated", "หยุดไม่ทันเวลา จึงบังคับปิด"),
-    "stop_failed": ("could not confirm process exit (PID {pid}); STOP and PID files were kept so you can retry",
-                    "ยืนยันไม่ได้ว่าโปรเซสหยุดแล้ว (PID {pid}) จึงเก็บไฟล์ STOP/PID ไว้ให้ลองใหม่"),
+    "stop_failed": (
+        "could not confirm process exit (PID {pid}); STOP and PID files were kept so you can retry",
+        "ยืนยันไม่ได้ว่าโปรเซสหยุดแล้ว (PID {pid}) จึงเก็บไฟล์ STOP/PID ไว้ให้ลองใหม่",
+    ),
     "state_running": ("RUNNING (PID {pid})", "กำลังทำงาน (PID {pid})"),
     "state_stopped": ("STOPPED", "หยุดอยู่"),
     "autostart_on": ("autostart enabled: {cmd}", "เปิดการรันอัตโนมัติแล้ว: {cmd}"),
     "autostart_off": ("autostart removed", "ยกเลิกการรันอัตโนมัติแล้ว"),
     "autostart_none": ("autostart was not set", "ไม่ได้ตั้งการรันอัตโนมัติไว้"),
-    "e_sched": ("status.schedules[{i}] invalid (needs start/end HH:MM and non-empty messages)",
-                "status.schedules[{i}] ไม่ถูกต้อง (ต้องมี start/end แบบ HH:MM และ messages ไม่ว่าง)"),
-    "e_skip": ("autoreply.skip_patterns[{i}] invalid: {e}", "autoreply.skip_patterns[{i}] ไม่ถูกต้อง: {e}"),
-    "w_mention": ("rule #{i} uses `mention` but own_nickname is empty (it will never match)",
-                  "กฎ #{i} ใช้ `mention` แต่ own_nickname ว่าง (จะไม่ตรงเลย)"),
+    "e_sched": (
+        "status.schedules[{i}] invalid (needs start/end HH:MM and non-empty messages)",
+        "status.schedules[{i}] ไม่ถูกต้อง (ต้องมี start/end แบบ HH:MM และ messages ไม่ว่าง)",
+    ),
+    "e_skip": (
+        "autoreply.skip_patterns[{i}] invalid: {e}",
+        "autoreply.skip_patterns[{i}] ไม่ถูกต้อง: {e}",
+    ),
+    "w_mention": (
+        "rule #{i} uses `mention` but own_nickname is empty (it will never match)",
+        "กฎ #{i} ใช้ `mention` แต่ own_nickname ว่าง (จะไม่ตรงเลย)",
+    ),
     "reloaded": ("config reloaded", "โหลดคอนฟิกใหม่แล้ว"),
     "reload_rejected": ("config reload rejected: {m}", "ไม่รับคอนฟิกที่แก้ใหม่: {m}"),
     "init_done": ("wrote {p}", "สร้างไฟล์ {p} แล้ว"),
-    "init_exists": ("{p} already exists (use --force to overwrite)", "{p} มีอยู่แล้ว (ใช้ --force เพื่อเขียนทับ)"),
+    "init_exists": (
+        "{p} already exists (use --force to overwrite)",
+        "{p} มีอยู่แล้ว (ใช้ --force เพื่อเขียนทับ)",
+    ),
     "tr_lang": ("detected language: {l}", "ภาษาที่ตรวจพบ: {l}"),
     "tr_skip": ("SKIPPED ({why})", "ข้าม ({why})"),
     "tr_match": ("rule #{i} -> {reply}", "กฎ #{i} -> {reply}"),
     "tr_none": ("no rule matches", "ไม่มีกฎที่ตรง"),
     "tr_blocked": ("(blocked: empty or starts with /)", "(ถูกบล็อก: ว่างหรือขึ้นต้นด้วย /)"),
-    "tr_badline": ("ignored line (not `name: message`): {line}", "ข้ามบรรทัด (ไม่ใช่รูปแบบ `ชื่อ: ข้อความ`): {line}"),
+    "tr_badline": (
+        "ignored line (not `name: message`): {line}",
+        "ข้ามบรรทัด (ไม่ใช่รูปแบบ `ชื่อ: ข้อความ`): {line}",
+    ),
     "why_sender": ("sender filtered", "กรองผู้ส่ง"),
     "why_link": ("contains a link", "มีลิงก์"),
     "why_pattern": ("matches skip_patterns", "ตรงกับ skip_patterns"),
-    "e_marquee": ("status.marquee invalid: width 8-80 (and <= status.max_length), stride 1..width, step_seconds >= 0.3, cycles 1-5, max_frames 5-300",
-                  "status.marquee ไม่ถูกต้อง: width 8-80 (และไม่เกิน status.max_length), stride 1..width, step_seconds >= 0.3, cycles 1-5, max_frames 5-300"),
-    "e_cycle": ("status.language_cycle items must be th or en", "status.language_cycle ต้องเป็น th หรือ en เท่านั้น"),
-    "e_hmode": ("status.history.mode must be rotate, random or most_used", "status.history.mode ต้องเป็น rotate, random หรือ most_used"),
-    "e_hmax": ("status.history.max_items must be 5-500 and file must be set", "status.history.max_items ต้อง 5-500 และต้องตั้ง file"),
-    "w_sched_hist": ("status.schedules are ignored while status.history.use_as_source is true",
-                     "status.schedules จะไม่ถูกใช้ขณะที่ status.history.use_as_source เป็น true"),
+    "e_marquee": (
+        "status.marquee invalid: width 8-80 (and <= status.max_length), stride 1..width, step_seconds >= 0.3, cycles 1-5, max_frames 5-300",
+        "status.marquee ไม่ถูกต้อง: width 8-80 (และไม่เกิน status.max_length), stride 1..width, step_seconds >= 0.3, cycles 1-5, max_frames 5-300",
+    ),
+    "e_cycle": (
+        "status.language_cycle items must be th or en",
+        "status.language_cycle ต้องเป็น th หรือ en เท่านั้น",
+    ),
+    "e_hmode": (
+        "status.history.mode must be rotate, random or most_used",
+        "status.history.mode ต้องเป็น rotate, random หรือ most_used",
+    ),
+    "e_hmax": (
+        "status.history.max_items must be 5-500 and file must be set",
+        "status.history.max_items ต้อง 5-500 และต้องตั้ง file",
+    ),
+    "w_sched_hist": (
+        "status.schedules are ignored while status.history.use_as_source is true",
+        "status.schedules จะไม่ถูกใช้ขณะที่ status.history.use_as_source เป็น true",
+    ),
     "status_blank": ("chosen status is blank; skipped", "status ที่เลือกว่างเปล่า จึงข้าม"),
     "hist_empty": ("history is empty", "ประวัติว่างเปล่า"),
-    "hist_item": ("{i:>3}. [{lang}] x{n}  {text}", "{i:>3}. [{lang}] ใช้ {n} ครั้ง  {text}"),
+    "hist_item": (
+        "{i:>3}. [{lang}] x{n}  {text}",
+        "{i:>3}. [{lang}] ใช้ {n} ครั้ง  {text}",
+    ),
     "hist_added": ("added to history", "เพิ่มเข้าประวัติแล้ว"),
     "hist_exists": ("already in history (or blank)", "มีในประวัติแล้ว (หรือข้อความว่าง)"),
     "hist_imported": ("imported {n} new status(es)", "นำเข้า status ใหม่ {n} รายการ"),
-    "mq_frames": ("{n} frame(s), {s}s apart -> about {t}s total", "{n} เฟรม ห่างกัน {s} วินาที -> รวมประมาณ {t} วินาที"),
-    "mq_static": ("text fits in the window: no scrolling, shown as-is", "ข้อความสั้นพอดีหน้าต่าง: ไม่เลื่อน แสดงตามเดิม"),
+    "mq_frames": (
+        "{n} frame(s), {s}s apart -> about {t}s total",
+        "{n} เฟรม ห่างกัน {s} วินาที -> รวมประมาณ {t} วินาที",
+    ),
+    "mq_static": (
+        "text fits in the window: no scrolling, shown as-is",
+        "ข้อความสั้นพอดีหน้าต่าง: ไม่เลื่อน แสดงตามเดิม",
+    ),
     "e_range": ("{k} is out of range ({lo}..{hi})", "{k} อยู่นอกช่วงที่ยอมรับ ({lo}..{hi})"),
-    "w_selclash": ("selectors {a} and {b} are identical: they point at the same control (run `discover`)",
-                   "selector {a} กับ {b} เหมือนกัน คือ control ตัวเดียวกัน (รัน `discover`)"),
-    "e_selclash": ("live mode refused: selectors {a} and {b} are identical (run `discover` and fix config.json)",
-                   "ไม่ยอมรันจริง: selector {a} กับ {b} เหมือนกัน (รัน `discover` แล้วแก้ config.json)"),
-    "burst_skip": ("{n} new chat lines at once (room switch / history reload?): not answered",
-                   "มีข้อความใหม่ {n} บรรทัดพร้อมกัน (เปลี่ยนห้อง/โหลดประวัติ?) จึงไม่ตอบ"),
-    "e_selempty": ("{k} has no criteria (set control_type, auto_id, class_name or title)",
-                   "{k} ไม่มีเงื่อนไขเลย (ใส่ control_type, auto_id, class_name หรือ title)"),
-    "e_im_only": ("autoreply_im.only_nicknames must list at least one friend (IM auto-reply never answers 'everyone')",
-                  "autoreply_im.only_nicknames ต้องระบุเพื่อนอย่างน้อย 1 คน (ตอบ IM แบบ 'ทุกคน' ไม่ได้)"),
-    "e_im_nick": ("autoreply_im needs autoreply.own_nickname (otherwise the bot would answer its own replies)",
-                  "autoreply_im ต้องตั้ง autoreply.own_nickname (ไม่งั้นบอทจะตอบตัวเอง)"),
-    "e_im_kind": ("autoreply.log_kind must be room while autoreply_im is enabled (room rules must never answer private chats)",
-                  "autoreply.log_kind ต้องเป็น room ขณะเปิด autoreply_im (กฎห้องห้ามตอบแชทส่วนตัว)"),
-    "e_im_prefix": ("autoreply_im.prefix must be text and must not start with /",
-                    "autoreply_im.prefix ต้องเป็นข้อความและห้ามขึ้นต้นด้วย /"),
-    "e_im_rule": ("autoreply_im.rules[{i}] invalid: {e}", "autoreply_im.rules[{i}] ไม่ถูกต้อง: {e}"),
-    "e_im_skip": ("autoreply_im.skip_patterns[{i}] invalid: {e}", "autoreply_im.skip_patterns[{i}] ไม่ถูกต้อง: {e}"),
-    "e_im_delay": ("autoreply_im.delay_range_seconds must be [min, max] with 0 <= min <= max",
-                   "autoreply_im.delay_range_seconds ต้องเป็น [min, max] โดย 0 <= min <= max"),
-    "w_im_norules": ("autoreply_im has no rules: nothing will be answered", "autoreply_im ไม่มีกฎ: จะไม่ตอบอะไรเลย"),
-    "w_im_noprefix": ("autoreply_im.prefix is empty: friends cannot tell the reply is automatic",
-                      "autoreply_im.prefix ว่าง: เพื่อนจะไม่รู้ว่าเป็นข้อความตอบอัตโนมัติ"),
-    "im_attached": ("attached to private-chat window {title}", "จับหน้าต่างแชทส่วนตัวแล้ว {title}"),
+    "w_selclash": (
+        "selectors {a} and {b} are identical: they point at the same control (run `discover`)",
+        "selector {a} กับ {b} เหมือนกัน คือ control ตัวเดียวกัน (รัน `discover`)",
+    ),
+    "e_selclash": (
+        "live mode refused: selectors {a} and {b} are identical (run `discover` and fix config.json)",
+        "ไม่ยอมรันจริง: selector {a} กับ {b} เหมือนกัน (รัน `discover` แล้วแก้ config.json)",
+    ),
+    "burst_skip": (
+        "{n} new chat lines at once (room switch / history reload?): not answered",
+        "มีข้อความใหม่ {n} บรรทัดพร้อมกัน (เปลี่ยนห้อง/โหลดประวัติ?) จึงไม่ตอบ",
+    ),
+    "e_selempty": (
+        "{k} has no criteria (set control_type, auto_id, class_name or title)",
+        "{k} ไม่มีเงื่อนไขเลย (ใส่ control_type, auto_id, class_name หรือ title)",
+    ),
+    "e_im_only": (
+        "autoreply_im.only_nicknames must list at least one friend (IM auto-reply never answers 'everyone')",
+        "autoreply_im.only_nicknames ต้องระบุเพื่อนอย่างน้อย 1 คน (ตอบ IM แบบ 'ทุกคน' ไม่ได้)",
+    ),
+    "e_im_nick": (
+        "autoreply_im needs autoreply.own_nickname (otherwise the bot would answer its own replies)",
+        "autoreply_im ต้องตั้ง autoreply.own_nickname (ไม่งั้นบอทจะตอบตัวเอง)",
+    ),
+    "e_im_kind": (
+        "autoreply.log_kind must be room while autoreply_im is enabled (room rules must never answer private chats)",
+        "autoreply.log_kind ต้องเป็น room ขณะเปิด autoreply_im (กฎห้องห้ามตอบแชทส่วนตัว)",
+    ),
+    "e_im_prefix": (
+        "autoreply_im.prefix must be text and must not start with /",
+        "autoreply_im.prefix ต้องเป็นข้อความและห้ามขึ้นต้นด้วย /",
+    ),
+    "e_im_rule": (
+        "autoreply_im.rules[{i}] invalid: {e}",
+        "autoreply_im.rules[{i}] ไม่ถูกต้อง: {e}",
+    ),
+    "e_im_skip": (
+        "autoreply_im.skip_patterns[{i}] invalid: {e}",
+        "autoreply_im.skip_patterns[{i}] ไม่ถูกต้อง: {e}",
+    ),
+    "e_im_delay": (
+        "autoreply_im.delay_range_seconds must be [min, max] with 0 <= min <= max",
+        "autoreply_im.delay_range_seconds ต้องเป็น [min, max] โดย 0 <= min <= max",
+    ),
+    "w_im_norules": (
+        "autoreply_im has no rules: nothing will be answered",
+        "autoreply_im ไม่มีกฎ: จะไม่ตอบอะไรเลย",
+    ),
+    "w_im_noprefix": (
+        "autoreply_im.prefix is empty: friends cannot tell the reply is automatic",
+        "autoreply_im.prefix ว่าง: เพื่อนจะไม่รู้ว่าเป็นข้อความตอบอัตโนมัติ",
+    ),
+    "im_attached": (
+        "attached to private-chat window {title}",
+        "จับหน้าต่างแชทส่วนตัวแล้ว {title}",
+    ),
     "im_replied": ("IM reply to {nick}: {text}", "ตอบ IM {nick} แล้ว: {text}"),
-    "refuse_im": ("refusing to run: autoreply_im needs autoreply.own_nickname",
-                  "ไม่ยอมรัน: autoreply_im ต้องตั้ง autoreply.own_nickname"),
-    "why_bot": ("looks like an automatic reply (prefix)", "ดูเหมือนข้อความตอบอัตโนมัติ (prefix)"),
-    "e_im_kinds": ("autoreply_im.log_kinds must be a non-empty list of im / mtim",
-                   "autoreply_im.log_kinds ต้องเป็นรายการของ im / mtim อย่างน้อย 1 ค่า"),
-    "w_im_mtim": ("autoreply_im.log_kinds includes mtim: that window kind is unverified on a live Camfrog (run `im-probe`)",
-                  "autoreply_im.log_kinds มี mtim: หน้าต่างชนิดนี้ยังไม่ได้ทดสอบกับ Camfrog จริง (รัน `im-probe`)"),
-    "im_on": ("IM auto-reply ON: {mode}, friends={n}, rules={r}, kinds={k}",
-              "ตอบ IM อัตโนมัติ: เปิด {mode} เพื่อน={n} กฎ={r} ชนิด={k}"),
-    "im_off": ("IM auto-reply is OFF (autoreply_im.enabled=false)", "ตอบ IM อัตโนมัติ: ปิดอยู่ (autoreply_im.enabled=false)"),
-    "im_none": ("no private-chat window found yet. Open one, or run `im-probe` to see how Camfrog's windows are classified",
-                "ยังไม่พบหน้าต่างแชทส่วนตัว เปิดหน้าต่างแชท หรือรัน `im-probe` เพื่อดูว่า Camfrog แต่ละหน้าต่างเป็นชนิดไหน"),
-    "im_skip_nick": ("IM line from {nick} ignored: not in autoreply_im.only_nicknames",
-                     "ข้ามข้อความ IM จาก {nick}: ไม่อยู่ใน autoreply_im.only_nicknames"),
+    "refuse_im": (
+        "refusing to run: autoreply_im needs autoreply.own_nickname",
+        "ไม่ยอมรัน: autoreply_im ต้องตั้ง autoreply.own_nickname",
+    ),
+    "why_bot": (
+        "looks like an automatic reply (prefix)",
+        "ดูเหมือนข้อความตอบอัตโนมัติ (prefix)",
+    ),
+    "e_im_kinds": (
+        "autoreply_im.log_kinds must be a non-empty list of im / mtim",
+        "autoreply_im.log_kinds ต้องเป็นรายการของ im / mtim อย่างน้อย 1 ค่า",
+    ),
+    "w_im_mtim": (
+        "autoreply_im.log_kinds includes mtim: that window kind is unverified on a live Camfrog (run `im-probe`)",
+        "autoreply_im.log_kinds มี mtim: หน้าต่างชนิดนี้ยังไม่ได้ทดสอบกับ Camfrog จริง (รัน `im-probe`)",
+    ),
+    "im_on": (
+        "IM auto-reply ON: {mode}, friends={n}, rules={r}, kinds={k}",
+        "ตอบ IM อัตโนมัติ: เปิด {mode} เพื่อน={n} กฎ={r} ชนิด={k}",
+    ),
+    "im_off": (
+        "IM auto-reply is OFF (autoreply_im.enabled=false)",
+        "ตอบ IM อัตโนมัติ: ปิดอยู่ (autoreply_im.enabled=false)",
+    ),
+    "im_none": (
+        "no private-chat window found yet. Open one, or run `im-probe` to see how Camfrog's windows are classified",
+        "ยังไม่พบหน้าต่างแชทส่วนตัว เปิดหน้าต่างแชท หรือรัน `im-probe` เพื่อดูว่า Camfrog แต่ละหน้าต่างเป็นชนิดไหน",
+    ),
+    "im_skip_nick": (
+        "IM line from {nick} ignored: not in autoreply_im.only_nicknames",
+        "ข้ามข้อความ IM จาก {nick}: ไม่อยู่ใน autoreply_im.only_nicknames",
+    ),
     "stats_hdr": ("stats:", "สถิติ:"),
-    "stats_line": ("  started {started} | statuses {st} | replies {rp} | failures {fl}",
-                   "  เริ่ม {started} | ตั้ง status {st} | ตอบ {rp} | ล้มเหลว {fl}"),
+    "stats_line": (
+        "  started {started} | statuses {st} | replies {rp} | failures {fl}",
+        "  เริ่ม {started} | ตั้ง status {st} | ตอบ {rp} | ล้มเหลว {fl}",
+    ),
 }
 
 
@@ -284,12 +452,15 @@ def t(key: str, **kw: Any) -> str:
     return (th if LANG == "th" else en).format(**kw)
 
 
-def resolve_lang(pref: Optional[str]) -> str:
+def resolve_lang(pref: str | None) -> str:
     pref = (pref or "auto").lower()
     if pref in ("th", "en"):
         return pref
     try:
-        if os.name == "nt" and (ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3FF) == 0x1E:
+        if (
+            os.name == "nt"
+            and (ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3FF) == 0x1E
+        ):
             return "th"
     except Exception:
         pass
@@ -301,7 +472,7 @@ def detect_lang(text: str) -> str:
     return "th" if THAI_RE.search(text) else "en"
 
 
-def pick_status(item: Union[str, dict], mode: str, idx: int) -> str:
+def pick_status(item: str | dict, mode: str, idx: int) -> str:
     if isinstance(item, str):
         return item
     th, en = item.get("th", ""), item.get("en", "")
@@ -314,7 +485,7 @@ def pick_status(item: Union[str, dict], mode: str, idx: int) -> str:
     return " | ".join(x for x in (th, en) if x)  # both
 
 
-def pick_reply(spec: Union[str, list, dict], msg_lang: str) -> Optional[str]:
+def pick_reply(spec: str | list | dict, msg_lang: str) -> str | None:
     if isinstance(spec, dict):
         pool = spec.get(msg_lang) or spec.get("en" if msg_lang == "th" else "th") or []
     else:
@@ -332,57 +503,111 @@ DEFAULTS = {
     "window_title_regex": ".*Camfrog.*",
     "dry_run": True,
     "poll_seconds": 1.5,
-    "log": {"level": "INFO", "file": "camfrog_auto.log", "max_bytes": 1000000,
-            "backups": 3, "log_message_text": True},
+    "log": {
+        "level": "INFO",
+        "file": "camfrog_auto.log",
+        "max_bytes": 1000000,
+        "backups": 3,
+        "log_message_text": True,
+    },
     "active_hours": {"enabled": False, "start": "09:00", "end": "23:30"},
-    "safety": {"stop_file": "STOP", "pid_file": "camfrog_auto.pid",
-               "require_foreground": True, "restore_previous_window": True,
-               "discovery_mode": "legacy",  # or "verified" (executable identity + signature + role)
-               "max_consecutive_failures": 5},
+    "safety": {
+        "stop_file": "STOP",
+        "pid_file": "camfrog_auto.pid",
+        "require_foreground": True,
+        "restore_previous_window": True,
+        "discovery_mode": "legacy",  # or "verified" (executable identity + signature + role)
+        "max_consecutive_failures": 5,
+    },
     "status": {
         "enabled": True,
         "edit": {"class_name": "Edit", "auto_id": "1001", "index": 0},
         "apply_button": None,
         "background_enter_target": "edit",  # experimental "combo" targets the parent CComboBoxTS
-        "interval_seconds": 600, "set_on_start": True, "random": False,
-        "language_mode": "both", "retry_seconds": 30, "max_length": 120, "messages": [],
+        "interval_seconds": 600,
+        "set_on_start": True,
+        "random": False,
+        "language_mode": "both",
+        "retry_seconds": 30,
+        "max_length": 120,
+        "messages": [],
         "schedules": [],
         "language_cycle": [],
-        "marquee": {"enabled": False, "scroll": False, "width": 28, "stride": 2, "step_seconds": 0.5,
-                    "separator": "   \u2022   ", "cycles": 1, "max_frames": 80, "infinite_loop": False},
-        "history": {"enabled": True, "file": "status_history.json", "max_items": 50,
-                    "record": True, "use_as_source": False, "seed_from_messages": True,
-                    "mode": "rotate"},
+        "marquee": {
+            "enabled": False,
+            "scroll": False,
+            "width": 28,
+            "stride": 2,
+            "step_seconds": 0.5,
+            "separator": "   \u2022   ",
+            "cycles": 1,
+            "max_frames": 80,
+            "infinite_loop": False,
+        },
+        "history": {
+            "enabled": True,
+            "file": "status_history.json",
+            "max_items": 50,
+            "record": True,
+            "use_as_source": False,
+            "seed_from_messages": True,
+            "mode": "rotate",
+        },
     },
     "autoreply": {
-        "enabled": True, "own_nickname": "", "window_title_regex": "", "log_kind": "room",
+        "enabled": True,
+        "own_nickname": "",
+        "window_title_regex": "",
+        "log_kind": "room",
         "history_tail": 150,
         "history": {"class_name": "AtlAxWinLic140", "auto_id": "1002", "index": 0},
         "input": {"class_name": "AtlAxWinLic140", "auto_id": "1002", "index": 1},
-        "ignore_nicknames": [], "only_nicknames": [],
-        "per_sender_cooldown_seconds": 300, "global_min_gap_seconds": 20,
-        "max_per_hour": 30, "delay_range_seconds": [2.0, 5.0],
-        "max_reply_length": 200, "max_incoming_length": 500, "rules": [],
-        "skip_patterns": [], "ignore_links": True,
+        "ignore_nicknames": [],
+        "only_nicknames": [],
+        "per_sender_cooldown_seconds": 300,
+        "global_min_gap_seconds": 20,
+        "max_per_hour": 30,
+        "delay_range_seconds": [2.0, 5.0],
+        "max_reply_length": 200,
+        "max_incoming_length": 500,
+        "rules": [],
+        "skip_patterns": [],
+        "ignore_links": True,
     },
     # Private-message (IM) auto-reply: separate opt-in, own rules, own limits. Reuses the
     # autoreply.history / autoreply.input selectors (IM windows have the same two web panes).
     "autoreply_im": {
-        "enabled": False, "dry_run": True, "window_title_regex": "", "max_windows": 5,
+        "enabled": False,
+        "dry_run": True,
+        "window_title_regex": "",
+        "max_windows": 5,
         "log_kinds": ["im"],
-        "only_nicknames": [], "rules": [], "skip_patterns": [], "ignore_links": True,
-        "prefix": "[auto] ", "answer_first_message": True,
-        "per_sender_cooldown_seconds": 3600, "max_per_sender_per_day": 3,
-        "global_min_gap_seconds": 20, "max_per_hour": 10, "delay_range_seconds": [2.0, 5.0],
-        "max_reply_length": 200, "max_incoming_length": 500,
+        "only_nicknames": [],
+        "rules": [],
+        "skip_patterns": [],
+        "ignore_links": True,
+        "prefix": "[auto] ",
+        "answer_first_message": True,
+        "per_sender_cooldown_seconds": 3600,
+        "max_per_sender_per_day": 3,
+        "global_min_gap_seconds": 20,
+        "max_per_hour": 10,
+        "delay_range_seconds": [2.0, 5.0],
+        "max_reply_length": 200,
+        "max_incoming_length": 500,
     },
     # Room music DJ: chat commands (!request/!randommusic/!queue/!current/!skip/!help) with a
     # persistent queue. Needs autoreply.enabled for chat plumbing. Audio backends:
     # "chat" announces only; "local" plays Windows-supported audio files; "youtube"
     # uses the official visible YouTube IFrame player in an app-owned browser window.
     "dj": {
-        "enabled": False, "prefix": "!", "queue_file": "dj_queue.json",
-        "max_per_user": 3, "music_dir": "music", "audio_backend": "chat",
+        "enabled": False,
+        "prefix": "!",
+        "queue_file": "dj_queue.json",
+        "playlist_file": "youtube.json",
+        "max_per_user": 3,
+        "music_dir": "music",
+        "audio_backend": "chat",
         "announce_now": "[dj] Now playing: {title} (requested by {user})",
         "announce_queued": "[dj] Queued #{pos}: {title}",
     },
@@ -425,7 +650,7 @@ def deep_merge(base: dict, over: dict) -> dict:
     return out
 
 
-def load_cfg(path: Union[str, Path]) -> dict:
+def load_cfg(path: str | Path) -> dict:
     with Path(path).open(encoding="utf-8-sig") as f:  # Notepad may add a BOM
         return deep_merge(DEFAULTS, json.load(f))
 
@@ -468,11 +693,13 @@ def selector_clashes(cfg):
     if cfg["status"]["enabled"]:
         sels.append(("status.edit", cfg["status"]["edit"]))
     if cfg["autoreply"]["enabled"] or _im(cfg)["enabled"]:
-        sels += [("autoreply.history", cfg["autoreply"]["history"]),
-                 ("autoreply.input", cfg["autoreply"]["input"])]
+        sels += [
+            ("autoreply.history", cfg["autoreply"]["history"]),
+            ("autoreply.input", cfg["autoreply"]["input"]),
+        ]
     out = []
     for i, (na, a) in enumerate(sels):
-        for nb, b in sels[i + 1:]:
+        for nb, b in sels[i + 1 :]:
             if isinstance(a, dict) and a == b:
                 out.append((na, nb))
     return out
@@ -490,13 +717,19 @@ def _validate(cfg, errs, warns):
         if st["apply_button"]:
             to_check.append(("status.apply_button", st["apply_button"]))
     if ar["enabled"] or _im(cfg)["enabled"]:
-        to_check += [("autoreply.history", ar["history"]), ("autoreply.input", ar["input"])]
+        to_check += [
+            ("autoreply.history", ar["history"]),
+            ("autoreply.input", ar["input"]),
+        ]
     for name, sel in to_check:
-        if isinstance(sel, dict) and not any(sel.get(k) not in (None, "") for k in SEL_KEYS):
+        if isinstance(sel, dict) and not any(
+            sel.get(k) not in (None, "") for k in SEL_KEYS
+        ):
             errs.append(t("e_selempty", k=name))
     for na, nb in selector_clashes(cfg):
         (errs if not cfg["dry_run"] else warns).append(
-            t("e_selclash" if not cfg["dry_run"] else "w_selclash", a=na, b=nb))
+            t("e_selclash" if not cfg["dry_run"] else "w_selclash", a=na, b=nb)
+        )
     if ar.get("log_kind", "room") not in ("room", "im", "any"):
         errs.append("autoreply.log_kind must be room, im or any")
     if str(cfg["language"]).lower() not in ("auto", "th", "en"):
@@ -505,11 +738,15 @@ def _validate(cfg, errs, warns):
         re.compile(cfg["window_title_regex"])
     except re.error as e:
         errs.append(t("e_regex", e=e))
-    if cfg.get("safety", {}).get("discovery_mode", "legacy") not in ("legacy", "verified"):
+    if cfg.get("safety", {}).get("discovery_mode", "legacy") not in (
+        "legacy",
+        "verified",
+    ):
         errs.append("safety.discovery_mode must be legacy or verified")
     if cfg["active_hours"]["enabled"]:
         try:
-            parse_hm(cfg["active_hours"]["start"]); parse_hm(cfg["active_hours"]["end"])
+            parse_hm(cfg["active_hours"]["start"])
+            parse_hm(cfg["active_hours"]["end"])
         except Exception:
             errs.append(t("e_hours"))
     if st["enabled"]:
@@ -527,11 +764,18 @@ def _validate(cfg, errs, warns):
         try:
             inf = mq.get("infinite_loop", False)
             scroll = mq.get("scroll", False)
-            if mq["enabled"] and scroll and not (8 <= mq["width"] <= 80 and mq["width"] <= st["max_length"]
-                                      and 1 <= mq["stride"] <= mq["width"]
-                                      and mq["step_seconds"] >= 0.3
-                                      and (inf or (1 <= mq["cycles"] <= 5))
-                                      and 5 <= mq["max_frames"] <= 300):
+            if (
+                mq["enabled"]
+                and scroll
+                and not (
+                    8 <= mq["width"] <= 80
+                    and mq["width"] <= st["max_length"]
+                    and 1 <= mq["stride"] <= mq["width"]
+                    and mq["step_seconds"] >= 0.3
+                    and (inf or (1 <= mq["cycles"] <= 5))
+                    and 5 <= mq["max_frames"] <= 300
+                )
+            ):
                 errs.append(t("e_marquee"))
         except TypeError:
             errs.append(t("e_marquee"))
@@ -546,7 +790,8 @@ def _validate(cfg, errs, warns):
                 warns.append(t("w_sched_hist"))
         for i, sc in enumerate(st["schedules"]):
             try:
-                parse_hm(sc["start"]); parse_hm(sc["end"])
+                parse_hm(sc["start"])
+                parse_hm(sc["end"])
                 if not sc["messages"]:
                     raise ValueError
             except Exception:
@@ -566,7 +811,7 @@ def _validate(cfg, errs, warns):
             warns.append(t("w_norules"))
         for i, r in enumerate(ar["rules"]):
             try:
-                re.compile(r["pattern"], re.I)
+                re.compile(r["pattern"], re.IGNORECASE)
             except (re.error, KeyError) as e:
                 errs.append(t("e_rule", i=i, e=e))
             if not r.get("reply"):
@@ -575,7 +820,7 @@ def _validate(cfg, errs, warns):
                 warns.append(t("w_mention", i=i + 1))
         for i, sp in enumerate(ar["skip_patterns"]):
             try:
-                re.compile(sp, re.I)
+                re.compile(sp, re.IGNORECASE)
             except re.error as e:
                 errs.append(t("e_skip", i=i, e=e))
         if not ar["own_nickname"].strip():
@@ -638,14 +883,14 @@ def _validate_im(cfg, errs, warns):
         warns.append(t("w_im_noprefix"))
     for i, r in enumerate(im["rules"]):
         try:
-            re.compile(r["pattern"], re.I)
+            re.compile(r["pattern"], re.IGNORECASE)
         except (re.error, KeyError) as e:
             errs.append(t("e_im_rule", i=i, e=e))
         if not r.get("reply"):
             errs.append(t("e_reply", i=i))
     for i, sp in enumerate(im["skip_patterns"]):
         try:
-            re.compile(sp, re.I)
+            re.compile(sp, re.IGNORECASE)
         except re.error as e:
             errs.append(t("e_im_skip", i=i, e=e))
     if not im["rules"]:
@@ -676,7 +921,7 @@ def _validate_dj(cfg, errs, warns):
             errs.append(f"dj.{key} must be a non-empty string")
 
 
-def in_window(start: str, end: str, now: Optional[dt.time] = None) -> bool:
+def in_window(start: str, end: str, now: dt.time | None = None) -> bool:
     now = now or dt.datetime.now().time()
     s, e = parse_hm(start), parse_hm(end)
     return s <= now <= e if s <= e else (now >= s or now <= e)  # overnight OK
@@ -703,8 +948,13 @@ def is_own_gui_window(win) -> bool:
         pass
     try:
         title = win.window_text()
-        if title and title.startswith((
-                "Camfrog Status Changer", "Camfrog Random Status", "Camfrog Marquee Status")):
+        if title and title.startswith(
+            (
+                "Camfrog Status Changer",
+                "Camfrog Random Status",
+                "Camfrog Marquee Status",
+            )
+        ):
             return True
     except Exception:
         pass
@@ -745,6 +995,7 @@ def get_verified_main_window():
         WindowsCamfrogProcessDiscovery,
         WindowsCamfrogWindowClassifier,
     )
+
     discovery = WindowsCamfrogProcessDiscovery()
     try:
         identity = discovery.get_verified_process()
@@ -754,12 +1005,21 @@ def get_verified_main_window():
         raise RuntimeError(t("verified_ambiguous", detail=str(exc)))
     classifier = WindowsCamfrogWindowClassifier()
     windows = classifier.classify_process_windows(identity, visible_only=True)
-    mains = [w for w in windows
-             if w.role == WindowRole.MAIN_DIRECTORY and w.element is not None]
+    mains = [
+        w
+        for w in windows
+        if w.role == WindowRole.MAIN_DIRECTORY and w.element is not None
+    ]
     if len(mains) != 1:
-        raise RuntimeError(t("verified_ambiguous", detail=(
-            f"expected exactly one visible MAIN_DIRECTORY window for PID {identity.pid}, "
-            f"found {len(mains)}")))
+        raise RuntimeError(
+            t(
+                "verified_ambiguous",
+                detail=(
+                    f"expected exactly one visible MAIN_DIRECTORY window for PID {identity.pid}, "
+                    f"found {len(mains)}"
+                ),
+            )
+        )
     return mains[0].element
 
 
@@ -767,8 +1027,10 @@ def get_window(cfg: dict):
     if cfg.get("safety", {}).get("discovery_mode", "legacy") == "verified":
         return get_verified_main_window()
     from pywinauto import Desktop  # lazy: `check` works without pywinauto
+
     wins = Desktop(backend="uia").windows(
-        title_re=cfg["window_title_regex"], visible_only=True)
+        title_re=cfg["window_title_regex"], visible_only=True
+    )
     wins = [w for w in wins if not is_own_gui_window(w)]
     if not wins:
         raise RuntimeError(t("no_window"))
@@ -787,7 +1049,9 @@ def get_window(cfg: dict):
                 continue
 
     # Fallback: return first window if status edit not found in any (for detect/initial setup)
-    log.warning("Status edit control not found in any matching window; using first window")
+    log.warning(
+        "Status edit control not found in any matching window; using first window"
+    )
     return wins[0]
 
 
@@ -795,10 +1059,11 @@ def process_windows(main) -> list:
     """All visible top-level windows of the same process as `main` (Camfrog opens each chat room,
     IM and the buddy list as separate windows)."""
     from pywinauto import Desktop
+
     return Desktop(backend="uia").windows(process=main.process_id(), visible_only=True)
 
 
-def get_chat_window(cfg: dict, main) -> Optional[Any]:
+def get_chat_window(cfg: dict, main) -> Any | None:
     """Chat-room window: another window of Camfrog's process (optionally matching
     autoreply.window_title_regex) that actually contains the configured input control."""
     rx = cfg["autoreply"].get("window_title_regex") or ""
@@ -892,12 +1157,15 @@ def parse_web_log(items):
     def flush():
         if nick and parts:
             lines.append(f"{nick}: {' '.join(parts)}")
+
     for it in items:
         ty, name = it.get("type", ""), (it.get("name") or "").strip()
         if ty == "Image":
-            flush(); nick, parts, want_child = None, [], False
+            flush()
+            nick, parts, want_child = None, [], False
         elif ty == "Hyperlink":
-            flush(); parts = []
+            flush()
+            parts = []
             nick, want_child = (name.rstrip(":").strip() or None), not name
         elif ty == "Text" and name:
             if want_child:
@@ -913,7 +1181,12 @@ def web_items(ctrl, tail=150):
     for c in ctrl.descendants():
         ty = _ctrl_attr(c, "control_type")
         if ty in ("Image", "Hyperlink", "Text"):
-            out.append({"type": ty, "name": "" if ty == "Image" else str(_ctrl_attr(c, "name"))})
+            out.append(
+                {
+                    "type": ty,
+                    "name": "" if ty == "Image" else str(_ctrl_attr(c, "name")),
+                }
+            )
     return out[-tail:] if tail else out
 
 
@@ -968,7 +1241,9 @@ def web_dom_rows(ctrl):
         )
         if not sent or not result:
             return None
-        document = Dispatch(pythoncom.ObjectFromLresult(result, pythoncom.IID_IDispatch, 0))
+        document = Dispatch(
+            pythoncom.ObjectFromLresult(result, pythoncom.IID_IDispatch, 0)
+        )
         elements = document.all
         rows = []
         for index in range(int(elements.length)):
@@ -982,10 +1257,12 @@ def web_dom_rows(ctrl):
             children = []
             for child_index in range(int(parent.children.length)):
                 child = parent.children.item(child_index)
-                children.append({
-                    "class_name": str(child.className or ""),
-                    "text": str(child.innerText or ""),
-                })
+                children.append(
+                    {
+                        "class_name": str(child.className or ""),
+                        "text": str(child.innerText or ""),
+                    }
+                )
             rows.append({"class_name": row_classes, "children": children})
         return rows
     except Exception as exc:
@@ -1031,13 +1308,21 @@ def _wm_settext(ctrl, text):
     """Last resort for real HWND edit/richedit controls (Camfrog's input is RICHEDIT50W)."""
     WM_SETTEXT = 0x000C
     u = ctypes.windll.user32
-    u.SendMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_wchar_p]
+    u.SendMessageW.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_uint,
+        ctypes.c_void_p,
+        ctypes.c_wchar_p,
+    ]
     u.SendMessageW(ctrl.handle, WM_SETTEXT, None, text)
 
 
 def write_text(ctrl, text: str) -> bool:
-    for fn in (lambda t_: ctrl.set_edit_text(t_), lambda t_: ctrl.iface_value.SetValue(t_),
-               lambda t_: _wm_settext(ctrl, t_)):
+    for fn in (
+        lambda t_: ctrl.set_edit_text(t_),
+        lambda t_: ctrl.iface_value.SetValue(t_),
+        lambda t_: _wm_settext(ctrl, t_),
+    ):
         try:
             fn(text)
         except Exception:
@@ -1079,7 +1364,10 @@ def _clip_get():
 
 def _clip_set(text):
     u, k = ctypes.windll.user32, ctypes.windll.kernel32
-    k.GlobalAlloc.restype, k.GlobalAlloc.argtypes = ctypes.c_void_p, [ctypes.c_uint, ctypes.c_size_t]
+    k.GlobalAlloc.restype, k.GlobalAlloc.argtypes = (
+        ctypes.c_void_p,
+        [ctypes.c_uint, ctypes.c_size_t],
+    )
     k.GlobalLock.restype, k.GlobalLock.argtypes = ctypes.c_void_p, [ctypes.c_void_p]
     k.GlobalUnlock.argtypes = [ctypes.c_void_p]
     k.GlobalFree.argtypes = [ctypes.c_void_p]
@@ -1107,27 +1395,41 @@ def _escape_keys(text):
     return "".join("{%s}" % c if c in "{}()+^%~" else c for c in text)
 
 
-def commit_web(win, ctrl, text: str, require_fg: bool = True, restore: bool = False) -> bool:
+def commit_web(
+    win, ctrl, text: str, require_fg: bool = True, restore: bool = False
+) -> bool:
     """Send into Camfrog's web chat box. There is no text control to write to, so: bring the room to
     front, click the box, paste (clipboard is restored) or type, press Enter. Never types unless the
     room window is verified foreground, re-checked right before Enter."""
     from pywinauto import keyboard
+
     user32 = ctypes.windll.user32
     prev = user32.GetForegroundWindow() if restore else 0
     if not foreground_ok(win):
         log.error(t("not_fg"))
         return False
+    try:
+        ctrl.set_focus()
+    except Exception:
+        pass
     ctrl.click_input()  # caret into the editable area
-    time.sleep(0.15)
+    time.sleep(0.20)
     if user32.GetForegroundWindow() != win.handle:
         log.error(t("not_fg"))
         return False
     old = _clip_get()
     pasted = _clip_set(text)
     try:
-        keyboard.send_keys("^a", pause=0.02)
-        keyboard.send_keys("^v" if pasted else _escape_keys(text), pause=0.01, with_spaces=True)
-        time.sleep(0.2)
+        try:
+            ctrl.set_focus()
+        except Exception:
+            pass
+        ctrl.click_input()
+        time.sleep(0.05)
+        keyboard.send_keys(
+            "^v" if pasted else _escape_keys(text), pause=0.01, with_spaces=True
+        )
+        time.sleep(0.15)
     finally:
         if pasted and old is not None:
             time.sleep(0.2)
@@ -1155,6 +1457,7 @@ def press_button(btn):
         handle = getattr(btn.element_info, "handle", 0)
     if handle:
         import ctypes
+
         u = ctypes.windll.user32
         u.PostMessageW(handle, 0x0201, 1, 0)
         u.PostMessageW(handle, 0x0202, 0, 0)
@@ -1172,7 +1475,9 @@ def _background_enter(ctrl, target="edit"):
     if target == "combo":
         parent = getattr(getattr(ctrl, "element_info", None), "parent", None)
         if getattr(parent, "class_name", None) != "CComboBoxTS":
-            raise LookupError("Status Edit has no CComboBoxTS parent; cannot try combo Enter")
+            raise LookupError(
+                "Status Edit has no CComboBoxTS parent; cannot try combo Enter"
+            )
         handle = getattr(parent, "handle", 0)
     else:
         handle = getattr(ctrl, "handle", 0)
@@ -1203,7 +1508,9 @@ def _injects_global_input(bound) -> bool:
         return True
     if bound.get("apply_btn") is not None:
         return True
-    if bound.get("background_enter_target") == "combo" or not bound.get("require_fg", True):
+    if bound.get("background_enter_target") == "combo" or not bound.get(
+        "require_fg", True
+    ):
         return False
     return True
 
@@ -1211,6 +1518,7 @@ def _injects_global_input(bound) -> bool:
 def commit(*args, **kwargs) -> bool:
     """Gate `_commit_impl` so input-injecting sends never run while the user is active."""
     import inspect
+
     bound = inspect.signature(_commit_impl).bind(*args, **kwargs)
     bound.apply_defaults()
     if not _injects_global_input(bound.arguments):
@@ -1219,11 +1527,21 @@ def commit(*args, **kwargs) -> bool:
         log.error("Deferred: user stayed active; not taking over mouse/keyboard")
         return False
     return USER_GUARD.run(_commit_impl, *args, **kwargs)
+
+
 # --- end user-activity guard ---
 
 
-def _commit_impl(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply_btn=None,
-           restore: bool = False, background_enter_target: str = "edit") -> bool:
+def _commit_impl(
+    win,
+    ctrl,
+    text: str,
+    dry: bool,
+    require_fg: bool = True,
+    apply_btn=None,
+    restore: bool = False,
+    background_enter_target: str = "edit",
+) -> bool:
     """Write text, verify read-back, confirm Camfrog is foreground, send, restore focus."""
     if dry:
         log.info(t("dry_send", text=shown(text)))
@@ -1235,7 +1553,7 @@ def _commit_impl(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply
         return False
     user32 = ctypes.windll.user32
     prev = user32.GetForegroundWindow() if restore else 0
-    
+
     needs_foreground = require_fg and apply_btn is None
     if needs_foreground and not foreground_ok(win):
         log.error(t("not_fg"))
@@ -1254,42 +1572,58 @@ def _commit_impl(win, ctrl, text: str, dry: bool, require_fg: bool = True, apply
             _background_enter(ctrl, background_enter_target)
     if prev and prev != win.handle and user32.IsWindow(prev):
         time.sleep(0.15)
-        user32.SetForegroundWindow(prev)  # best effort: give focus back to what you were doing
+        user32.SetForegroundWindow(
+            prev
+        )  # best effort: give focus back to what you were doing
     return True
 
 
-RESET_BURST = 25  # more fresh chat lines than this in one poll = history reset, not live chat
-LINK_RE = re.compile(r"(https?://|www\.)", re.I)
+RESET_BURST = (
+    25  # more fresh chat lines than this in one poll = history reset, not live chat
+)
+LINK_RE = re.compile(r"(https?://|www\.)", re.IGNORECASE)
 
 
 def expand(text: str, nick: str = "", own: str = "") -> str:
     """Replace {sender} {me} {time} {date}. Plain replace (never str.format)."""
     now = dt.datetime.now()
-    for k, v in (("{sender}", nick), ("{me}", own), ("{time}", now.strftime("%H:%M")),
-                 ("{date}", now.strftime("%Y-%m-%d"))):
+    for k, v in (
+        ("{sender}", nick),
+        ("{me}", own),
+        ("{time}", now.strftime("%H:%M")),
+        ("{date}", now.strftime("%Y-%m-%d")),
+    ):
         text = text.replace(k, v)
     return text
 
 
 def compile_rules(ar: dict) -> list[dict]:
-    return [{
-        "idx": i + 1, "rx": re.compile(r["pattern"], re.I), "spec": r["reply"],
-        "lang": r.get("lang"), "mention": bool(r.get("mention")),
-        "cooldown": r.get("cooldown_seconds", 0), "last": -1e9,
-    } for i, r in enumerate(ar["rules"]) if r.get("enabled", True)]
+    return [
+        {
+            "idx": i + 1,
+            "rx": re.compile(r["pattern"], re.IGNORECASE),
+            "spec": r["reply"],
+            "lang": r.get("lang"),
+            "mention": bool(r.get("mention")),
+            "cooldown": r.get("cooldown_seconds", 0),
+            "last": -1e9,
+        }
+        for i, r in enumerate(ar["rules"])
+        if r.get("enabled", True)
+    ]
 
 
 def compile_skips(ar: dict) -> list[re.Pattern]:
-    return [re.compile(p, re.I) for p in ar["skip_patterns"]]
+    return [re.compile(p, re.IGNORECASE) for p in ar["skip_patterns"]]
 
 
-def is_skipped(msg: str, skips: list[re.Pattern], ignore_links: bool) -> Optional[str]:
+def is_skipped(msg: str, skips: list[re.Pattern], ignore_links: bool) -> str | None:
     if ignore_links and LINK_RE.search(msg):
         return "link"
     return "pattern" if any(rx.search(msg) for rx in skips) else None
 
 
-def match_rule(rules: list[dict], msg: str, mlang: str, own: str) -> Optional[dict]:
+def match_rule(rules: list[dict], msg: str, mlang: str, own: str) -> dict | None:
     low = msg.lower()
     for r in rules:
         if r["lang"] and r["lang"] != mlang:
@@ -1301,9 +1635,11 @@ def match_rule(rules: list[dict], msg: str, mlang: str, own: str) -> Optional[di
     return None
 
 
-def atomic_write(path: Union[str, Path], text: str) -> None:
+def atomic_write(path: str | Path, text: str) -> None:
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)  # the config subfolder may not exist yet
+    path.parent.mkdir(
+        parents=True, exist_ok=True
+    )  # the config subfolder may not exist yet
     tmp = Path(str(path) + ".tmp")
     tmp.write_text(text, encoding="utf-8")
     for i in range(5):  # AV/indexers can briefly lock the target
@@ -1315,7 +1651,9 @@ def atomic_write(path: Union[str, Path], text: str) -> None:
     os.replace(tmp, path)
 
 
-LEAD_VOWELS = set("\u0e40\u0e41\u0e42\u0e43\u0e44")  # เ แ โ ใ ไ  (written before the consonant)
+LEAD_VOWELS = set(
+    "\u0e40\u0e41\u0e42\u0e43\u0e44"
+)  # เ แ โ ใ ไ  (written before the consonant)
 
 
 def clusters(text: str) -> list[str]:
@@ -1326,8 +1664,11 @@ def clusters(text: str) -> list[str]:
         if ch in LEAD_VOWELS:
             prefix += ch
             continue
-        attach = (unicodedata.category(ch) in ("Mn", "Mc", "Me") or ch in "\u200d\ufe0f\ufe0e"
-                  or (out and out[-1].endswith("\u200d")))
+        attach = (
+            unicodedata.category(ch) in ("Mn", "Mc", "Me")
+            or ch in "\u200d\ufe0f\ufe0e"
+            or (out and out[-1].endswith("\u200d"))
+        )
         if out and not prefix and attach:
             out[-1] += ch
         else:
@@ -1351,8 +1692,15 @@ def clip(text: str, limit: int) -> str:
     return "".join(out)
 
 
-def marquee_frames(text: str, width: int, stride: int = 2, separator: str = "   \u2022   ",
-                   cycles: int = 1, max_frames: int = 80, infinite_loop: bool = False) -> list[str]:
+def marquee_frames(
+    text: str,
+    width: int,
+    stride: int = 2,
+    separator: str = "   \u2022   ",
+    cycles: int = 1,
+    max_frames: int = 80,
+    infinite_loop: bool = False,
+) -> list[str]:
     """Frames of a cyclic ticker. Never blank, never splits a Thai cluster, bounded length.
     Returns [text] unchanged when it already fits in `width` clusters.
     If infinite_loop=True, returns loop frames (no final settle frame) up to max_frames."""
@@ -1383,15 +1731,24 @@ class StatusHistory:
     def load(self):
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8-sig"))
-            self.items = [{"text": i["text"], "lang": detect_lang(i["text"]),
-                           "count": int(i.get("count", 0)), "last": float(i.get("last", 0))}
-                          for i in raw if isinstance(i, dict) and str(i.get("text", "")).strip()]
+            self.items = [
+                {
+                    "text": i["text"],
+                    "lang": detect_lang(i["text"]),
+                    "count": int(i.get("count", 0)),
+                    "last": float(i.get("last", 0)),
+                }
+                for i in raw
+                if isinstance(i, dict) and str(i.get("text", "")).strip()
+            ]
         except Exception:
             self.items = []
 
     def save(self):
         try:
-            atomic_write(self.path, json.dumps(self.items, ensure_ascii=False, indent=2))
+            atomic_write(
+                self.path, json.dumps(self.items, ensure_ascii=False, indent=2)
+            )
         except Exception as e:
             log.debug("history save failed: %s", e)
 
@@ -1404,9 +1761,15 @@ class StatusHistory:
             return False
         new = {"text": text, "lang": detect_lang(text), "count": count, "last": 0.0}
         self.items.append(new)
-        while len(self.items) > self.max_items:  # drop least used, then oldest; never the newcomer
-            self.items.remove(min((i for i in self.items if i is not new),
-                                  key=lambda i: (i["count"], i["last"])))
+        while (
+            len(self.items) > self.max_items
+        ):  # drop least used, then oldest; never the newcomer
+            self.items.remove(
+                min(
+                    (i for i in self.items if i is not new),
+                    key=lambda i: (i["count"], i["last"]),
+                )
+            )
         return True
 
     def record(self, text):
@@ -1421,7 +1784,11 @@ class StatusHistory:
         self.save()
 
     def pick(self, mode="rotate", lang=None, exclude=None):
-        pool = [i for i in self.items if i["text"] != exclude and (not lang or i["lang"] == lang)]
+        pool = [
+            i
+            for i in self.items
+            if i["text"] != exclude and (not lang or i["lang"] == lang)
+        ]
         if not pool:  # no item in that language: fall back to any language
             pool = [i for i in self.items if i["text"] != exclude]
         if not pool:
@@ -1430,7 +1797,9 @@ class StatusHistory:
             return random.choice(pool)["text"]
         if mode == "most_used":
             return max(pool, key=lambda i: (i["count"], -i["last"]))["text"]
-        return min(pool, key=lambda i: i["last"])["text"]  # rotate: least recently used first
+        return min(pool, key=lambda i: i["last"])[
+            "text"
+        ]  # rotate: least recently used first
 
 
 def safe_reply(template, nick, limit, own=""):
@@ -1442,7 +1811,7 @@ def safe_reply(template, nick, limit, own=""):
 
 def new_lines(prev, cur):
     for k in range(min(len(prev), len(cur)), -1, -1):
-        if prev[len(prev) - k:] == cur[:k]:
+        if prev[len(prev) - k :] == cur[:k]:
             return cur[k:]
     return cur
 
@@ -1464,15 +1833,19 @@ def _process_query_api():
     from ctypes import wintypes
 
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.OpenProcess.argtypes = (
-        wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
     kernel32.OpenProcess.restype = wintypes.HANDLE
     kernel32.GetExitCodeProcess.argtypes = (
-        wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.DWORD),
+    )
     kernel32.GetExitCodeProcess.restype = wintypes.BOOL
     kernel32.QueryFullProcessImageNameW.argtypes = (
-        wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
-        ctypes.POINTER(wintypes.DWORD))
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPWSTR,
+        ctypes.POINTER(wintypes.DWORD),
+    )
     kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
     kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
     kernel32.CloseHandle.restype = wintypes.BOOL
@@ -1520,7 +1893,8 @@ def pid_image(pid):
             buffer = ctypes.create_unicode_buffer(32768)
             size = wintypes.DWORD(len(buffer))
             ok = kernel32.QueryFullProcessImageNameW(
-                handle, 0, buffer, ctypes.byref(size))
+                handle, 0, buffer, ctypes.byref(size)
+            )
             return buffer.value if ok else None
         finally:
             kernel32.CloseHandle(handle)
@@ -1547,8 +1921,7 @@ def pid_is_ours(pid, image=None):
         current_name = ntpath.basename(current).casefold()
         if current_name in {"python.exe", "pythonw.exe"}:
             sibling = "pythonw.exe" if current_name == "python.exe" else "python.exe"
-            expected.add(ntpath.normcase(
-                ntpath.join(ntpath.dirname(current), sibling)))
+            expected.add(ntpath.normcase(ntpath.join(ntpath.dirname(current), sibling)))
     return candidate in expected
 
 
@@ -1577,7 +1950,7 @@ def child_env():
     env = os.environ.copy()
     if getattr(sys, "frozen", False):
         env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"  # PyInstaller >= 6.9
-        env.pop("_MEIPASS2", None)                  # older PyInstaller
+        env.pop("_MEIPASS2", None)  # older PyInstaller
     return env
 
 
@@ -1594,10 +1967,16 @@ def cmd_start(cfg, args):
         return 2
     logf = BASE / cfg["log"]["file"]
     flags = 0x08000000 | 0x00000200  # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
-    p = subprocess.Popen(child_cmd(args) + ["run"], stdin=subprocess.DEVNULL,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         creationflags=flags, close_fds=True, cwd=str(BASE),
-                         env=child_env())
+    p = subprocess.Popen(
+        child_cmd(args) + ["run"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=flags,
+        close_fds=True,
+        cwd=str(BASE),
+        env=child_env(),
+    )
     time.sleep(2.5)
     if p.poll() is not None:
         print(t("bg_failed", code=p.returncode, log=logf))
@@ -1622,8 +2001,12 @@ def cmd_stop(cfg):
     forced = False
     if pid_alive(pid):
         try:
-            subprocess.run([system_taskkill_path(), "/PID", str(pid), "/T", "/F"],
-                           capture_output=True, check=False, timeout=10)
+            subprocess.run(
+                [system_taskkill_path(), "/PID", str(pid), "/T", "/F"],
+                capture_output=True,
+                check=False,
+                timeout=10,
+            )
             forced = True
         except (OSError, subprocess.TimeoutExpired):
             log.exception("taskkill failed for PID %s", pid)
@@ -1651,8 +2034,15 @@ def cmd_state(cfg):
     try:
         d = json.loads(stats_path(cfg).read_text(encoding="utf-8"))
         print(t("stats_hdr"))
-        print(t("stats_line", started=d.get("started", "?"), st=d.get("statuses", 0),
-                rp=d.get("replies", 0), fl=d.get("failures", 0)))
+        print(
+            t(
+                "stats_line",
+                started=d.get("started", "?"),
+                st=d.get("statuses", 0),
+                rp=d.get("replies", 0),
+                fl=d.get("failures", 0),
+            )
+        )
     except Exception:
         pass
     return 0 if running else 1
@@ -1663,7 +2053,7 @@ RUN_VALUE = {
     "room": "CamfrogRoomControl",
     "im_reply": "CamfrogIMAutoReply",
     "status": f"CamfrogStatus{os.environ.get('ZCFATO_STATUS_MODE', 'App').title()}",
-    "music": "CamfrogMusicDJ",
+    "music": "CamfrogAutoDJ",
 }.get(APP_PROFILE, "CamfrogAuto")
 
 
@@ -1689,7 +2079,7 @@ def cmd_update(args):
     try:
         state, message = self_update(asset)
     except Exception as exc:
-        print("update check failed: {0}: {1}".format(type(exc).__name__, exc))
+        print(f"update check failed: {type(exc).__name__}: {exc}")
         return 2
     print(message)
     return 0 if state in ("ready", "no-update") else 2
@@ -1700,9 +2090,14 @@ def cmd_autostart(args, enable):
         print(t("win_only"))
         return 2
     import winreg
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
+
+    with winreg.OpenKey(
+        winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE
+    ) as k:
         if enable:
-            cmd = subprocess.list2cmdline(child_cmd(args) + ["start"])  # quotes paths with spaces
+            cmd = subprocess.list2cmdline(
+                child_cmd(args) + ["start"]
+            )  # quotes paths with spaces
             winreg.SetValueEx(k, RUN_VALUE, 0, winreg.REG_SZ, cmd)
             print(t("autostart_on", cmd=cmd))
         else:
@@ -1715,16 +2110,34 @@ def cmd_autostart(args, enable):
 
 
 # ---------- runner ----------
-DJ_AUDIO_EXTENSIONS = frozenset({
-    ".aac", ".adts", ".aif", ".aifc", ".aiff", ".au", ".flac", ".m4a",
-    ".mid", ".midi", ".mp2", ".mp3", ".mpa", ".ogg", ".opus", ".rmi",
-    ".snd", ".wav", ".wma",
-})
+DJ_AUDIO_EXTENSIONS = frozenset(
+    {
+        ".aac",
+        ".adts",
+        ".aif",
+        ".aifc",
+        ".aiff",
+        ".au",
+        ".flac",
+        ".m4a",
+        ".mid",
+        ".midi",
+        ".mp2",
+        ".mp3",
+        ".mpa",
+        ".ogg",
+        ".opus",
+        ".rmi",
+        ".snd",
+        ".wav",
+        ".wma",
+    }
+)
 DJ_CONTROL_PROTOCOL = 1
 DJ_CONTROL_REQUEST_TTL_SECONDS = 30
 DJ_CONTROL_ACTIONS = frozenset({"status", "skip", "clear", "speak"})
 DJ_CONTROL_DIRNAME = "dj-control"
-_DJ_MCI_PLAY_ALIAS = "camfrog_music_dj"
+_DJ_MCI_PLAY_ALIAS = "camfrog_autodj"
 _DJ_MCI_DURATION_ALIAS = "camfrog_music_duration"
 
 
@@ -1745,37 +2158,50 @@ def dj_status_summary(current, next_item=None, elapsed=None, duration=None):
     if elapsed is None:
         time_text = bi("unknown|ไม่ทราบ")
     elif duration and duration > 0:
-        time_text = "{0}/{1}".format(format_dj_time(elapsed), format_dj_time(duration))
+        time_text = f"{format_dj_time(elapsed)}/{format_dj_time(duration)}"
     else:
         time_text = bi("{0} elapsed|เล่นแล้ว {0}").format(format_dj_time(elapsed))
-    following = ("{0} ({1})".format(next_item["title"], next_item["user"])
-                 if next_item else bi("none|ไม่มี"))
-    return bi("[dj] current: {title}; requested by {user}; time {time}; next: {next}|"
-              "[dj] กำลังเล่น: {title}; ผู้ขอ: {user}; เวลา: {time}; เพลงถัดไป: {next}").format(
-                  title=current["title"], user=current["user"], time=time_text,
-                  next=following)
+    following = (
+        "{0} ({1})".format(next_item["title"], next_item["user"])
+        if next_item
+        else bi("none|ไม่มี")
+    )
+    return bi(
+        "[dj] current: {title}; requested by {user}; time {time}; next: {next}|"
+        "[dj] กำลังเล่น: {title}; ผู้ขอ: {user}; เวลา: {time}; เพลงถัดไป: {next}"
+    ).format(
+        title=current["title"], user=current["user"], time=time_text, next=following
+    )
 
 
 def dj_status_speech(current, next_item=None, elapsed=None, duration=None):
     def clipped(item, limit):
         value = str(item or "").strip()
-        return value if len(value) <= limit else value[:limit - 1] + "…"
+        return value if len(value) <= limit else value[: limit - 1] + "…"
 
     if elapsed is None:
         time_text = bi("play time unknown|เวลาเล่นไม่ทราบ")
     elif duration and duration > 0:
-        time_text = "{0} of {1}".format(format_dj_time(elapsed), format_dj_time(duration))
+        time_text = f"{format_dj_time(elapsed)} of {format_dj_time(duration)}"
     else:
         time_text = bi("played {0}|เล่นแล้ว {0}").format(format_dj_time(elapsed))
-    following = (bi("{title}, requested by {user}|เพลง {title} ผู้ขอ {user}").format(
-        title=clipped(next_item.get("title"), 50),
-        user=clipped(next_item.get("user"), 24))
-        if next_item else bi("none|ไม่มี"))
-    return bi("Now playing {title}, requested by {user}. {time_text}. Next song: {next}.|"
-              "กำลังเล่นเพลง {title} ผู้ขอคือ {user} {time_text} เพลงถัดไป {next}").format(
-                  title=clipped(current.get("title"), 65),
-                  user=clipped(current.get("user"), 24),
-                  time_text=time_text, next=following)
+    following = (
+        bi("{title}, requested by {user}|เพลง {title} ผู้ขอ {user}").format(
+            title=clipped(next_item.get("title"), 50),
+            user=clipped(next_item.get("user"), 24),
+        )
+        if next_item
+        else bi("none|ไม่มี")
+    )
+    return bi(
+        "Now playing {title}, requested by {user}. {time_text}. Next song: {next}.|"
+        "กำลังเล่นเพลง {title} ผู้ขอคือ {user} {time_text} เพลงถัดไป {next}"
+    ).format(
+        title=clipped(current.get("title"), 65),
+        user=clipped(current.get("user"), 24),
+        time_text=time_text,
+        next=following,
+    )
 
 
 class DJQueue:
@@ -1805,8 +2231,10 @@ class DJQueue:
 
     @staticmethod
     def _normalize_item(raw):
-        item = {"title": str(raw.get("title", "")).strip(),
-                "user": str(raw.get("user", ""))}
+        item = {
+            "title": str(raw.get("title", "")).strip(),
+            "user": str(raw.get("user", "")),
+        }
         video_id = raw.get("video_id")
         if video_id:
             try:
@@ -1817,9 +2245,15 @@ class DJQueue:
 
     def save(self):
         try:
-            atomic_write(self.path, json.dumps(
-                {"current": self.current, "queue": self.queue},
-                ensure_ascii=False, indent=2) + "\n")
+            atomic_write(
+                self.path,
+                json.dumps(
+                    {"current": self.current, "queue": self.queue},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+            )
             return True
         except Exception as e:  # queue must never break the bot
             log.debug("dj save failed: %s", e)
@@ -1837,6 +2271,7 @@ class DJQueue:
         mine = [q for q in self.queue if q["user"].lower() == user.lower()]
         if len(mine) >= max(1, max_per_user):
             raise DJError(f"{user} already has {len(mine)} songs queued")
+
         def is_duplicate(item):
             if video_id and item.get("video_id"):
                 return item["video_id"] == video_id
@@ -1881,7 +2316,9 @@ def dj_queue_path_for_config(cfg, base=None):
     try:
         path.relative_to(data_dir)
     except ValueError:
-        raise ValueError("dj.queue_file must stay inside the AutoDJ data folder") from None
+        raise ValueError(
+            "dj.queue_file must stay inside the AutoDJ data folder"
+        ) from None
     return path
 
 
@@ -1929,10 +2366,12 @@ def process_dj_control_request(cfg, now=None, base=None, runner=None):
             if len(raw) > 4096:
                 raise ValueError("Request is too large.")
             request = json.loads(raw)
-            if (not isinstance(request, dict) or
-                    request.get("protocol") != DJ_CONTROL_PROTOCOL or
-                    request.get("request_id") != request_id or
-                    request.get("action") not in DJ_CONTROL_ACTIONS):
+            if (
+                not isinstance(request, dict)
+                or request.get("protocol") != DJ_CONTROL_PROTOCOL
+                or request.get("request_id") != request_id
+                or request.get("action") not in DJ_CONTROL_ACTIONS
+            ):
                 raise ValueError("Invalid DJ control request.")
             created = float(request.get("created_at", 0))
             if not now - DJ_CONTROL_REQUEST_TTL_SECONDS <= created <= now + 5:
@@ -1946,8 +2385,11 @@ def process_dj_control_request(cfg, now=None, base=None, runner=None):
                     raise DJError("AutoDJ is disabled in config.json.")
                 owner = str(cfg["autoreply"].get("own_nickname", "")).strip()
                 queue.skip(owner, owner)
-                started = (runner.dj_start_playback(queue, dj) if runner is not None
-                           else process_dj_control_start_next(queue, cfg, base))
+                started = (
+                    runner.dj_start_playback(queue, dj)
+                    if runner is not None
+                    else process_dj_control_start_next(queue, cfg, base)
+                )
                 if not started:
                     raise RuntimeError("The next DJ track could not be started.")
                 if not queue.save():
@@ -1974,10 +2416,16 @@ def process_dj_control_request(cfg, now=None, base=None, runner=None):
                 "queue": queue.queue[:50],
                 "updated_at": now,
                 "playback": {
-                    "elapsed_seconds": (max(0.0, time.monotonic() - runner.dj_started)
-                                        if runner and getattr(runner, "dj_started", 0) else None),
-                    "duration_seconds": (float(getattr(runner, "dj_length", 0))
-                                         if runner and getattr(runner, "dj_length", 0) > 0 else None),
+                    "elapsed_seconds": (
+                        max(0.0, time.monotonic() - runner.dj_started)
+                        if runner and getattr(runner, "dj_started", 0)
+                        else None
+                    ),
+                    "duration_seconds": (
+                        float(getattr(runner, "dj_length", 0))
+                        if runner and getattr(runner, "dj_length", 0) > 0
+                        else None
+                    ),
                 },
             }
         except Exception as exc:
@@ -1989,8 +2437,10 @@ def process_dj_control_request(cfg, now=None, base=None, runner=None):
                 "updated_at": now,
             }
         try:
-            atomic_write(response_path, json.dumps(
-                payload, ensure_ascii=False, separators=(",", ":")) + "\n")
+            atomic_write(
+                response_path,
+                json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n",
+            )
         except OSError:
             log.exception("Could not write DJ control response")
         processed += 1
@@ -2011,8 +2461,9 @@ def process_dj_control_start_next(queue, cfg, base=None):
     if dj.get("audio_backend", "chat") != "local":
         return True
     dj_stop()
-    song = dj_find_song(Path(base or BASE) / dj.get("music_dir", "music"),
-                        queue.current["title"])
+    song = dj_find_song(
+        Path(base or BASE) / dj.get("music_dir", "music"), queue.current["title"]
+    )
     return bool(song and dj_play(song))
 
 
@@ -2035,15 +2486,23 @@ def publish_dj_control_state(cfg, now=None, base=None, runner=None):
         "queue": queue.queue[:50],
         "updated_at": now,
         "playback": {
-            "elapsed_seconds": (max(0.0, time.monotonic() - runner.dj_started)
-                                if runner and getattr(runner, "dj_started", 0) else None),
-            "duration_seconds": (float(getattr(runner, "dj_length", 0))
-                                 if runner and getattr(runner, "dj_length", 0) > 0 else None),
+            "elapsed_seconds": (
+                max(0.0, time.monotonic() - runner.dj_started)
+                if runner and getattr(runner, "dj_started", 0)
+                else None
+            ),
+            "duration_seconds": (
+                float(getattr(runner, "dj_length", 0))
+                if runner and getattr(runner, "dj_length", 0) > 0
+                else None
+            ),
         },
     }
     try:
-        atomic_write(dj_control_directory(base) / "state.json",
-                     json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
+        atomic_write(
+            dj_control_directory(base) / "state.json",
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n",
+        )
     except OSError:
         log.exception("Could not publish DJ control state")
     return payload
@@ -2052,8 +2511,9 @@ def publish_dj_control_state(cfg, now=None, base=None, runner=None):
 def dj_playback_times(base=None, now=None, max_age=10.0):
     """Read fresh elapsed/duration data from the local AutoDJ state snapshot."""
     try:
-        state = json.loads((dj_control_directory(base) / "state.json").read_text(
-            encoding="utf-8"))
+        state = json.loads(
+            (dj_control_directory(base) / "state.json").read_text(encoding="utf-8")
+        )
         if not isinstance(state, dict):
             return None, None
         updated_at = float(state.get("updated_at"))
@@ -2080,9 +2540,12 @@ def youtube_search_url(query):
     if not query:
         raise ValueError("Enter a YouTube search phrase.")
     if len(query) > 200 or CTRL_CHARS.search(query):
-        raise ValueError("The YouTube search phrase must be 1 to 200 printable characters.")
+        raise ValueError(
+            "The YouTube search phrase must be 1 to 200 printable characters."
+        )
     return "https://www.youtube.com/results?" + urllib.parse.urlencode(
-        {"search_query": query})
+        {"search_query": query}
+    )
 
 
 YOUTUBE_RANDOM_MUSIC_QUERIES = (
@@ -2129,16 +2592,24 @@ def save_random_youtube_music_link(query, url, base=None, now=None):
     except FileNotFoundError:
         data = {"version": 1, "links": []}
     except (OSError, UnicodeError, json.JSONDecodeError):
-        raise ValueError("The saved YouTube music link history cannot be read.") from None
-    if (not isinstance(data, dict) or data.get("version") != 1
-            or not isinstance(data.get("links"), list)
-            or any(not isinstance(item, dict)
-                   or not all(isinstance(item.get(key), str)
-                              for key in ("query", "url", "created_at"))
-                   for item in data["links"])):
+        raise ValueError(
+            "The saved YouTube music link history cannot be read."
+        ) from None
+    if (
+        not isinstance(data, dict)
+        or data.get("version") != 1
+        or not isinstance(data.get("links"), list)
+        or any(
+            not isinstance(item, dict)
+            or not all(
+                isinstance(item.get(key), str) for key in ("query", "url", "created_at")
+            )
+            for item in data["links"]
+        )
+    ):
         raise ValueError("The saved YouTube music link history has an invalid format.")
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
-    links = data["links"][-(YOUTUBE_RANDOM_MUSIC_HISTORY_LIMIT - 1):]
+    links = data["links"][-(YOUTUBE_RANDOM_MUSIC_HISTORY_LIMIT - 1) :]
     links.append({"query": query, "url": url, "created_at": timestamp})
     payload = {"version": 1, "links": links}
     atomic_write(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
@@ -2179,19 +2650,33 @@ def speak_room_text(value):
     """Speak operator-provided text through Windows' default playback device."""
     command = windows_speech_powershell_command(value)
     if os.name != "nt":
-        raise OSError("Room voice output requires Windows PowerShell and System.Speech.")
+        raise OSError(
+            "Room voice output requires Windows PowerShell and System.Speech."
+        )
     powershell = shutil.which("powershell.exe") or shutil.which("powershell")
     if not powershell:
         raise OSError("Windows PowerShell was not found.")
     result = subprocess.run(
-        [powershell, "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
-         "-EncodedCommand", command],
-        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        timeout=45, check=False,
+        [
+            powershell,
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-EncodedCommand",
+            command,
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=45,
+        check=False,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     if result.returncode != 0:
-        raise RuntimeError("Windows speech synthesis failed; check the installed speech voice.")
+        raise RuntimeError(
+            "Windows speech synthesis failed; check the installed speech voice."
+        )
 
 
 _ROOM_SPEECH_LOCK = threading.Lock()
@@ -2235,7 +2720,9 @@ def youtube_video_id(value):
     try:
         parsed = urllib.parse.urlsplit(value)
     except ValueError:
-        raise ValueError("Use a YouTube video URL or its 11-character video ID.") from None
+        raise ValueError(
+            "Use a YouTube video URL or its 11-character video ID."
+        ) from None
     if parsed.scheme != "https" or parsed.username or parsed.password or parsed.port:
         raise ValueError("Use a YouTube video URL or its 11-character video ID.")
     host = (parsed.hostname or "").casefold()
@@ -2245,7 +2732,9 @@ def youtube_video_id(value):
             values = urllib.parse.parse_qs(parsed.query).get("v", [])
             video_id = values[0] if len(values) == 1 else ""
         else:
-            match = re.fullmatch(r"/(?:shorts|embed)/([A-Za-z0-9_-]{11})/?", parsed.path)
+            match = re.fullmatch(
+                r"/(?:shorts|embed)/([A-Za-z0-9_-]{11})/?", parsed.path
+            )
             video_id = match.group(1) if match else ""
     elif host == "youtu.be":
         match = re.fullmatch(r"/([A-Za-z0-9_-]{11})/?", parsed.path)
@@ -2263,28 +2752,42 @@ def dj_youtube_video_id(item):
 def youtube_display_title(value, fallback=""):
     """Bound player metadata before persisting or sending it into chat."""
     title = " ".join(
-        "".join(char if char.isprintable() else " " for char in str(value or "")).split()
+        "".join(
+            char if char.isprintable() else " " for char in str(value or "")
+        ).split()
     ).strip()
     return title[:160] or str(fallback or "YouTube video")[:160]
 
 
 def find_chromium_browser():
     """Find an installed Edge or Chrome executable without invoking a shell."""
-    candidates = [shutil.which("msedge"), shutil.which("msedge.exe"),
-                  shutil.which("chrome"), shutil.which("chrome.exe")]
+    candidates = [
+        shutil.which("msedge"),
+        shutil.which("msedge.exe"),
+        shutil.which("chrome"),
+        shutil.which("chrome.exe"),
+    ]
     local = Path(os.environ.get("LOCALAPPDATA", ""))
-    program_files = [Path(os.environ.get(name, "")) for name in
-                     ("ProgramFiles", "ProgramFiles(x86)")]
-    candidates.extend((
-        local / "Microsoft/Edge/Application/msedge.exe",
-        local / "Google/Chrome/Application/chrome.exe",
-    ))
+    program_files = [
+        Path(os.environ.get(name, "")) for name in ("ProgramFiles", "ProgramFiles(x86)")
+    ]
+    candidates.extend(
+        (
+            local / "Microsoft/Edge/Application/msedge.exe",
+            local / "Google/Chrome/Application/chrome.exe",
+        )
+    )
     for root in program_files:
         if str(root) != ".":
-            candidates.extend((root / "Microsoft/Edge/Application/msedge.exe",
-                               root / "Google/Chrome/Application/chrome.exe"))
-    return next((Path(path) for path in candidates
-                 if path and Path(path).is_file()), None)
+            candidates.extend(
+                (
+                    root / "Microsoft/Edge/Application/msedge.exe",
+                    root / "Google/Chrome/Application/chrome.exe",
+                )
+            )
+    return next(
+        (Path(path) for path in candidates if path and Path(path).is_file()), None
+    )
 
 
 def open_youtube_search(query):
@@ -2300,15 +2803,20 @@ def open_youtube_search(query):
     flags = 0x08000000  # CREATE_NO_WINDOW; the browser remains a visible GUI app.
     return subprocess.Popen(
         [str(browser), "--user-data-dir=" + str(profile), "--new-window", url],
-        cwd=str(browser.parent), stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        close_fds=True, creationflags=flags)
+        cwd=str(browser.parent),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+        creationflags=flags,
+    )
 
 
 def youtube_profile_path():
-    local_app_data = Path(os.environ.get(
-        "LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
-    return (local_app_data / "Camfrog" / "MusicDJ" / "YouTubeProfile").resolve()
+    local_app_data = Path(
+        os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))
+    )
+    return (local_app_data / "Camfrog" / "AutoDJ" / "YouTubeProfile").resolve()
 
 
 YOUTUBE_PLAYER_HTML = r"""<!doctype html>
@@ -2401,10 +2909,22 @@ document.head.appendChild(script);
 class YouTubePlayerHost:
     """Visible standard YouTube iframe player hosted by a loopback-only local page."""
 
-    ALLOWED_EVENTS = frozenset({
-        "ready", "playing", "paused", "buffering", "ended", "blocked",
-        "error", "hidden", "visible", "heartbeat", "cued", "stopped",
-    })
+    ALLOWED_EVENTS = frozenset(
+        {
+            "ready",
+            "playing",
+            "paused",
+            "buffering",
+            "ended",
+            "blocked",
+            "error",
+            "hidden",
+            "visible",
+            "heartbeat",
+            "cued",
+            "stopped",
+        }
+    )
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -2427,7 +2947,7 @@ class YouTubePlayerHost:
     def origin(self):
         if self._server is None:
             return ""
-        return "http://127.0.0.1:{0}".format(self._server.server_address[1])
+        return f"http://127.0.0.1:{self._server.server_address[1]}"
 
     @property
     def status(self):
@@ -2435,10 +2955,12 @@ class YouTubePlayerHost:
             if self._closing:
                 return "stopped"
             now = time.monotonic()
-            heartbeat_lost = (self._last_heartbeat and
-                              now - self._last_heartbeat > 8.0)
-            startup_lost = (not self._last_heartbeat and self._launched_at and
-                            now - self._launched_at > 20.0)
+            heartbeat_lost = self._last_heartbeat and now - self._last_heartbeat > 8.0
+            startup_lost = (
+                not self._last_heartbeat
+                and self._launched_at
+                and now - self._launched_at > 20.0
+            )
             if self._browser_launched and (heartbeat_lost or startup_lost):
                 self._status = "disconnected"
                 self._browser_launched = False
@@ -2471,10 +2993,13 @@ class YouTubePlayerHost:
             def _authorized(self, parsed, require_origin=False):
                 query = urllib.parse.parse_qs(parsed.query)
                 supplied = query.get("token", [""])[0]
-                expected_host = "127.0.0.1:{0}".format(owner._server.server_address[1])
-                if (self.client_address[0] != "127.0.0.1" or
-                        self.headers.get("Host", "").casefold() != expected_host.casefold() or
-                        not hmac.compare_digest(str(supplied), owner._token)):
+                expected_host = f"127.0.0.1:{owner._server.server_address[1]}"
+                if (
+                    self.client_address[0] != "127.0.0.1"
+                    or self.headers.get("Host", "").casefold()
+                    != expected_host.casefold()
+                    or not hmac.compare_digest(str(supplied), owner._token)
+                ):
                     return False
                 if require_origin and self.headers.get("Origin") != owner.origin:
                     return False
@@ -2508,26 +3033,34 @@ class YouTubePlayerHost:
                         self._respond(400)
                         return
                     with owner._lock:
-                        if (owner._closing or video_id != owner._video_id or
-                                revision != owner._revision):
+                        if (
+                            owner._closing
+                            or video_id != owner._video_id
+                            or revision != owner._revision
+                        ):
                             self._respond(409)
                             return
                     page = YOUTUBE_PLAYER_HTML.replace(
                         "const token=params.get('token')||'';",
-                        "const token=params.get('token')||'';")
+                        "const token=params.get('token')||'';",
+                    )
                     page = page.replace(
                         "let lastRevision=Number(params.get('revision')||0);",
-                        "let lastRevision={0};".format(max(0, revision)))
+                        f"let lastRevision={max(0, revision)};",
+                    )
                     page = page.replace(
                         "const video=params.get('video')||'';",
-                        "const video={0};".format(json.dumps(video_id)))
+                        f"const video={json.dumps(video_id)};",
+                    )
                     self._respond(200, page.encode("utf-8"), "text/html; charset=utf-8")
                     return
                 if parsed.path == "/state":
                     with owner._lock:
-                        state = {"revision": owner._revision,
-                                 "video_id": owner._video_id,
-                                 "closing": owner._closing}
+                        state = {
+                            "revision": owner._revision,
+                            "video_id": owner._video_id,
+                            "closing": owner._closing,
+                        }
                     self._respond(200, json.dumps(state).encode("utf-8"))
                     return
                 self._respond(404)
@@ -2553,12 +3086,17 @@ class YouTubePlayerHost:
                     video_id = payload.get("video_id")
                     revision = payload.get("revision")
                     video_title = payload.get("video_title", "")
-                    if (not isinstance(video_id, str) or
-                            isinstance(revision, bool) or not isinstance(revision, int) or
-                            not isinstance(video_title, str) or len(video_title) > 512):
+                    if (
+                        not isinstance(video_id, str)
+                        or isinstance(revision, bool)
+                        or not isinstance(revision, int)
+                        or not isinstance(video_title, str)
+                        or len(video_title) > 512
+                    ):
                         raise ValueError
                     if not owner.record_event(
-                            kind, error_code, video_id, revision, video_title):
+                        kind, error_code, video_id, revision, video_title
+                    ):
                         self._respond(409)
                         return
                 except (UnicodeError, ValueError, json.JSONDecodeError):
@@ -2574,7 +3112,9 @@ class YouTubePlayerHost:
             self._server = LocalHTTPServer(("127.0.0.1", 0), Handler)
             self._server_thread = threading.Thread(
                 target=self._server.serve_forever,
-                name="autodj-youtube-http", daemon=True)
+                name="autodj-youtube-http",
+                daemon=True,
+            )
             self._server_thread.start()
         except OSError:
             self._server = None
@@ -2582,8 +3122,9 @@ class YouTubePlayerHost:
             raise OSError("Could not start the local YouTube player bridge.") from None
         return self.origin
 
-    def record_event(self, kind, error_code=0, video_id=None, revision=None,
-                     video_title=""):
+    def record_event(
+        self, kind, error_code=0, video_id=None, revision=None, video_title=""
+    ):
         now = time.monotonic()
         with self._lock:
             if video_id != self._video_id or revision != self._revision:
@@ -2599,8 +3140,12 @@ class YouTubePlayerHost:
             self._visible = kind not in ("hidden", "disconnected", "stopped")
             if kind == "stopped":
                 self._closed_ack.set()
-            event = {"kind": kind, "video_id": video_id, "revision": revision,
-                     "video_title": youtube_display_title(video_title, video_id)}
+            event = {
+                "kind": kind,
+                "video_id": video_id,
+                "revision": revision,
+                "video_title": youtube_display_title(video_title, video_id),
+            }
             if kind == "error":
                 event["error_code"] = max(0, min(int(error_code), 999))
             self._events.append(event)
@@ -2610,13 +3155,18 @@ class YouTubePlayerHost:
     def consume_events(self):
         with self._lock:
             events, self._events = self._events, []
-            return [event for event in events
-                    if event.get("video_id") == self._video_id and
-                    event.get("revision") == self._revision]
+            return [
+                event
+                for event in events
+                if event.get("video_id") == self._video_id
+                and event.get("revision") == self._revision
+            ]
 
     def _open_player_window(self, video_id):
         if os.name != "nt":
-            raise OSError("The YouTube player window is supported in the Windows app only.")
+            raise OSError(
+                "The YouTube player window is supported in the Windows app only."
+            )
         browser = find_chromium_browser()
         if browser is None:
             raise FileNotFoundError("Install Microsoft Edge or Google Chrome first.")
@@ -2624,14 +3174,23 @@ class YouTubePlayerHost:
         profile.mkdir(parents=True, exist_ok=True)
         with self._lock:
             revision = self._revision
-        url = self.origin + "/?" + urllib.parse.urlencode({
-            "token": self._token, "video": video_id, "revision": revision})
+        url = (
+            self.origin
+            + "/?"
+            + urllib.parse.urlencode(
+                {"token": self._token, "video": video_id, "revision": revision}
+            )
+        )
         try:
             self._browser_process = subprocess.Popen(
                 [str(browser), "--user-data-dir=" + str(profile), "--new-window", url],
-                cwd=str(browser.parent), stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                close_fds=True, creationflags=0x08000000)
+                cwd=str(browser.parent),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                creationflags=0x08000000,
+            )
         except OSError:
             raise OSError("Could not open the YouTube player browser window.") from None
         with self._lock:
@@ -2689,8 +3248,11 @@ def dj_find_song(music_dir, title):
     if not want:
         return None
     try:
-        songs = sorted(path for path in Path(music_dir).iterdir()
-                       if path.is_file() and path.suffix.lower() in DJ_AUDIO_EXTENSIONS)
+        songs = sorted(
+            path
+            for path in Path(music_dir).iterdir()
+            if path.is_file() and path.suffix.lower() in DJ_AUDIO_EXTENSIONS
+        )
     except OSError:
         return None
     for song in songs:
@@ -2709,8 +3271,12 @@ def _dj_mci_command(command):
         raise OSError("Windows audio playback is unavailable")
     winmm = ctypes.WinDLL("winmm", use_last_error=True)
     send = winmm.mciSendStringW
-    send.argtypes = (ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_wchar),
-                     ctypes.c_uint, ctypes.c_void_p)
+    send.argtypes = (
+        ctypes.c_wchar_p,
+        ctypes.POINTER(ctypes.c_wchar),
+        ctypes.c_uint,
+        ctypes.c_void_p,
+    )
     send.restype = ctypes.c_uint
     result = ctypes.create_unicode_buffer(1024)
     code = send(command, result, len(result), None)
@@ -2787,7 +3353,11 @@ def dj_stop():
 class Runner:
     def __init__(self, cfg, cfg_path=None):
         self.cfg_path = Path(cfg_path) if cfg_path else None
-        self._mtime = self.cfg_path.stat().st_mtime if self.cfg_path and self.cfg_path.exists() else 0
+        self._mtime = (
+            self.cfg_path.stat().st_mtime
+            if self.cfg_path and self.cfg_path.exists()
+            else 0
+        )
         self._next_reload = 0.0
         self._next_resolve_retry = 0.0
         self._next_dj_control_state = 0.0
@@ -2807,7 +3377,12 @@ class Runner:
         self._dj_youtube_disconnected_notice = None
         self.apply_cfg(cfg)
         self.sender_last, self.sent = {}, []
-        self.im_sender_last, self.im_day, self.im_sent, self.im_next_ok = {}, {}, [], 0.0
+        self.im_sender_last, self.im_day, self.im_sent, self.im_next_ok = (
+            {},
+            {},
+            [],
+            0.0,
+        )
         self.next_reply_ok = 0.0
         self.status_i = 0
         self.dj_prev = []
@@ -2815,9 +3390,15 @@ class Runner:
         self.dj_length = 0.0
         self.last_status = -1e9 if cfg["status"]["set_on_start"] else time.monotonic()
         self.prev = []
-        self.stats = {"started": dt.datetime.now().isoformat(timespec="seconds"),
-                      "statuses": 0, "marquee_frames": 0, "replies": 0, "im_replies": 0, "failures": 0,
-                      "by_rule": {}}
+        self.stats = {
+            "started": dt.datetime.now().isoformat(timespec="seconds"),
+            "statuses": 0,
+            "marquee_frames": 0,
+            "replies": 0,
+            "im_replies": 0,
+            "failures": 0,
+            "by_rule": {},
+        }
         self._next_stats = 0.0
 
     def apply_cfg(self, cfg):
@@ -2825,8 +3406,9 @@ class Runner:
         previous = getattr(self, "cfg", None)
         if previous is not None:
             old_dj, new_dj = previous.get("dj", {}), cfg.get("dj", {})
-            if (old_dj.get("audio_backend", "chat") != new_dj.get("audio_backend", "chat") or
-                    old_dj.get("enabled", False) != new_dj.get("enabled", False)):
+            if old_dj.get("audio_backend", "chat") != new_dj.get(
+                "audio_backend", "chat"
+            ) or old_dj.get("enabled", False) != new_dj.get("enabled", False):
                 self.dj_stop_playback()
                 if self.youtube_player is not None:
                     self.youtube_player.close()
@@ -2835,7 +3417,9 @@ class Runner:
         self.dry = cfg["dry_run"]
         self.stop_file = BASE / cfg["safety"]["stop_file"]
         ar = cfg["autoreply"]
-        old = {(r["idx"], r["rx"].pattern): r["last"] for r in getattr(self, "rules", [])}
+        old = {
+            (r["idx"], r["rx"].pattern): r["last"] for r in getattr(self, "rules", [])
+        }
         self.rules = compile_rules(ar)
         for r in self.rules:  # a hot reload must not reset rule cooldowns
             r["last"] = old.get((r["idx"], r["rx"].pattern), r["last"])
@@ -2846,7 +3430,10 @@ class Runner:
         im = _im(cfg)
         self.im_dry = self.dry or im["dry_run"]  # the global dry_run always wins
         view = im_view(cfg)["autoreply"]
-        old_im = {(r["idx"], r["rx"].pattern): r["last"] for r in getattr(self, "im_rules", [])}
+        old_im = {
+            (r["idx"], r["rx"].pattern): r["last"]
+            for r in getattr(self, "im_rules", [])
+        }
         self.im_rules = compile_rules(view)
         for r in self.im_rules:
             r["last"] = old_im.get((r["idx"], r["rx"].pattern), r["last"])
@@ -2858,7 +3445,11 @@ class Runner:
             if h["seed_from_messages"]:
                 changed = False
                 for it in cfg["status"]["messages"]:
-                    for txt in ([it] if isinstance(it, str) else [it.get("th", ""), it.get("en", "")]):
+                    for txt in (
+                        [it]
+                        if isinstance(it, str)
+                        else [it.get("th", ""), it.get("en", "")]
+                    ):
                         changed |= self.hist.add(txt)
                 if changed:
                     self.hist.save()
@@ -2878,8 +3469,11 @@ class Runner:
         try:
             new = apply_app_profile(load_cfg(self.cfg_path))
             errs, _ = validate(new)
-            if not new["dry_run"] and new["autoreply"]["enabled"] \
-                    and not new["autoreply"]["own_nickname"].strip():
+            if (
+                not new["dry_run"]
+                and new["autoreply"]["enabled"]
+                and not new["autoreply"]["own_nickname"].strip()
+            ):
                 errs.append(t("refuse_live"))
         except Exception as e:
             errs = [str(e)]
@@ -2901,17 +3495,29 @@ class Runner:
             return
         self._next_stats = now + sc["write_seconds"]
         try:
-            atomic_write(BASE / sc["file"], json.dumps(
-                self.stats, ensure_ascii=False, indent=2))
+            atomic_write(
+                BASE / sc["file"], json.dumps(self.stats, ensure_ascii=False, indent=2)
+            )
         except Exception as e:  # stats must never break the bot
             log.debug("stats write failed: %s", e)
 
     def send(self, ctrl, text, btn=None, win=None):
         s = self.cfg["safety"]
-        target = (self.cfg["status"].get("background_enter_target", "edit")
-                  if ctrl is getattr(self, "status_edit", None) and win is None else "edit")
-        return commit(win or self.win, ctrl, text, self.dry, s["require_foreground"], btn,
-                      s["restore_previous_window"], target)
+        target = (
+            self.cfg["status"].get("background_enter_target", "edit")
+            if ctrl is getattr(self, "status_edit", None) and win is None
+            else "edit"
+        )
+        return commit(
+            win or self.win,
+            ctrl,
+            text,
+            self.dry,
+            s["require_foreground"],
+            btn,
+            s["restore_previous_window"],
+            target,
+        )
 
     def resolve(self):
         try:
@@ -2919,7 +3525,9 @@ class Runner:
         except LookupError as e:
             if not self.cfg_path:
                 raise
-            log.warning(f"UI element missing ({e}). Auto-detecting and updating config...")
+            log.warning(
+                f"UI element missing ({e}). Auto-detecting and updating config..."
+            )
             if cmd_detect(self.cfg, self.cfg_path, apply=True, as_json=False) == 0:
                 log.info("Auto-detect successfully updated config. Reloading...")
                 try:
@@ -2931,7 +3539,9 @@ class Runner:
                     raise
                 self._do_resolve()
             else:
-                log.error("Auto-detect failed to find missing elements. Retrying on next tick.")
+                log.error(
+                    "Auto-detect failed to find missing elements. Retrying on next tick."
+                )
                 self.status_edit = None
                 self.apply_btn = None
                 self.win = None
@@ -2942,8 +3552,11 @@ class Runner:
         self.win = get_window(cfg)
         self.status_edit, self.apply_btn = None, None
         self.status_edit = find(self.win, st["edit"]) if st["enabled"] else None
-        self.apply_btn = find(self.win, st["apply_button"]) \
-            if st["enabled"] and st["apply_button"] else None
+        self.apply_btn = (
+            find(self.win, st["apply_button"])
+            if st["enabled"] and st["apply_button"]
+            else None
+        )
         self.history = self.input = self.chat_win = None
         self.prev = []
         self.next_attach = 0.0
@@ -2964,7 +3577,11 @@ class Runner:
             if force:
                 log.warning(t("no_room"))
             return
-        self.history, self.input, self.chat_win = find(w, ar["history"]), find(w, ar["input"]), w
+        self.history, self.input, self.chat_win = (
+            find(w, ar["history"]),
+            find(w, ar["input"]),
+            w,
+        )
         self.prev = read_chat(self.history, ar["history_tail"]).splitlines()
         log.info(t("room_attached", title=shown(w.window_text())))
 
@@ -2974,8 +3591,15 @@ class Runner:
             log.info(t("im_off"))
             return
         mode = "dry-run" if self.im_dry else "LIVE"
-        log.info(t("im_on", mode=mode, n=len([n for n in im["only_nicknames"] if str(n).strip()]),
-                   r=len(im["rules"]), k="+".join(im["log_kinds"])))
+        log.info(
+            t(
+                "im_on",
+                mode=mode,
+                n=len([n for n in im["only_nicknames"] if str(n).strip()]),
+                r=len(im["rules"]),
+                k="+".join(im["log_kinds"]),
+            )
+        )
 
     def attach_im(self, now, force=False):
         """Track private-chat windows (retried every 5 s). Windows already open when we (re)attach
@@ -3042,14 +3666,25 @@ class Runner:
                 self.im_sent = [x for x in self.im_sent if now - x < 3600]
                 day = [x for x in self.im_day.get(lk, []) if now - x < 86400]
                 self.im_day[lk] = day
-                if (now < self.im_next_ok or len(self.im_sent) >= im["max_per_hour"]
-                        or len(day) >= im["max_per_sender_per_day"]
-                        or now - self.im_sender_last.get(lk, -1e9) < im["per_sender_cooldown_seconds"]
-                        or now - d["rule"]["last"] < d["rule"]["cooldown"]):
+                if (
+                    now < self.im_next_ok
+                    or len(self.im_sent) >= im["max_per_hour"]
+                    or len(day) >= im["max_per_sender_per_day"]
+                    or now - self.im_sender_last.get(lk, -1e9)
+                    < im["per_sender_cooldown_seconds"]
+                    or now - d["rule"]["last"] < d["rule"]["cooldown"]
+                ):
                     continue
                 time.sleep(random.uniform(*im["delay_range_seconds"]))
-                if not commit(st["win"], st["inp"], d["reply"], self.im_dry,
-                              s["require_foreground"], None, s["restore_previous_window"]):
+                if not commit(
+                    st["win"],
+                    st["inp"],
+                    d["reply"],
+                    self.im_dry,
+                    s["require_foreground"],
+                    None,
+                    s["restore_previous_window"],
+                ):
                     raise RuntimeError(t("reply_fail"))
                 ts = time.monotonic()
                 self.im_sender_last[lk] = d["rule"]["last"] = ts
@@ -3062,10 +3697,15 @@ class Runner:
                 log.info(t("im_replied", nick=nick, text=shown(d["reply"])))
         if len(self.im_day) > 200:
             now = time.monotonic()
-            self.im_day = {k: v for k, v in self.im_day.items() if any(now - x < 86400 for x in v)}
+            self.im_day = {
+                k: v for k, v in self.im_day.items() if any(now - x < 86400 for x in v)
+            }
             # Prune sender last-seen older than the per-sender cooldown (no longer blocks new messages)
-            self.im_sender_last = {k: v for k, v in self.im_sender_last.items()
-                                   if now - v < im["per_sender_cooldown_seconds"]}
+            self.im_sender_last = {
+                k: v
+                for k, v in self.im_sender_last.items()
+                if now - v < im["per_sender_cooldown_seconds"]
+            }
 
     def status_pool(self):
         st, now = self.cfg["status"], dt.datetime.now().time()
@@ -3115,8 +3755,18 @@ class Runner:
         if not mq["enabled"] or not mq.get("scroll", False):
             return [final]  # per-line rotation: one whole line per tick
         inf = mq.get("infinite_loop", False)
-        frames = [clip(f, limit) for f in marquee_frames(
-            text, mq["width"], mq["stride"], mq["separator"], mq["cycles"], mq["max_frames"], inf)]
+        frames = [
+            clip(f, limit)
+            for f in marquee_frames(
+                text,
+                mq["width"],
+                mq["stride"],
+                mq["separator"],
+                mq["cycles"],
+                mq["max_frames"],
+                inf,
+            )
+        ]
         if not inf and (not frames or frames[-1] != final):
             frames.append(final)  # settle on full text unless infinite loop
         return frames
@@ -3137,7 +3787,12 @@ class Runner:
                 log.warning(t("status_blank"))
                 self.last_status = now
                 return
-            self.marq = {"raw": raw, "frames": self.build_frames(text), "i": 0, "next": now}
+            self.marq = {
+                "raw": raw,
+                "frames": self.build_frames(text),
+                "i": 0,
+                "next": now,
+            }
         m = self.marq
         if now < m["next"]:
             return
@@ -3163,7 +3818,8 @@ class Runner:
             # writes can be slow; using `now` here could make delayed sends run
             # back-to-back and destabilize the ticker.
             m["next"] = time.monotonic() + max(
-                0.3, float(st["marquee"]["step_seconds"]))
+                0.3, float(st["marquee"]["step_seconds"])
+            )
             log.debug(t("status_set", text=shown(frame)))
 
     def do_chat(self, can_reply):
@@ -3174,13 +3830,18 @@ class Runner:
         fresh, self.prev = new_lines(self.prev, cur), cur
         if not can_reply:
             return  # consume backlog so it isn't answered later
-        if len(fresh) > RESET_BURST:  # room switch / reload dumped old lines: never answer them
+        if (
+            len(fresh) > RESET_BURST
+        ):  # room switch / reload dumped old lines: never answer them
             log.warning(t("burst_skip", n=len(fresh)))
             return
         if len(self.sender_last) > 500:
             now = time.monotonic()
-            self.sender_last = {k: v for k, v in self.sender_last.items()
-                                if now - v < ar["per_sender_cooldown_seconds"]}
+            self.sender_last = {
+                k: v
+                for k, v in self.sender_last.items()
+                if now - v < ar["per_sender_cooldown_seconds"]
+            }
         for line in fresh:
             m = LINE_RE.match(line.strip())
             if not m:
@@ -3189,8 +3850,12 @@ class Runner:
             if dj_pre and msg.startswith(dj_pre):
                 continue  # DJ commands belong to do_dj, never to room rules
             lk, mlang = nick.lower(), detect_lang(m["msg"])
-            if (not NICK_RE.match(nick) or lk == self.own or lk in self.ignore
-                    or (self.only and lk not in self.only)):
+            if (
+                not NICK_RE.match(nick)
+                or lk == self.own
+                or lk in self.ignore
+                or (self.only and lk not in self.only)
+            ):
                 continue
             if is_skipped(msg, self.skips, ar["ignore_links"]):
                 continue
@@ -3204,8 +3869,11 @@ class Runner:
             if rule is None or now - rule["last"] < rule["cooldown"]:
                 continue
             template = pick_reply(rule["spec"], mlang)
-            reply = safe_reply(template, nick, ar["max_reply_length"],
-                               ar["own_nickname"]) if template else None
+            reply = (
+                safe_reply(template, nick, ar["max_reply_length"], ar["own_nickname"])
+                if template
+                else None
+            )
             if reply is None:
                 continue
             time.sleep(random.uniform(*ar["delay_range_seconds"]))
@@ -3222,15 +3890,18 @@ class Runner:
 
     def dj_command(self, queue, dj, cmd, arg, nick, owner):
         """One DJ chat command -> reply text (None = not a DJ command)."""
-        if cmd in ("randommusic", "musicrandom", "ytmusic",
-            "musicสุ่ม", "musicสุ่ม neck"):
+        if cmd in ("randommusic", "musicrandom", "ytmusic", "musicสุ่ม", "musicสุ่ม neck"):
             query, url = random_youtube_music_link()
             try:
                 save_random_youtube_music_link(query, url)
             except (OSError, UnicodeError, ValueError):
                 log.exception("Could not persist generated YouTube music search")
-                raise DJError(bi("could not save random YouTube music link; check the local data folder|"
-                                 "บันทึกลิงก์เพลง YouTube ไม่ได้ โปรดตรวจสอบโฟลเดอร์ข้อมูลของแอป")) from None
+                raise DJError(
+                    bi(
+                        "could not save random YouTube music link; check the local data folder|"
+                        "บันทึกลิงก์เพลง YouTube ไม่ได้ โปรดตรวจสอบโฟลเดอร์ข้อมูลของแอป"
+                    )
+                ) from None
             backend = dj.get("audio_backend", "chat")
             title = query
             if backend == "youtube":
@@ -3240,13 +3911,27 @@ class Runner:
                     open_youtube_search(query)
                 except (OSError, FileNotFoundError) as exc:
                     log.warning("Could not open YouTube search browser: %s", exc)
-            return bi("[dj] Random YouTube search opened: {url}|"
-                      "[dj] เปิดค้นหาเพลง YouTube แล้ว: {url} ใช้ !request <YouTube URL> เพื่อเล่นอัตโนมัติ").format(url=url)
-        if cmd in ("search", "youtube", "yt", "ค้นหา", "หาเพลง", "ค้นหาเพลง",
-            "หาคำตอบ", "หาคำตอบ"):
+            return bi(
+                "[dj] Random YouTube search opened: {url}|"
+                "[dj] เปิดค้นหาเพลง YouTube แล้ว: {url} ใช้ !request <YouTube URL> เพื่อเล่นอัตโนมัติ"
+            ).format(url=url)
+        if cmd in (
+            "search",
+            "youtube",
+            "yt",
+            "ค้นหา",
+            "หาเพลง",
+            "ค้นหาเพลง",
+            "หาคำตอบ",
+            "หาคำตอบ",
+        ):
             if not arg:
-                raise DJError(bi("give a search phrase: !search <query>|"
-                                 "ระบุคำค้นหา: !search <คำค้นหา>"))
+                raise DJError(
+                    bi(
+                        "give a search phrase: !search <query>|"
+                        "ระบุคำค้นหา: !search <คำค้นหา>"
+                    )
+                )
             url = youtube_search_url(arg)
             backend = dj.get("audio_backend", "chat")
             if backend == "youtube":
@@ -3254,12 +3939,25 @@ class Runner:
                     open_youtube_search(arg)
                 except (OSError, FileNotFoundError) as exc:
                     log.warning("Could not open YouTube search browser: %s", exc)
-            return bi("[dj] YouTube search opened: {url} ใช้ !request <YouTube URL> เพื่อเล่นอัตโนมัติ|"
-                      "[dj] YouTube search opened: {url} use !request <YouTube URL> to play").format(url=url)
-        if cmd in ("play", "request", "req", "song",
-            "ขอเพลง", "ขอเพลง YouTube", "ขอเพลง YouTube หรือ ID",
-            "เล่นเพลง", "เล่นเพลง YouTube", "เล่น",
-            "ข้ามเพลง", "ข้าม", "skip ไทย"):
+            return bi(
+                "[dj] YouTube search opened: {url} ใช้ !request <YouTube URL> เพื่อเล่นอัตโนมัติ|"
+                "[dj] YouTube search opened: {url} use !request <YouTube URL> to play"
+            ).format(url=url)
+        if cmd in (
+            "play",
+            "request",
+            "req",
+            "song",
+            "ขอเพลง",
+            "ขอเพลง YouTube",
+            "ขอเพลง YouTube หรือ ID",
+            "เล่นเพลง",
+            "เล่นเพลง YouTube",
+            "เล่น",
+            "ข้ามเพลง",
+            "ข้าม",
+            "skip ไทย",
+        ):
             title = arg
             video_id = None
             backend = dj.get("audio_backend", "chat")
@@ -3273,7 +3971,9 @@ class Runner:
                     video_id = youtube_video_id(arg)
                     title = video_id
                 except ValueError:
-                    raise DJError("use !request <YouTube video URL or 11-character ID>") from None
+                    raise DJError(
+                        "use !request <YouTube video URL or 11-character ID>"
+                    ) from None
             if queue.current is not None:
                 current_key = queue.current["title"].lower()
                 if backend == "youtube":
@@ -3289,51 +3989,77 @@ class Runner:
                 if not self.dj_start_playback(queue, dj):
                     queue.current = None
                     if backend == "youtube":
-                        raise DJError("could not open the visible YouTube player window")
-                    raise DJError(bi("could not start local audio; check the file and Windows audio support|"
-                                     "เริ่มเล่นเสียงในเครื่องไม่ได้ โปรดตรวจสอบไฟล์และ codec ของ Windows"))
+                        raise DJError(
+                            "could not open the visible YouTube player window"
+                        )
+                    raise DJError(
+                        bi(
+                            "could not start local audio; check the file and Windows audio support|"
+                            "เริ่มเล่นเสียงในเครื่องไม่ได้ โปรดตรวจสอบไฟล์และ codec ของ Windows"
+                        )
+                    )
                 if backend == "youtube":
-                    return bi("[dj] Loading YouTube video {title}. Press Play in the player if needed.|"
-                              "[dj] กำลังโหลดวิดีโอ YouTube {title} หากระบบไม่เล่นอัตโนมัติให้กด Play ในหน้าต่างผู้เล่น").format(
-                                  title=title)
-                return dj["announce_now"].format(title=queue.current["title"],
-                                                user=queue.current["user"])
+                    return bi(
+                        "[dj] Loading YouTube video {title}. Press Play in the player if needed.|"
+                        "[dj] กำลังโหลดวิดีโอ YouTube {title} หากระบบไม่เล่นอัตโนมัติให้กด Play ในหน้าต่างผู้เล่น"
+                    ).format(title=title)
+                return dj["announce_now"].format(
+                    title=queue.current["title"], user=queue.current["user"]
+                )
             return dj["announce_queued"].format(pos=pos, title=title)
         if cmd in ("queue", "คิว", "ดูคิว"):
             if not queue.queue:
                 return "[dj] queue is empty"
-            lines = [f"{i}. {q['title']} ({q['user']})"
-                     for i, q in enumerate(queue.queue[:10], 1)]
+            lines = [
+                f"{i}. {q['title']} ({q['user']})"
+                for i, q in enumerate(queue.queue[:10], 1)
+            ]
             return "[dj] queue: " + " | ".join(lines)
         if cmd in ("current", "np"):
             if queue.current is None:
                 return "[dj] nothing is playing"
-            elapsed = (max(0.0, time.monotonic() - self.dj_started)
-                       if self.dj_started else None)
-            return dj_status_summary(queue.current, queue.queue[0] if queue.queue else None,
-                                     elapsed, self.dj_length)
+            elapsed = (
+                max(0.0, time.monotonic() - self.dj_started)
+                if self.dj_started
+                else None
+            )
+            return dj_status_summary(
+                queue.current,
+                queue.queue[0] if queue.queue else None,
+                elapsed,
+                self.dj_length,
+            )
         if cmd in ("skip", "ข้ามเพลง", "ข้าม", "skip ไทย"):
             nxt = queue.skip(nick, owner)
             if not self.dj_start_playback(queue, dj):
                 queue.current = None
                 if dj.get("audio_backend", "chat") == "youtube":
-                    raise DJError("skipped, but could not open the YouTube player window")
-                raise DJError(bi("skipped, but could not start local audio|ข้ามเพลงแล้ว แต่เริ่มเล่นเสียงในเครื่องไม่ได้"))
+                    raise DJError(
+                        "skipped, but could not open the YouTube player window"
+                    )
+                raise DJError(
+                    bi(
+                        "skipped, but could not start local audio|ข้ามเพลงแล้ว แต่เริ่มเล่นเสียงในเครื่องไม่ได้"
+                    )
+                )
             if nxt is None:
                 return "[dj] skipped, queue is empty"
             if dj.get("audio_backend", "chat") == "youtube":
-                return bi("[dj] Loading YouTube video {title}. Press Play in the player if needed.|"
-                          "[dj] กำลังโหลดวิดีโอ YouTube {title} หากระบบไม่เล่นอัตโนมัติให้กด Play ในหน้าต่างผู้เล่น").format(
-                              title=nxt["title"])
+                return bi(
+                    "[dj] Loading YouTube video {title}. Press Play in the player if needed.|"
+                    "[dj] กำลังโหลดวิดีโอ YouTube {title} หากระบบไม่เล่นอัตโนมัติให้กด Play ในหน้าต่างผู้เล่น"
+                ).format(title=nxt["title"])
             return dj["announce_now"].format(title=nxt["title"], user=nxt["user"])
         if cmd in ("stop", "หยุดเพลง", "หยุด", "หยุดเล่น"):
             self.dj_stop_playback()
             return "[dj] stopped"
         if cmd == "help":
-            request_help = ("<YouTube video URL or ID>" if
-                            dj.get("audio_backend", "chat") == "youtube" else "<song>")
-            return "[dj] commands: !request {0} !randommusic !queue !current !skip !stop !help".format(
-                request_help)
+            request_help = (
+                "<YouTube video URL or ID>"
+                if dj.get("audio_backend", "chat") == "youtube"
+                else "<song>"
+            )
+            return f"[dj] commands: !request {request_help} !randommusic !queue !current !skip !stop !help"
         return None
 
     def dj_stop_playback(self):
@@ -3358,7 +4084,9 @@ class Runner:
             if dj.get("audio_backend", "chat") == "youtube":
                 try:
                     self._dj_youtube_requested = (
-                        dj_youtube_video_id(queue.current), queue.current["user"])
+                        dj_youtube_video_id(queue.current),
+                        queue.current["user"],
+                    )
                 except ValueError:
                     return False
             return True
@@ -3388,7 +4116,9 @@ class Runner:
                     try:
                         player.close()
                     except Exception:
-                        log.debug("Failed to close YouTube player bridge", exc_info=True)
+                        log.debug(
+                            "Failed to close YouTube player bridge", exc_info=True
+                        )
                     if self.youtube_player is player:
                         self.youtube_player = None
                 self._dj_youtube_requested = None
@@ -3422,11 +4152,18 @@ class Runner:
             started = self.dj_start_playback(queue, dj)
             if not started:
                 queue.current = None
-                self.say_now(bi("could not start local audio; check the file and Windows audio support|"
-                                 "เริ่มเล่นเสียงในเครื่องไม่ได้ โปรดตรวจสอบไฟล์และ codec ของ Windows"))
+                self.say_now(
+                    bi(
+                        "could not start local audio; check the file and Windows audio support|"
+                        "เริ่มเล่นเสียงในเครื่องไม่ได้ โปรดตรวจสอบไฟล์และ codec ของ Windows"
+                    )
+                )
             else:
-                self.say_now(dj["announce_now"].format(
-                    title=queue.current["title"], user=queue.current["user"]))
+                self.say_now(
+                    dj["announce_now"].format(
+                        title=queue.current["title"], user=queue.current["user"]
+                    )
+                )
             return True
         if not self.dj_started:
             if not self.dry and dj.get("audio_backend", "chat") == "local":
@@ -3448,10 +4185,16 @@ class Runner:
             self.say_now("[dj] queue finished")
         elif not started:
             queue.current = None
-            self.say_now(bi("could not start local audio; check the file and Windows audio support|"
-                             "เริ่มเล่นเสียงในเครื่องไม่ได้ โปรดตรวจสอบไฟล์และ codec ของ Windows"))
+            self.say_now(
+                bi(
+                    "could not start local audio; check the file and Windows audio support|"
+                    "เริ่มเล่นเสียงในเครื่องไม่ได้ โปรดตรวจสอบไฟล์และ codec ของ Windows"
+                )
+            )
         else:
-            self.say_now(dj["announce_now"].format(title=nxt["title"], user=nxt["user"]))
+            self.say_now(
+                dj["announce_now"].format(title=nxt["title"], user=nxt["user"])
+            )
         return True
 
     def dj_auto_advance_youtube(self, queue, dj):
@@ -3482,9 +4225,12 @@ class Runner:
         if player is None:
             return dirty
         for event in player.consume_events():
-            if (event.get("revision") != player.revision or
-                    event.get("video_id") != player.video_id or
-                    queue.current is None or event.get("video_id") != video_id):
+            if (
+                event.get("revision") != player.revision
+                or event.get("video_id") != player.video_id
+                or queue.current is None
+                or event.get("video_id") != video_id
+            ):
                 continue
             kind = event.get("kind")
             if kind in ("ready", "playing"):
@@ -3495,20 +4241,28 @@ class Runner:
             if kind == "playing":
                 if self._dj_youtube_announced != key:
                     self.dj_started = time.monotonic()
-                    self.say_now(dj["announce_now"].format(
-                        title=queue.current["title"], user=queue.current["user"]))
+                    self.say_now(
+                        dj["announce_now"].format(
+                            title=queue.current["title"], user=queue.current["user"]
+                        )
+                    )
                     self._dj_youtube_announced = key
                 self._dj_youtube_retries = 0
                 self._dj_youtube_disconnected_notice = None
             elif kind == "blocked" and self._dj_youtube_blocked != key:
                 self._dj_youtube_blocked = key
-                self.say_now("[dj] YouTube blocked autoplay; press Play in the visible player window")
+                self.say_now(
+                    "[dj] YouTube blocked autoplay; press Play in the visible player window"
+                )
             elif kind == "error":
                 marker = (key, event.get("error_code", 0))
                 if self._dj_youtube_error != marker:
                     self._dj_youtube_error = marker
-                    self.say_now("[dj] YouTube player error {0}; use !skip to continue".format(
-                        event.get("error_code", 0)))
+                    self.say_now(
+                        "[dj] YouTube player error {0}; use !skip to continue".format(
+                            event.get("error_code", 0)
+                        )
+                    )
             elif kind == "ended":
                 nxt = queue.advance()
                 dirty = True
@@ -3521,18 +4275,24 @@ class Runner:
                     self.say_now("[dj] could not load the next YouTube video")
                 break
 
-        if (queue.current is not None and player.status == "disconnected"):
+        if queue.current is not None and player.status == "disconnected":
             retry_at = getattr(self, "dj_retry_at", 0.0)
             now = time.monotonic()
             if self._dj_youtube_retries < 2 and now >= retry_at:
                 self._dj_youtube_retries += 1
                 self.dj_retry_at = now + 15.0
                 if not self.dj_start_playback(queue, dj):
-                    self.say_now("[dj] YouTube player could not reconnect; use !skip to continue")
-            elif (self._dj_youtube_retries >= 2 and
-                  self._dj_youtube_disconnected_notice != key):
+                    self.say_now(
+                        "[dj] YouTube player could not reconnect; use !skip to continue"
+                    )
+            elif (
+                self._dj_youtube_retries >= 2
+                and self._dj_youtube_disconnected_notice != key
+            ):
                 self._dj_youtube_disconnected_notice = key
-                self.say_now("[dj] YouTube player is disconnected; reopen the player or use !skip")
+                self.say_now(
+                    "[dj] YouTube player is disconnected; reopen the player or use !skip"
+                )
         return dirty
 
     def say_now(self, text):
@@ -3542,8 +4302,12 @@ class Runner:
 
     def do_dj(self, active):
         dj = self.cfg.get("dj") or DEFAULTS["dj"]
-        if not (dj["enabled"] and active and self.history is not None
-                and self.input is not None):
+        if not (
+            dj["enabled"]
+            and active
+            and self.history is not None
+            and self.input is not None
+        ):
             return
         ar = self.cfg["autoreply"]
         cur = read_chat(self.history, ar["history_tail"]).splitlines()
@@ -3563,9 +4327,11 @@ class Runner:
                 continue
             if not msg.startswith(pre):
                 continue
-            cmd, _, arg = msg[len(pre):].strip().partition(" ")
+            cmd, _, arg = msg[len(pre) :].strip().partition(" ")
             try:
-                reply = self.dj_command(queue, dj, cmd.lower(), arg.strip(), nick, owner)
+                reply = self.dj_command(
+                    queue, dj, cmd.lower(), arg.strip(), nick, owner
+                )
             except DJError as e:
                 reply = f"[dj] {e}"
             if reply is None:
@@ -3607,7 +4373,10 @@ class Runner:
         control_watch_stop = threading.Event()
         control_watch = threading.Thread(
             target=self._watch_dj_control_requests,
-            args=(control_watch_stop,), name="autodj-control-watch", daemon=True)
+            args=(control_watch_stop,),
+            name="autodj-control-watch",
+            daemon=True,
+        )
         control_watch.start()
         try:
             while not self.stop_file.exists():
@@ -3647,7 +4416,7 @@ class Runner:
                     if fails >= limit:
                         log.error(t("too_many"))
                         return 1
-                    time.sleep(min(30, 2 ** fails))
+                    time.sleep(min(30, 2**fails))
                     try:
                         self.resolve()
                     except Exception as e:
@@ -3703,13 +4472,26 @@ def cmd_init(path, force):
     if path.exists() and not force:
         print(t("init_exists", p=path))
         return 1
-    sample = deep_merge(DEFAULTS, {
-        "status": {"messages": [{"th": "สวัสดีครับ ยินดีต้อนรับ", "en": "Welcome everyone"}]},
-        "autoreply": {"rules": [{
-            "pattern": "สวัสดี|หวัดดี|\\bhello\\b|\\bhi\\b",
-            "reply": {"th": ["สวัสดีครับคุณ {sender}"], "en": ["Hi {sender}, welcome!"]},
-            "cooldown_seconds": 60}]},
-    })
+    sample = deep_merge(
+        DEFAULTS,
+        {
+            "status": {
+                "messages": [{"th": "สวัสดีครับ ยินดีต้อนรับ", "en": "Welcome everyone"}]
+            },
+            "autoreply": {
+                "rules": [
+                    {
+                        "pattern": "สวัสดี|หวัดดี|\\bhello\\b|\\bhi\\b",
+                        "reply": {
+                            "th": ["สวัสดีครับคุณ {sender}"],
+                            "en": ["Hi {sender}, welcome!"],
+                        },
+                        "cooldown_seconds": 60,
+                    }
+                ]
+            },
+        },
+    )
     atomic_write(path, json.dumps(sample, ensure_ascii=False, indent=2) + "\n")
     print(t("init_done", p=path))
     return 0
@@ -3726,18 +4508,29 @@ def evaluate_message(cfg, nick, msg, rules=None, skips=None):
     only = {n.lower() for n in ar["only_nicknames"]}
     lk, mlang = nick.lower(), detect_lang(msg)
     out = {"lang": mlang, "skip": None, "rule": None, "reply": None}
-    if not NICK_RE.match(nick) or lk == own or lk in ignore or (only and lk not in only):
+    if (
+        not NICK_RE.match(nick)
+        or lk == own
+        or lk in ignore
+        or (only and lk not in only)
+    ):
         out["skip"] = "sender"
         return out
     msg = msg[: ar["max_incoming_length"]]
-    out["skip"] = {"link": "link", "pattern": "pattern"}.get(is_skipped(msg, skips, ar["ignore_links"]))
+    out["skip"] = {"link": "link", "pattern": "pattern"}.get(
+        is_skipped(msg, skips, ar["ignore_links"])
+    )
     if out["skip"]:
         return out
     rule = match_rule(rules, msg, mlang, own)
     out["rule"] = rule
     if rule is not None:
         tpl = pick_reply(rule["spec"], mlang)
-        out["reply"] = safe_reply(tpl, nick, ar["max_reply_length"], ar["own_nickname"]) if tpl else None
+        out["reply"] = (
+            safe_reply(tpl, nick, ar["max_reply_length"], ar["own_nickname"])
+            if tpl
+            else None
+        )
     return out
 
 
@@ -3745,10 +4538,17 @@ def im_view(cfg):
     """cfg whose `autoreply` section carries the IM rules/limits, so the room-tested matching code
     (evaluate_message, compile_rules, ...) is reused unchanged for private chats."""
     ar, im = cfg["autoreply"], _im(cfg)
-    return {"autoreply": {**ar, "rules": im["rules"], "skip_patterns": im["skip_patterns"],
-                          "ignore_links": im["ignore_links"], "only_nicknames": im["only_nicknames"],
-                          "max_reply_length": im["max_reply_length"],
-                          "max_incoming_length": im["max_incoming_length"]}}
+    return {
+        "autoreply": {
+            **ar,
+            "rules": im["rules"],
+            "skip_patterns": im["skip_patterns"],
+            "ignore_links": im["ignore_links"],
+            "only_nicknames": im["only_nicknames"],
+            "max_reply_length": im["max_reply_length"],
+            "max_incoming_length": im["max_incoming_length"],
+        }
+    }
 
 
 def im_text(cfg, reply):
@@ -3804,8 +4604,14 @@ def cmd_test_rules(cfg, a):
         elif r["rule"] is None:
             print("  " + t("tr_none"))
         else:
-            print("  " + t("tr_match", i=r["rule"]["idx"],
-                           reply=r["reply"] if r["reply"] else t("tr_blocked")))
+            print(
+                "  "
+                + t(
+                    "tr_match",
+                    i=r["rule"]["idx"],
+                    reply=r["reply"] if r["reply"] else t("tr_blocked"),
+                )
+            )
     return 0
 
 
@@ -3836,7 +4642,10 @@ def cmd_history_add(cfg, text):
 
 def cmd_history_import(cfg, path):
     hist = _history(cfg)
-    n = sum(hist.add(line) for line in Path(path).read_text(encoding="utf-8-sig").splitlines())
+    n = sum(
+        hist.add(line)
+        for line in Path(path).read_text(encoding="utf-8-sig").splitlines()
+    )
     hist.save()
     print(t("hist_imported", n=n))
     return 0
@@ -3847,8 +4656,15 @@ def cmd_marquee(cfg, a):
     width = a.width or mq["width"]
     stride = a.stride or mq["stride"]
     inf = a.infinite_loop or mq.get("infinite_loop", False)
-    frames = marquee_frames(a.text, width, stride, mq["separator"],
-                            a.cycles or mq["cycles"], a.max_frames or mq["max_frames"], inf)
+    frames = marquee_frames(
+        a.text,
+        width,
+        stride,
+        mq["separator"],
+        a.cycles or mq["cycles"],
+        a.max_frames or mq["max_frames"],
+        inf,
+    )
     if len(frames) <= 1:
         print(t("mq_static"))
     for i, f in enumerate(frames, 1):
@@ -3860,6 +4676,7 @@ def cmd_marquee(cfg, a):
 
 def cmd_windows(cfg):
     from pywinauto import Desktop
+
     rx = re.compile(cfg["window_title_regex"])
     rows = []
     for w in Desktop(backend="uia").windows(visible_only=True):
@@ -3882,6 +4699,7 @@ def cmd_windows(cfg):
 def dump_controls(win, f):
     """Indented control tree (class | type | name | automation_id | rect). Works with every pywinauto
     version: UIAWrapper has no print_control_identifiers (only WindowSpecification does)."""
+
     def walk(c, depth):
         try:
             r = c.rectangle()
@@ -3889,15 +4707,20 @@ def dump_controls(win, f):
         except Exception:
             rect = "?"
         ctype = _ctrl_attr(c, "control_type")
-        name = "" if ctype in STRUCT_SKIP else str(_ctrl_attr(c, "name"))[:60]  # no nicknames/chat text
-        f.write(f"{'  ' * depth}{_ctrl_attr(c, 'class_name')} | {ctype} | "
-                f"{name!r} | id={_ctrl_attr(c, 'automation_id')!r} | {rect}\n")
+        name = (
+            "" if ctype in STRUCT_SKIP else str(_ctrl_attr(c, "name"))[:60]
+        )  # no nicknames/chat text
+        f.write(
+            f"{'  ' * depth}{_ctrl_attr(c, 'class_name')} | {ctype} | "
+            f"{name!r} | id={_ctrl_attr(c, 'automation_id')!r} | {rect}\n"
+        )
         try:
             kids = c.children()
         except Exception:
             return
         for k in kids:
             walk(k, depth + 1)
+
     walk(win, 0)
 
 
@@ -3906,7 +4729,9 @@ def cmd_discover(cfg):
     out = BASE / "controls.txt"
     with out.open("w", encoding="utf-8") as f:
         for w in process_windows(win):
-            f.write(f"=== window: {w.window_text()[:60]!r} class={w.class_name()} ===\n")
+            f.write(
+                f"=== window: {w.window_text()[:60]!r} class={w.class_name()} ===\n"
+            )
             dump_controls(w, f)
     print(t("discover_done", p=out))
     return 0
@@ -3915,7 +4740,14 @@ def cmd_discover(cfg):
 # ---------- Camfrog 8.x control detection ----------
 # Static analysis of Camfrog Video Chat 8.5.0.51219 (see docs/CAMFROG-8.5-FINDINGS.md): the input is a
 # WTL RICHEDIT50W, the custom status is a combo box (inner Edit), the room log is a CEF Document.
-STRUCT_SKIP = {"Text", "Hyperlink", "Image", "ListItem", "DataItem", "TreeItem"}  # may hold chat text
+STRUCT_SKIP = {
+    "Text",
+    "Hyperlink",
+    "Image",
+    "ListItem",
+    "DataItem",
+    "TreeItem",
+}  # may hold chat text
 
 
 def describe_controls(win):
@@ -3924,13 +4756,26 @@ def describe_controls(win):
     for c in win.descendants():
         try:
             r = c.rectangle()
-            rows.append({
-                "class_name": _ctrl_attr(c, "class_name"), "control_type": _ctrl_attr(c, "control_type"),
-                "name": str(_ctrl_attr(c, "name"))[:40], "auto_id": str(_ctrl_attr(c, "automation_id")),
-                "visible": bool(c.is_visible()), "enabled": bool(c.is_enabled()),
-                "left": r.left, "top": r.top, "w": r.width(), "h": r.height(),
-                "parent_class": str(getattr(getattr(c.element_info, "parent", None), "class_name", "") or ""),
-            })
+            rows.append(
+                {
+                    "class_name": _ctrl_attr(c, "class_name"),
+                    "control_type": _ctrl_attr(c, "control_type"),
+                    "name": str(_ctrl_attr(c, "name"))[:40],
+                    "auto_id": str(_ctrl_attr(c, "automation_id")),
+                    "visible": bool(c.is_visible()),
+                    "enabled": bool(c.is_enabled()),
+                    "left": r.left,
+                    "top": r.top,
+                    "w": r.width(),
+                    "h": r.height(),
+                    "parent_class": str(
+                        getattr(
+                            getattr(c.element_info, "parent", None), "class_name", ""
+                        )
+                        or ""
+                    ),
+                }
+            )
         except Exception:
             continue
     return rows
@@ -3956,77 +4801,111 @@ def _sel(rows, row, key="class_name"):
 
 def detect_camfrog(rows):
     """rows (describe_controls) -> {key: (selector, why)}. Pure function, unit-tested offline."""
-    live = [r for r in rows if r.get("visible") and r.get("enabled") and r["w"] > 0 and r["h"] > 0]
+    live = [
+        r
+        for r in rows
+        if r.get("visible") and r.get("enabled") and r["w"] > 0 and r["h"] > 0
+    ]
     out = {}
     hosts = [r for r in live if r["class_name"] == "AtlAxWinLic140"]
 
-    def kind(h):  # the IE pane sharing the host's rectangle names the page: wb-log-room-data / wb-edit-data
+    def kind(
+        h,
+    ):  # the IE pane sharing the host's rectangle names the page: wb-log-room-data / wb-edit-data
         for r in rows:
-            if (r["class_name"] == "Internet Explorer_Server"
-                    and (r["left"], r["top"], r["w"], r["h"]) == (h["left"], h["top"], h["w"], h["h"])):
+            if r["class_name"] == "Internet Explorer_Server" and (
+                r["left"],
+                r["top"],
+                r["w"],
+                r["h"],
+            ) == (h["left"], h["top"], h["w"], h["h"]):
                 return r["name"]
         return ""
+
     logs = [h for h in hosts if "wb-log-room-data" in kind(h)]
     edits_ = [h for h in hosts if "wb-edit-data" in kind(h)]
     if logs and edits_:
-        out["autoreply.history"] = (_sel(rows, max(logs, key=lambda r: r["w"] * r["h"])),
-                                    "room chat log (web pane wb-log-room-data)")
-        out["autoreply.input"] = (_sel(rows, max(edits_, key=lambda r: r["top"])),
-                                  "room chat input (web pane wb-edit-data)")
+        out["autoreply.history"] = (
+            _sel(rows, max(logs, key=lambda r: r["w"] * r["h"])),
+            "room chat log (web pane wb-log-room-data)",
+        )
+        out["autoreply.input"] = (
+            _sel(rows, max(edits_, key=lambda r: r["top"])),
+            "room chat input (web pane wb-edit-data)",
+        )
         rich = []
     else:
         rich = [r for r in live if r["class_name"].upper().startswith("RICHEDIT")]
     inp = max(rich, key=lambda r: (r["top"], r["w"]), default=None) if rich else None
     if inp:
-        out["autoreply.input"] = (_sel(rows, inp),
-                                  "bottom-most RichEdit = chat input")
-    docs = [r for r in live if r["control_type"] == "Document"] if not out.get("autoreply.history") else []
+        out["autoreply.input"] = (_sel(rows, inp), "bottom-most RichEdit = chat input")
+    docs = (
+        [r for r in live if r["control_type"] == "Document"]
+        if not out.get("autoreply.history")
+        else []
+    )
     if out.get("autoreply.history"):
         pass
     elif docs:
         d = max(docs, key=lambda r: r["w"] * r["h"])
-        out["autoreply.history"] = ({"control_type": "Document", "index": _nth(rows, d, "control_type")},
-                                    "largest Chromium Document = room log")
+        out["autoreply.history"] = (
+            {"control_type": "Document", "index": _nth(rows, d, "control_type")},
+            "largest Chromium Document = room log",
+        )
     else:
         rest = [r for r in rich if r is not inp]
         if rest:
             h = max(rest, key=lambda r: r["w"] * r["h"])
-            out["autoreply.history"] = (_sel(rows, h),
-                                        "largest other RichEdit (no Document found)")
-    edits = [r for r in live if r["class_name"].lower() == "edit" and "combo" in r["parent_class"].lower()]
+            out["autoreply.history"] = (
+                _sel(rows, h),
+                "largest other RichEdit (no Document found)",
+            )
+    edits = [
+        r
+        for r in live
+        if r["class_name"].lower() == "edit" and "combo" in r["parent_class"].lower()
+    ]
     if edits:
         e = min(edits, key=lambda r: (r["top"], r["left"]))
-        out["status.edit"] = (_sel(rows, e),
-                              "top-most combo-box Edit = custom status")
+        out["status.edit"] = (_sel(rows, e), "top-most combo-box Edit = custom status")
     else:
         combos = [r for r in live if "combobox" in r["class_name"].lower()]
         if combos:
             c = min(combos, key=lambda r: (r["top"], r["left"]))
-            out["status.edit"] = (_sel(rows, c),
-                                  "top-most ComboBox (no inner Edit exposed)")
+            out["status.edit"] = (
+                _sel(rows, c),
+                "top-most ComboBox (no inner Edit exposed)",
+            )
         else:
             edits_any = [r for r in live if r["class_name"].lower() == "edit"]
             if edits_any:
                 e2 = min(edits_any, key=lambda r: (r["top"], r["left"]))
-                out["status.edit"] = (_sel(rows, e2),
-                                      "top-most Edit (broad fallback, verify manually)")
+                out["status.edit"] = (
+                    _sel(rows, e2),
+                    "top-most Edit (broad fallback, verify manually)",
+                )
     return out
 
 
 def write_detect_report(rows, path):
     with Path(path).open("w", encoding="utf-8") as f:
-        f.write("class_name | control_type | name(<=40) | auto_id | visible | left,top,w,h | parent_class\n")
+        f.write(
+            "class_name | control_type | name(<=40) | auto_id | visible | left,top,w,h | parent_class\n"
+        )
         for r in rows:
             if r["control_type"] in STRUCT_SKIP:
                 continue
-            f.write(f"{r['class_name']} | {r['control_type']} | {r['name']} | {r['auto_id']} | "
-                    f"{int(r['visible'])} | {r['left']},{r['top']},{r['w']},{r['h']} | {r['parent_class']}\n")
+            f.write(
+                f"{r['class_name']} | {r['control_type']} | {r['name']} | {r['auto_id']} | "
+                f"{int(r['visible'])} | {r['left']},{r['top']},{r['w']},{r['h']} | {r['parent_class']}\n"
+            )
 
 
 def cmd_detect(cfg, cfg_path=None, apply=False, as_json=False):
     win = get_window(cfg)
-    per_window = [describe_controls(win)] + [describe_controls(w) for w in process_windows(win)
-                                             if w.handle != win.handle]
+    per_window = [describe_controls(win)] + [
+        describe_controls(w) for w in process_windows(win) if w.handle != win.handle
+    ]
     rows = [r for rs in per_window for r in rs]
     found = {}
     for rs in per_window:  # selectors are per window (find() indexes inside one window)
@@ -4038,7 +4917,9 @@ def cmd_detect(cfg, cfg_path=None, apply=False, as_json=False):
         print("PROPOSAL " + json.dumps({k: v[0] for k, v in found.items()}))
     for key in ("status.edit", "autoreply.history", "autoreply.input"):
         if key in found:
-            print(t("det_found", k=key, sel=json.dumps(found[key][0]), why=found[key][1]))
+            print(
+                t("det_found", k=key, sel=json.dumps(found[key][0]), why=found[key][1])
+            )
         else:
             print(t("det_miss", k=key))
     print(t("det_report", p=rep))
@@ -4096,11 +4977,15 @@ def cmd_im_probe(cfg):
     if cfg["dry_run"]:
         problems.append("global dry_run is true: nothing is sent (dry-run only logs)")
     if im["dry_run"]:
-        problems.append("autoreply_im.dry_run is true: nothing is sent (dry-run only logs)")
+        problems.append(
+            "autoreply_im.dry_run is true: nothing is sent (dry-run only logs)"
+        )
     if not in_active_hours(cfg):
         problems.append("outside active_hours: the bot is idle")
-    print(f"  enabled={im['enabled']}  friends={len(friends)}  rules={len(im['rules'])}  "
-          f"log_kinds={im['log_kinds']}  dry_run(global/IM)={cfg['dry_run']}/{im['dry_run']}")
+    print(
+        f"  enabled={im['enabled']}  friends={len(friends)}  rules={len(im['rules'])}  "
+        f"log_kinds={im['log_kinds']}  dry_run(global/IM)={cfg['dry_run']}/{im['dry_run']}"
+    )
     for pr in problems:
         print("  PROBLEM: " + pr)
     if not problems:
@@ -4119,21 +5004,27 @@ def cmd_im_probe(cfg):
         try:
             _, hist = find(w, ar["input"]), find(w, ar["history"])
         except Exception:
-            print(f"  [other] {title!r}: no chat input/history panes found with the autoreply selectors")
+            print(
+                f"  [other] {title!r}: no chat input/history panes found with the autoreply selectors"
+            )
             continue
         kind = log_kind(hist) if is_web(hist) else ""
         if kind in im["log_kinds"]:
             n_im += 1
             verdict = f"{kind.upper()} window: WILL be tracked"
         elif kind == "mtim":
-            verdict = "MTIM window: ignored. If this is your private chat, add \"mtim\" to autoreply_im.log_kinds (unverified)"
+            verdict = 'MTIM window: ignored. If this is your private chat, add "mtim" to autoreply_im.log_kinds (unverified)'
         elif kind == "room":
             verdict = "room window: never used for IM"
         else:
-            verdict = "chat panes found but the page kind is unknown (UIA names not exposed?)"
+            verdict = (
+                "chat panes found but the page kind is unknown (UIA names not exposed?)"
+            )
         print(f"  [{kind or '?'}] {title!r}: {verdict}")
     if not n_im:
-        print("  PROBLEM: no private-chat window would be tracked. Open a private chat (not minimized to the tray) and retry.")
+        print(
+            "  PROBLEM: no private-chat window would be tracked. Open a private chat (not minimized to the tray) and retry."
+        )
     return 0 if (n_im and not problems) else 1
 
 
@@ -4143,8 +5034,16 @@ def cmd_status(cfg, text):
     ctrl = find(win, st["edit"])
     btn = find(win, st["apply_button"]) if st["apply_button"] else None
     text = clip(expand(text, own=cfg["autoreply"]["own_nickname"]), st["max_length"])
-    ok = commit(win, ctrl, text, cfg["dry_run"], sf["require_foreground"], btn,
-                sf["restore_previous_window"], st.get("background_enter_target", "edit"))
+    ok = commit(
+        win,
+        ctrl,
+        text,
+        cfg["dry_run"],
+        sf["require_foreground"],
+        btn,
+        sf["restore_previous_window"],
+        st.get("background_enter_target", "edit"),
+    )
     print(t("ok") if ok else t("failed"))
     return 0 if ok else 1
 
@@ -4158,44 +5057,108 @@ def setup_logging(cfg):
     LOG_TEXT = lc["log_message_text"]
     handlers = [logging.StreamHandler()]
     if lc["file"]:
-        handlers.append(logging.handlers.RotatingFileHandler(
-            BASE / lc["file"], maxBytes=lc["max_bytes"], backupCount=lc["backups"],
-            encoding="utf-8"))
-    logging.basicConfig(level=getattr(logging, lc["level"].upper(), logging.INFO),
-                        format="%(asctime)s %(levelname)s %(message)s",
-                        handlers=handlers, force=True)
+        handlers.append(
+            logging.handlers.RotatingFileHandler(
+                BASE / lc["file"],
+                maxBytes=lc["max_bytes"],
+                backupCount=lc["backups"],
+                encoding="utf-8",
+            )
+        )
+    logging.basicConfig(
+        level=getattr(logging, lc["level"].upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s %(message)s",
+        handlers=handlers,
+        force=True,
+    )
 
 
 # Public command names used by GUI launchers when forwarding CLI arguments.
 CLI_COMMANDS = {
-    "check", "discover", "windows", "run", "start", "stop", "state",
-    "autostart-on", "autostart-off", "chat-probe", "im-probe", "detect",
-    "status", "init", "marquee", "history", "history-add", "history-import",
+    "check",
+    "discover",
+    "windows",
+    "run",
+    "start",
+    "stop",
+    "state",
+    "autostart-on",
+    "autostart-off",
+    "chat-probe",
+    "im-probe",
+    "detect",
+    "status",
+    "init",
+    "marquee",
+    "history",
+    "history-add",
+    "history-import",
     "test-rules",
 }
 
 PROFILE_COMMANDS = {
     "room": {
-        "check", "discover", "windows", "run", "start", "stop", "state",
-        "autostart-on", "autostart-off", "chat-probe", "detect", "init",
+        "check",
+        "discover",
+        "windows",
+        "run",
+        "start",
+        "stop",
+        "state",
+        "autostart-on",
+        "autostart-off",
+        "chat-probe",
+        "detect",
+        "init",
         "test-rules",
         "update",
     },
     "im_reply": {
-        "check", "discover", "windows", "run", "start", "stop", "state",
-        "autostart-on", "autostart-off", "im-probe", "detect", "init",
+        "check",
+        "discover",
+        "windows",
+        "run",
+        "start",
+        "stop",
+        "state",
+        "autostart-on",
+        "autostart-off",
+        "im-probe",
+        "detect",
+        "init",
         "test-rules",
         "update",
     },
     "status": {
-        "check", "discover", "windows", "run", "start", "stop", "state",
-        "status", "marquee", "history", "history-add", "history-import",
-        "detect", "init",
+        "check",
+        "discover",
+        "windows",
+        "run",
+        "start",
+        "stop",
+        "state",
+        "status",
+        "marquee",
+        "history",
+        "history-add",
+        "history-import",
+        "detect",
+        "init",
         "update",
     },
     "music": {
-        "check", "discover", "windows", "run", "start", "stop", "state",
-        "autostart-on", "autostart-off", "chat-probe", "detect", "init",
+        "check",
+        "discover",
+        "windows",
+        "run",
+        "start",
+        "stop",
+        "state",
+        "autostart-on",
+        "autostart-off",
+        "chat-probe",
+        "detect",
+        "init",
         "test-rules",
         "update",
     },
@@ -4221,21 +5184,37 @@ def profile_command_error(profile, args):
 def build_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--config", default=argparse.SUPPRESS)
-    common.add_argument("--lang", choices=["auto", "th", "en"], default=argparse.SUPPRESS)
+    common.add_argument(
+        "--lang", choices=["auto", "th", "en"], default=argparse.SUPPRESS
+    )
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--config", default=None)
     p.add_argument("--lang", choices=["auto", "th", "en"], default=None)
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name in ("check", "discover", "windows", "run", "start", "stop", "state",
-                 "autostart-on", "autostart-off"):
+    for name in (
+        "check",
+        "discover",
+        "windows",
+        "run",
+        "start",
+        "stop",
+        "state",
+        "autostart-on",
+        "autostart-off",
+    ):
         sub.add_parser(name, parents=[common])
-    up = sub.add_parser("update", parents=[common],
-                        help="self-update this executable from the GitHub release")
+    up = sub.add_parser(
+        "update",
+        parents=[common],
+        help="self-update this executable from the GitHub release",
+    )
     up.add_argument("asset", nargs="?", default=None)
     sub.add_parser("chat-probe", parents=[common])
     sub.add_parser("im-probe", parents=[common])
     dp = sub.add_parser("detect", parents=[common])
-    dp.add_argument("--apply", action="store_true", help="write detected selectors into config.json")
+    dp.add_argument(
+        "--apply", action="store_true", help="write detected selectors into config.json"
+    )
     s = sub.add_parser("status", parents=[common])
     s.add_argument("text")
     i = sub.add_parser("init", parents=[common])
@@ -4246,7 +5225,11 @@ def build_parser():
     mqp.add_argument("--stride", type=int)
     mqp.add_argument("--cycles", type=int)
     mqp.add_argument("--max-frames", dest="max_frames", type=int)
-    mqp.add_argument("--infinite-loop", action="store_true", help="loop continuously without settling")
+    mqp.add_argument(
+        "--infinite-loop",
+        action="store_true",
+        help="loop continuously without settling",
+    )
     sub.add_parser("history", parents=[common])
     ha = sub.add_parser("history-add", parents=[common])
     ha.add_argument("text")
@@ -4256,7 +5239,9 @@ def build_parser():
     tr.add_argument("text", nargs="?")
     tr.add_argument("--sender", default="TestUser")
     tr.add_argument("--file")
-    tr.add_argument("--im", action="store_true", help="test with the autoreply_im rules and limits")
+    tr.add_argument(
+        "--im", action="store_true", help="test with the autoreply_im rules and limits"
+    )
     return p
 
 
@@ -4331,7 +5316,10 @@ def cli_main(argv=None):
     except KeyboardInterrupt:
         log.info(t("interrupted"))
         return 0
-    except (RuntimeError, LookupError) as e:  # expected setup problems: message, no traceback
+    except (
+        RuntimeError,
+        LookupError,
+    ) as e:  # expected setup problems: message, no traceback
         log.error("%s", e)
         if "window_title_regex" in str(e):
             print(t("win_hint"))
@@ -4341,13 +5329,10 @@ def cli_main(argv=None):
         return 1
 
 
-
-
 def set_lang(value):
     """Set the module-global language used by t()/bi()."""
     global LANG
     LANG = value
-
 
 
 # ============================================================
@@ -4355,7 +5340,13 @@ def set_lang(value):
 # ============================================================
 
 _WIDGET_CLASSES = {
-    "Entry", "TEntry", "TCombobox", "Spinbox", "TSpinbox", "Text", "Listbox",
+    "Entry",
+    "TEntry",
+    "TCombobox",
+    "Spinbox",
+    "TSpinbox",
+    "Text",
+    "Listbox",
 }
 _EDITABLE_CLASSES = {"Entry", "TEntry", "TCombobox", "Spinbox", "TSpinbox", "Text"}
 
@@ -4507,46 +5498,70 @@ class ClipboardController:
         self.target = None
         self.widgets = []
         import weakref
+
         self._installed_widgets = weakref.WeakSet()
         self.menu = tk.Menu(root, tearoff=False)
-        for label, action in (("Cut|ตัด", "cut"), ("Copy|คัดลอก", "copy"),
-                              ("Paste|วาง", "paste")):
-            self.menu.add_command(label=self.translate(label),
-                                  command=lambda op=action: self.perform(self.target, op))
+        for label, action in (
+            ("Cut|ตัด", "cut"),
+            ("Copy|คัดลอก", "copy"),
+            ("Paste|วาง", "paste"),
+        ):
+            self.menu.add_command(
+                label=self.translate(label),
+                command=lambda op=action: self.perform(self.target, op),
+            )
         self.menu.add_separator()
-        self.menu.add_command(label=self.translate("Select all|เลือกทั้งหมด"),
-                              command=lambda: self.select_all(self.target))
+        self.menu.add_command(
+            label=self.translate("Select all|เลือกทั้งหมด"),
+            command=lambda: self.select_all(self.target),
+        )
 
     def refresh_menu(self):
         """Refresh localized labels after the GUI language changes."""
-        labels = ("Cut|ตัด", "Copy|คัดลอก", "Paste|วาง",
-                  "Select all|เลือกทั้งหมด")
+        labels = ("Cut|ตัด", "Copy|คัดลอก", "Paste|วาง", "Select all|เลือกทั้งหมด")
         for index, label in enumerate(labels):
-            self.menu.entryconfigure(index if index < 3 else 4,
-                                     label=self.translate(label))
+            self.menu.entryconfigure(
+                index if index < 3 else 4, label=self.translate(label)
+            )
 
     def install(self, parent):
         """Bind editors recursively, including controls added after the first build."""
         for widget in parent.winfo_children():
             widget_class = _widget_class(widget)
-            if widget_class in _WIDGET_CLASSES and widget not in self._installed_widgets:
+            if (
+                widget_class in _WIDGET_CLASSES
+                and widget not in self._installed_widgets
+            ):
                 self._installed_widgets.add(widget)
                 self.widgets.append(widget)
                 if widget_class in {"Text", "Listbox"}:
                     try:
                         widget.configure(
-                            background="#ffffff" if widget_class == "Text" else "#fffdfa",
-                            foreground="#283648", selectbackground="#8b672b",
-                            selectforeground="#fffdfa", insertbackground="#283648",
-                            highlightbackground="#d5c8ac", highlightcolor="#8b672b")
+                            background="#ffffff"
+                            if widget_class == "Text"
+                            else "#fffdfa",
+                            foreground="#283648",
+                            selectbackground="#8b672b",
+                            selectforeground="#fffdfa",
+                            insertbackground="#283648",
+                            highlightbackground="#d5c8ac",
+                            highlightcolor="#8b672b",
+                        )
                     except Exception:
                         pass
                 for sequence, action in (
-                    ("<Control-c>", "copy"), ("<Control-x>", "cut"),
-                    ("<Control-v>", "paste"), ("<Control-Insert>", "copy"),
-                    ("<Shift-Delete>", "cut"), ("<Shift-Insert>", "paste"),
+                    ("<Control-c>", "copy"),
+                    ("<Control-x>", "cut"),
+                    ("<Control-v>", "paste"),
+                    ("<Control-Insert>", "copy"),
+                    ("<Shift-Delete>", "cut"),
+                    ("<Shift-Insert>", "paste"),
                 ):
-                    widget.bind(sequence, lambda event, op=action: self.handle(event, op), add="+")
+                    widget.bind(
+                        sequence,
+                        lambda event, op=action: self.handle(event, op),
+                        add="+",
+                    )
                 # The generic key binding also recognizes Windows virtual-key
                 # codes and control characters when a Thai/non-Latin layout
                 # reports an unknown keysym for Ctrl+A/C/V/X.
@@ -4570,8 +5585,14 @@ class ClipboardController:
             "v": ({"v", "\x16"}, 86, "paste"),
             "x": ({"x", "\x18"}, 88, "cut"),
         }
-        key = next((name for name, (chars, code, _action) in shortcuts.items()
-                    if keysym == name or char in chars or keycode == code), None)
+        key = next(
+            (
+                name
+                for name, (chars, code, _action) in shortcuts.items()
+                if keysym == name or char in chars or keycode == code
+            ),
+            None,
+        )
         if key is None:
             return None
         self.target = event.widget
@@ -4638,15 +5659,31 @@ class ClipboardController:
 # ============================================================
 
 
-
 APP_NAME = "ZeaZDev room AutoDJ"
 
 
-
-
-CLI_COMMANDS = {"check", "discover", "detect", "chat-probe", "im-probe", "windows", "run", "start", "stop", "state", "update", "status",
-                "autostart-on", "autostart-off", "init", "marquee", "history", "history-add",
-                "history-import", "test-rules"}
+CLI_COMMANDS = {
+    "check",
+    "discover",
+    "detect",
+    "chat-probe",
+    "im-probe",
+    "windows",
+    "run",
+    "start",
+    "stop",
+    "state",
+    "update",
+    "status",
+    "autostart-on",
+    "autostart-off",
+    "init",
+    "marquee",
+    "history",
+    "history-add",
+    "history-import",
+    "test-rules",
+}
 
 
 def has_cli_command(argv):
@@ -4665,18 +5702,24 @@ def has_cli_command(argv):
 
 def parse_gui_args(argv):
     parser = argparse.ArgumentParser(description="Camfrog feature app")
-    parser.add_argument("--config", default=None, help="use an alternate app-local config")
+    parser.add_argument(
+        "--config", default=None, help="use an alternate app-local config"
+    )
     args = parser.parse_args(argv)
     if args.config is not None and not args.config.strip():
         parser.error("argument --config: expected a path")
     return args
+
+
 SEL_FIELDS = ("control_type", "auto_id", "class_name", "title", "title_re", "index")
 
 
 def bi(s):
     """'English|ไทย' -> text for the current language."""
     en, _, th = s.partition("|")
-    return (th if (LANG == "th" and th) else en).replace("{pipe}", "||")  # {pipe}: literal ||
+    return (th if (LANG == "th" and th) else en).replace(
+        "{pipe}", "||"
+    )  # {pipe}: literal ||
 
 
 # ---------------------------------------------------------------- Tk-free logic
@@ -4736,8 +5779,10 @@ def apply_proposal_to_vars(sel_vars, proposal):
 
 def reply_to_fields(spec):
     """rule reply (str | list | {th,en}) -> (th_text, en_text, any_text), one variant per line."""
+
     def lines(x):
         return "\n".join([x] if isinstance(x, str) else (x or []))
+
     if isinstance(spec, dict):
         return lines(spec.get("th")), lines(spec.get("en")), ""
     return "", "", lines(spec)
@@ -4747,6 +5792,7 @@ def fields_to_reply(th, en, anyl):
     def pool(x):
         v = [ln.strip() for ln in x.splitlines() if ln.strip()]
         return v[0] if len(v) == 1 else v
+
     th_p, en_p, any_p = pool(th), pool(en), pool(anyl)
     if not (th_p or en_p or any_p):
         return None
@@ -4764,7 +5810,9 @@ class ConfigModel:
             try:
                 self.path.relative_to(BASE.resolve())
             except ValueError as exc:
-                raise ValueError("This app's config must stay inside its own folder.") from exc
+                raise ValueError(
+                    "This app's config must stay inside its own folder."
+                ) from exc
         self.cfg = None
 
     def load(self):
@@ -4778,8 +5826,12 @@ class ConfigModel:
     def check(cfg):
         errs, warns = validate(cfg)
         ar = cfg["autoreply"]
-        if (not cfg["dry_run"] and ar["enabled"] and not ar["own_nickname"].strip()
-                and t("refuse_live") not in errs):
+        if (
+            not cfg["dry_run"]
+            and ar["enabled"]
+            and not ar["own_nickname"].strip()
+            and t("refuse_live") not in errs
+        ):
             errs.append(t("refuse_live"))
         return errs, warns
 
@@ -4819,8 +5871,11 @@ def explain(cfg, nick, msg, im=False):
         return head + "\n" + t("tr_skip", why=t("why_" + r["skip"]))
     if r["rule"] is None:
         return head + "\n" + t("tr_none")
-    return head + "\n" + t("tr_match", i=r["rule"]["idx"],
-                              reply=r["reply"] or t("tr_blocked"))
+    return (
+        head
+        + "\n"
+        + t("tr_match", i=r["rule"]["idx"], reply=r["reply"] or t("tr_blocked"))
+    )
 
 
 def autosave_needs_confirmation(cfg, bot_running):
@@ -4847,34 +5902,65 @@ def build_app():
             self.enabled = tk.BooleanVar(value=rule.get("enabled", True))
             f = ttk.Frame(self, padding=10)
             f.pack(fill="both", expand=True)
-            ttk.Label(f, text=bi("Pattern (regex)|รูปแบบ (regex)")).grid(row=0, column=0, sticky="w")
-            ttk.Entry(f, textvariable=self.pat, width=60).grid(row=0, column=1, columnspan=3, sticky="we")
+            ttk.Label(f, text=bi("Pattern (regex)|รูปแบบ (regex)")).grid(
+                row=0, column=0, sticky="w"
+            )
+            ttk.Entry(f, textvariable=self.pat, width=60).grid(
+                row=0, column=1, columnspan=3, sticky="we"
+            )
             th, en, anyl = reply_to_fields(rule.get("reply"))
             self.boxes = []
-            for r, (lab, val) in enumerate(((bi("Reply TH (one per line = random)|ตอบไทย (บรรทัดละแบบ สุ่ม)"), th),
-                                            (bi("Reply EN|ตอบอังกฤษ"), en),
-                                            (bi("Reply any language|ตอบทุกภาษา"), anyl)), 1):
+            for r, (lab, val) in enumerate(
+                (
+                    (bi("Reply TH (one per line = random)|ตอบไทย (บรรทัดละแบบ สุ่ม)"), th),
+                    (bi("Reply EN|ตอบอังกฤษ"), en),
+                    (bi("Reply any language|ตอบทุกภาษา"), anyl),
+                ),
+                1,
+            ):
                 ttk.Label(f, text=lab).grid(row=r, column=0, sticky="nw", pady=2)
                 box = tk.Text(f, width=60, height=3)
                 box.insert("1.0", val)
                 box.grid(row=r, column=1, columnspan=3, sticky="we", pady=2)
                 self.boxes.append(box)
-            ttk.Label(f, text=bi("Only language|เฉพาะภาษา")).grid(row=4, column=0, sticky="w")
-            ttk.Combobox(f, textvariable=self.lang, values=("", "th", "en"), width=6,
-                         state="readonly").grid(row=4, column=1, sticky="w")
-            ttk.Label(f, text=bi("Cooldown (s)|คูลดาวน์ (วินาที)")).grid(row=4, column=2, sticky="e")
-            ttk.Entry(f, textvariable=self.cool, width=8).grid(row=4, column=3, sticky="w")
-            ttk.Checkbutton(f, text=bi("Only when my nick is mentioned|ตอบเมื่อมีคนพิมพ์นิคเรา"),
-                            variable=self.mention).grid(row=5, column=0, columnspan=2, sticky="w")
+            ttk.Label(f, text=bi("Only language|เฉพาะภาษา")).grid(
+                row=4, column=0, sticky="w"
+            )
+            ttk.Combobox(
+                f,
+                textvariable=self.lang,
+                values=("", "th", "en"),
+                width=6,
+                state="readonly",
+            ).grid(row=4, column=1, sticky="w")
+            ttk.Label(f, text=bi("Cooldown (s)|คูลดาวน์ (วินาที)")).grid(
+                row=4, column=2, sticky="e"
+            )
+            ttk.Entry(f, textvariable=self.cool, width=8).grid(
+                row=4, column=3, sticky="w"
+            )
+            ttk.Checkbutton(
+                f,
+                text=bi("Only when my nick is mentioned|ตอบเมื่อมีคนพิมพ์นิคเรา"),
+                variable=self.mention,
+            ).grid(row=5, column=0, columnspan=2, sticky="w")
             ttk.Checkbutton(f, text=bi("Enabled|เปิดใช้"), variable=self.enabled).grid(
-                row=5, column=2, columnspan=2, sticky="w")
-            ttk.Label(f, text=bi("Variables: {sender} {me} {time} {date}. Replies starting with / are blocked.|"
-                                 "ตัวแปร: {sender} {me} {time} {date} คำตอบที่ขึ้นต้นด้วย / จะถูกบล็อก"),
-                      foreground="#626d7a").grid(row=6, column=0, columnspan=4, sticky="w", pady=4)
+                row=5, column=2, columnspan=2, sticky="w"
+            )
+            ttk.Label(
+                f,
+                text=bi(
+                    "Variables: {sender} {me} {time} {date}. Replies starting with / are blocked.|"
+                    "ตัวแปร: {sender} {me} {time} {date} คำตอบที่ขึ้นต้นด้วย / จะถูกบล็อก"
+                ),
+                foreground="#626d7a",
+            ).grid(row=6, column=0, columnspan=4, sticky="w", pady=4)
             bar = ttk.Frame(f)
             bar.grid(row=7, column=0, columnspan=4, sticky="e")
             ttk.Button(bar, text="OK", command=self.ok).pack(side="left", padx=4)
-            ttk.Button(bar, text=bi("Cancel|ยกเลิก"), command=self.destroy).pack(side="left")
+            ttk.Button(bar, text=bi("Cancel|ยกเลิก"), command=self.destroy).pack(
+                side="left"
+            )
             app.install_clipboard_support(self, remember=False)
             self.grab_set()
             self.wait_window()
@@ -4882,11 +5968,13 @@ def build_app():
         def ok(self):
             try:
                 pat = self.pat.get()
-                re.compile(pat, re.I)
+                re.compile(pat, re.IGNORECASE)
                 reply = fields_to_reply(*(b.get("1.0", "end") for b in self.boxes))
                 cool = float(self.cool.get() or 0)
                 if not pat or reply is None or cool < 0:
-                    raise ValueError(bi("pattern and reply are required|ต้องมี pattern และ reply"))
+                    raise ValueError(
+                        bi("pattern and reply are required|ต้องมี pattern และ reply")
+                    )
             except (re.error, ValueError) as e:
                 messagebox.showerror(bi("Rule|กฎ"), str(e), parent=self)
                 return
@@ -4912,21 +6000,44 @@ def build_app():
             except tk.TclError:
                 pass
             style.configure("TFrame", background="#f4f1e8")
-            style.configure("TLabel", background="#f4f1e8", foreground="#283648", font=("Segoe UI", 9))
+            style.configure(
+                "TLabel",
+                background="#f4f1e8",
+                foreground="#283648",
+                font=("Segoe UI", 9),
+            )
             style.configure("TCheckbutton", background="#f4f1e8", foreground="#283648")
             style.configure("TRadiobutton", background="#f4f1e8", foreground="#283648")
             style.configure("TLabelframe", background="#f4f1e8", bordercolor="#d5c8ac")
-            style.configure("TLabelframe.Label", background="#f4f1e8", foreground="#8b672b",
-                            font=("Segoe UI", 9, "bold"))
-            style.configure("TButton", padding=(7, 4), font=("Segoe UI", 9),
-                            background="#ebe5d9", foreground="#283648")
-            style.map("TButton", background=[("active", "#d6e9e8"), ("pressed", "#d5c8ac")])
-            style.configure("TEntry", padding=(4, 4), fieldbackground="#ffffff",
-                            foreground="#283648")
+            style.configure(
+                "TLabelframe.Label",
+                background="#f4f1e8",
+                foreground="#8b672b",
+                font=("Segoe UI", 9, "bold"),
+            )
+            style.configure(
+                "TButton",
+                padding=(7, 4),
+                font=("Segoe UI", 9),
+                background="#ebe5d9",
+                foreground="#283648",
+            )
+            style.map(
+                "TButton", background=[("active", "#d6e9e8"), ("pressed", "#d5c8ac")]
+            )
+            style.configure(
+                "TEntry",
+                padding=(4, 4),
+                fieldbackground="#ffffff",
+                foreground="#283648",
+            )
             style.configure("TNotebook", background="#f4f1e8")
             style.configure("TNotebook.Tab", padding=(11, 6), font=("Segoe UI", 9))
-            style.map("TNotebook.Tab", background=[("selected", "#fffdfa")],
-                      foreground=[("selected", "#8b672b")])
+            style.map(
+                "TNotebook.Tab",
+                background=[("selected", "#fffdfa")],
+                foreground=[("selected", "#8b672b")],
+            )
             self.root.geometry("800x560")
             self.root.minsize(660, 460)
             self.model = ConfigModel(cfg_path)
@@ -4992,26 +6103,42 @@ def build_app():
             self.state_lbl.pack(side="left")
             self.mode_lbl = ttk.Label(top, text="", font=("Segoe UI", 11, "bold"))
             self.mode_lbl.pack(side="left", padx=14)
-            ttk.Button(top, text="TH / EN", width=8, command=self.switch_lang).pack(side="right")
+            ttk.Button(top, text="TH / EN", width=8, command=self.switch_lang).pack(
+                side="right"
+            )
             bar = ttk.Frame(self.root, padding=(8, 6))
             bar.pack(side="bottom", fill="x")
-            ttk.Button(bar, text=bi("Save (Ctrl+S)|บันทึก (Ctrl+S)"), command=self.save).pack(side="left")
-            ttk.Button(bar, text=bi("Reload from disk|โหลดจากไฟล์ใหม่"), command=self.reload).pack(side="left", padx=6)
-            ttk.Button(bar, text=bi("Check config|ตรวจคอนฟิก"), command=self.check_cfg).pack(side="left")
-            ttk.Button(bar, text=bi("Update|อัปเดต"), command=self.check_update).pack(side="left", padx=6)
+            ttk.Button(
+                bar, text=bi("Save (Ctrl+S)|บันทึก (Ctrl+S)"), command=self.save
+            ).pack(side="left")
+            ttk.Button(
+                bar, text=bi("Reload from disk|โหลดจากไฟล์ใหม่"), command=self.reload
+            ).pack(side="left", padx=6)
+            ttk.Button(
+                bar, text=bi("Check config|ตรวจคอนฟิก"), command=self.check_cfg
+            ).pack(side="left")
+            ttk.Button(bar, text=bi("Update|อัปเดต"), command=self.check_update).pack(
+                side="left", padx=6
+            )
             if not hasattr(self, "auto_apply_var"):
                 self.auto_apply_var = tk.BooleanVar(master=self.root, value=True)
-            ttk.Checkbutton(bar, text=bi("Auto-apply valid changes|ใช้ค่าที่ถูกต้องอัตโนมัติ"),
-                            variable=self.auto_apply_var, command=self.auto_apply_toggled).pack(side="right")
+            ttk.Checkbutton(
+                bar,
+                text=bi("Auto-apply valid changes|ใช้ค่าที่ถูกต้องอัตโนมัติ"),
+                variable=self.auto_apply_var,
+                command=self.auto_apply_toggled,
+            ).pack(side="right")
             self.msg = ttk.Label(bar, text="", foreground="#626d7a")
             self.msg.pack(side="left", padx=12)
             self.nb = ttk.Notebook(self.root)
             self.nb.pack(fill="both", expand=True, padx=8)
-            tab_specs = (("Dashboard|แดชบอร์ด", "Dashboard", self.tab_dashboard),
-                         ("Setup|ตั้งค่าเริ่มต้น", "Setup", self.tab_setup),
-                         ("Auto-reply|ตอบอัตโนมัติ", "Auto-reply", self.tab_reply),
-                         ("AutoDJ|ดีเจเพลง", "Music", self.tab_music),
-                         ("Advanced|ขั้นสูง", "Advanced", self.tab_advanced))
+            tab_specs = (
+                ("Dashboard|แดชบอร์ด", "Dashboard", self.tab_dashboard),
+                ("Setup|ตั้งค่าเริ่มต้น", "Setup", self.tab_setup),
+                ("Auto-reply|ตอบอัตโนมัติ", "Auto-reply", self.tab_reply),
+                ("AutoDJ|ดีเจเพลง", "Music", self.tab_music),
+                ("Advanced|ขั้นสูง", "Advanced", self.tab_advanced),
+            )
             for name, key, fn in tab_specs:
                 f = ttk.Frame(self.nb, padding=8)
                 fn(f)
@@ -5029,7 +6156,8 @@ def build_app():
                 except tk.TclError:
                     pass
             self.clipboard_controller = ClipboardController(
-                self.root, translate=bi, on_error=self.clipboard_error)
+                self.root, translate=bi, on_error=self.clipboard_error
+            )
             self.clipboard_menu = self.clipboard_controller.menu
             self.clipboard_target = None
 
@@ -5042,21 +6170,28 @@ def build_app():
         def clipboard_error(self, exc):
             if hasattr(self, "msg"):
                 try:
-                    self.msg.configure(text=bi("Clipboard error: {error}|คลิปบอร์ดผิดพลาด: {error}").format(
-                        error=exc))
+                    self.msg.configure(
+                        text=bi(
+                            "Clipboard error: {error}|คลิปบอร์ดผิดพลาด: {error}"
+                        ).format(error=exc)
+                    )
                 except tk.TclError:
                     pass
 
         def clipboard_virtual(self, event, virtual):
             self.clipboard_target = event.widget
-            action = {"<<Copy>>": "copy", "<<Cut>>": "cut", "<<Paste>>": "paste"}.get(virtual)
+            action = {"<<Copy>>": "copy", "<<Cut>>": "cut", "<<Paste>>": "paste"}.get(
+                virtual
+            )
             if action:
                 self.clipboard_controller.perform(event.widget, action)
             return "break"
 
         def clipboard_action(self, virtual):
             widget = self.clipboard_target
-            action = {"<<Copy>>": "copy", "<<Cut>>": "cut", "<<Paste>>": "paste"}.get(virtual)
+            action = {"<<Copy>>": "copy", "<<Cut>>": "cut", "<<Paste>>": "paste"}.get(
+                virtual
+            )
             if action:
                 self.clipboard_controller.perform(widget, action)
 
@@ -5070,19 +6205,29 @@ def build_app():
 
         def field(self, parent, label, path, kind="str", choices=(), width=26, hint=""):
             row = parent.grid_size()[1]
-            ttk.Label(parent, text=bi(label)).grid(row=row, column=0, sticky="w", padx=4, pady=2)
+            ttk.Label(parent, text=bi(label)).grid(
+                row=row, column=0, sticky="w", padx=4, pady=2
+            )
             if kind == "bool":
                 var = tk.BooleanVar()
                 w = ttk.Checkbutton(parent, variable=var)
             elif kind == "choice":
                 var = tk.StringVar()
-                w = ttk.Combobox(parent, textvariable=var, values=choices, state="readonly", width=width - 3)
+                w = ttk.Combobox(
+                    parent,
+                    textvariable=var,
+                    values=choices,
+                    state="readonly",
+                    width=width - 3,
+                )
             else:
                 var = tk.StringVar()
                 w = ttk.Entry(parent, textvariable=var, width=width)
             w.grid(row=row, column=1, sticky="w", padx=4, pady=2)
             if hint:
-                ttk.Label(parent, text=bi(hint), foreground="#626d7a").grid(row=row, column=2, sticky="w")
+                ttk.Label(parent, text=bi(hint), foreground="#626d7a").grid(
+                    row=row, column=2, sticky="w"
+                )
             self.binds.append((path, kind, var, label))
             return var
 
@@ -5095,25 +6240,46 @@ def build_app():
         def tab_dashboard(self, f):
             row = ttk.Frame(f)
             row.pack(fill="x")
-            self.btn_start = ttk.Button(row, text=bi("Save & Start (background)|บันทึกและเริ่ม (เบื้องหลัง)"), command=self.start)
+            self.btn_start = ttk.Button(
+                row,
+                text=bi("Save & Start (background)|บันทึกและเริ่ม (เบื้องหลัง)"),
+                command=self.start,
+            )
             self.btn_start.pack(side="left")
-            self.btn_bg = ttk.Button(row, text=bi("Start & close window|เริ่มเบื้องหลังแล้วปิดหน้าต่าง"),
-                                     command=lambda: self.start(close=True))
+            self.btn_bg = ttk.Button(
+                row,
+                text=bi("Start & close window|เริ่มเบื้องหลังแล้วปิดหน้าต่าง"),
+                command=lambda: self.start(close=True),
+            )
             self.btn_bg.pack(side="left", padx=6)
             self.btn_stop = ttk.Button(row, text=bi("Stop|หยุด"), command=self.stop)
             self.btn_stop.pack(side="left", padx=6)
-            ttk.Button(row, text=bi("EMERGENCY STOP|หยุดฉุกเฉิน"), command=self.emergency).pack(side="left", padx=6)
+            ttk.Button(
+                row, text=bi("EMERGENCY STOP|หยุดฉุกเฉิน"), command=self.emergency
+            ).pack(side="left", padx=6)
             self.live_var = tk.BooleanVar()
             self.binds.append((("dry_run",), "live", self.live_var, "dry_run"))
-            ttk.Checkbutton(row, text=bi("LIVE: really send messages|โหมดจริง: ส่งข้อความจริง"), variable=self.live_var,
-                            command=self.live_toggled).pack(side="right")
+            ttk.Checkbutton(
+                row,
+                text=bi("LIVE: really send messages|โหมดจริง: ส่งข้อความจริง"),
+                variable=self.live_var,
+                command=self.live_toggled,
+            ).pack(side="right")
             self.stats_lbl = ttk.Label(f, text="")
             self.stats_lbl.pack(anchor="w", pady=6)
-            ttk.Label(f, text=bi("Closing this window does not stop the bot. Dry-run only logs what it would send.|"
-                                 "ปิดหน้าต่างนี้ไม่หยุดบอท โหมดทดลองแค่บันทึกว่าจะส่งอะไร"), foreground="#626d7a").pack(anchor="w")
+            ttk.Label(
+                f,
+                text=bi(
+                    "Closing this window does not stop the bot. Dry-run only logs what it would send.|"
+                    "ปิดหน้าต่างนี้ไม่หยุดบอท โหมดทดลองแค่บันทึกว่าจะส่งอะไร"
+                ),
+                foreground="#626d7a",
+            ).pack(anchor="w")
             lf = ttk.Frame(f)
             lf.pack(fill="both", expand=True, pady=6)
-            self.log = tk.Text(lf, state="disabled", wrap="none", height=18, font=("Consolas", 9))
+            self.log = tk.Text(
+                lf, state="disabled", wrap="none", height=18, font=("Consolas", 9)
+            )
             sb = ttk.Scrollbar(lf, command=self.log.yview)
             self.log.configure(yscrollcommand=sb.set)
             sb.pack(side="right", fill="y")
@@ -5134,55 +6300,162 @@ def build_app():
             self.sel_vars = {}
             g = ttk.Frame(f)
             g.pack(fill="x")
-            self.field(g, "Window title regex|regex ชื่อหน้าต่าง", ("window_title_regex",), width=40)
-            self.field(g, "My nickname|นิคของฉัน", ("autoreply", "own_nickname"), width=40,
-                       hint="required for live mode|จำเป็นเมื่อรันจริง")
+            self.field(
+                g,
+                "Window title regex|regex ชื่อหน้าต่าง",
+                ("window_title_regex",),
+                width=40,
+            )
+            self.field(
+                g,
+                "My nickname|นิคของฉัน",
+                ("autoreply", "own_nickname"),
+                width=40,
+                hint="required for live mode|จำเป็นเมื่อรันจริง",
+            )
             row = ttk.Frame(f)
             row.pack(fill="x", pady=4)
-            ttk.Button(row, text=bi("List windows|แสดงหน้าต่าง"), command=lambda: self.helper("windows")).pack(side="left")
-            ttk.Button(row, text=bi("Auto-detect (Camfrog 8.x)|ตรวจหา control อัตโนมัติ"),
-                       command=self.detect).pack(side="left", padx=6)
-            ttk.Button(row, text=bi("Discover controls -> controls.txt|ดึง control -> controls.txt"),
-                       command=lambda: self.helper("discover")).pack(side="left", padx=6)
-            ttk.Label(row, text=bi("Windows only. Copy values from controls.txt into the boxes below.|"
-                                   "เฉพาะ Windows คัดลอกค่าจาก controls.txt มาใส่ช่องด้านล่าง"), foreground="#626d7a").pack(side="left")
-            self.selector_group(f, "Chat history selector|selector ประวัติแชท", ("autoreply", "history"))
-            self.selector_group(f, "Chat input selector|selector ช่องพิมพ์แชท", ("autoreply", "input"))
+            ttk.Button(
+                row,
+                text=bi("List windows|แสดงหน้าต่าง"),
+                command=lambda: self.helper("windows"),
+            ).pack(side="left")
+            ttk.Button(
+                row,
+                text=bi("Auto-detect (Camfrog 8.x)|ตรวจหา control อัตโนมัติ"),
+                command=self.detect,
+            ).pack(side="left", padx=6)
+            ttk.Button(
+                row,
+                text=bi("Discover controls -> controls.txt|ดึง control -> controls.txt"),
+                command=lambda: self.helper("discover"),
+            ).pack(side="left", padx=6)
+            ttk.Label(
+                row,
+                text=bi(
+                    "Windows only. Copy values from controls.txt into the boxes below.|"
+                    "เฉพาะ Windows คัดลอกค่าจาก controls.txt มาใส่ช่องด้านล่าง"
+                ),
+                foreground="#626d7a",
+            ).pack(side="left")
+            self.selector_group(
+                f, "Chat history selector|selector ประวัติแชท", ("autoreply", "history")
+            )
+            self.selector_group(
+                f, "Chat input selector|selector ช่องพิมพ์แชท", ("autoreply", "input")
+            )
             self.helper_out = tk.Text(f, height=8, state="disabled")
             self.helper_out.pack(fill="both", expand=True, pady=4)
 
         def tab_reply(self, f):
             top = ttk.Frame(f)
             top.pack(fill="x")
-            self.field(top, "Auto-reply enabled|เปิดตอบอัตโนมัติ", ("autoreply", "enabled"), "bool",
-                       hint="required for DJ chat commands|จำเป็นสำหรับคำสั่งดีเจในแชท")
-            self.field(top, "Ignore links|ไม่ตอบข้อความที่มีลิงก์", ("autoreply", "ignore_links"), "bool")
-            self.field(top, "Per-sender cooldown (s)|คูลดาวน์ต่อคน", ("autoreply", "per_sender_cooldown_seconds"), "int", width=8)
-            self.field(top, "Global gap (s)|ระยะห่างทุกคำตอบ", ("autoreply", "global_min_gap_seconds"), "int", width=8)
-            self.field(top, "Max per hour|สูงสุดต่อชั่วโมง", ("autoreply", "max_per_hour"), "int", width=8)
-            self.field(top, "Delay range s (min, max)|หน่วงสุ่ม", ("autoreply", "delay_range_seconds"), "pair", width=12)
-            self.field(top, "Ignore nicks|ข้ามนิค", ("autoreply", "ignore_nicknames"), "list", width=40, hint="comma separated|คั่นด้วย ,")
-            self.field(top, "Only nicks|ตอบเฉพาะนิค", ("autoreply", "only_nicknames"), "list", width=40, hint="empty = everyone|ว่าง = ทุกคน")
-            ttk.Label(f, text=bi("Optional room rules (first match wins). Lines starting with the DJ prefix go to the DJ.|"
-                                 "กฎห้องเพิ่มเติม (ตัวแรกที่ตรงชนะ) บรรทัดที่ขึ้นต้นด้วยคำสั่งดีเจจะวิ่งไปที่ดีเจ")).pack(anchor="w", pady=(8, 0))
+            self.field(
+                top,
+                "Auto-reply enabled|เปิดตอบอัตโนมัติ",
+                ("autoreply", "enabled"),
+                "bool",
+                hint="required for DJ chat commands|จำเป็นสำหรับคำสั่งดีเจในแชท",
+            )
+            self.field(
+                top,
+                "Ignore links|ไม่ตอบข้อความที่มีลิงก์",
+                ("autoreply", "ignore_links"),
+                "bool",
+            )
+            self.field(
+                top,
+                "Per-sender cooldown (s)|คูลดาวน์ต่อคน",
+                ("autoreply", "per_sender_cooldown_seconds"),
+                "int",
+                width=8,
+            )
+            self.field(
+                top,
+                "Global gap (s)|ระยะห่างทุกคำตอบ",
+                ("autoreply", "global_min_gap_seconds"),
+                "int",
+                width=8,
+            )
+            self.field(
+                top,
+                "Max per hour|สูงสุดต่อชั่วโมง",
+                ("autoreply", "max_per_hour"),
+                "int",
+                width=8,
+            )
+            self.field(
+                top,
+                "Delay range s (min, max)|หน่วงสุ่ม",
+                ("autoreply", "delay_range_seconds"),
+                "pair",
+                width=12,
+            )
+            self.field(
+                top,
+                "Ignore nicks|ข้ามนิค",
+                ("autoreply", "ignore_nicknames"),
+                "list",
+                width=40,
+                hint="comma separated|คั่นด้วย ,",
+            )
+            self.field(
+                top,
+                "Only nicks|ตอบเฉพาะนิค",
+                ("autoreply", "only_nicknames"),
+                "list",
+                width=40,
+                hint="empty = everyone|ว่าง = ทุกคน",
+            )
+            ttk.Label(
+                f,
+                text=bi(
+                    "Optional room rules (first match wins). Lines starting with the DJ prefix go to the DJ.|"
+                    "กฎห้องเพิ่มเติม (ตัวแรกที่ตรงชนะ) บรรทัดที่ขึ้นต้นด้วยคำสั่งดีเจจะวิ่งไปที่ดีเจ"
+                ),
+            ).pack(anchor="w", pady=(8, 0))
             tf = ttk.Frame(f)
             tf.pack(fill="both", expand=True)
             cols = ("n", "on", "lang", "men", "pat", "rep")
-            self.tree = ttk.Treeview(tf, columns=cols, show="headings", height=7, selectmode="browse")
-            for c, w, h in (("n", 30, "#"), ("on", 40, "on"), ("lang", 45, "lang"), ("men", 50, "@me"),
-                            ("pat", 300, "pattern"), ("rep", 380, "reply")):
+            self.tree = ttk.Treeview(
+                tf, columns=cols, show="headings", height=7, selectmode="browse"
+            )
+            for c, w, h in (
+                ("n", 30, "#"),
+                ("on", 40, "on"),
+                ("lang", 45, "lang"),
+                ("men", 50, "@me"),
+                ("pat", 300, "pattern"),
+                ("rep", 380, "reply"),
+            ):
                 self.tree.heading(c, text=h)
                 self.tree.column(c, width=w, anchor="w")
             self.tree.pack(side="left", fill="both", expand=True)
             self.tree.bind("<Double-1>", lambda _e: self.rule_edit())
             bf = ttk.Frame(tf)
             bf.pack(side="left", padx=6, anchor="n")
-            for txt, fn in (("Add|เพิ่ม", self.rule_add), ("Edit|แก้", self.rule_edit), ("Delete|ลบ", self.rule_del),
-                            ("Up|ขึ้น", lambda: self.rule_move(-1)), ("Down|ลง", lambda: self.rule_move(1))):
+            for txt, fn in (
+                ("Add|เพิ่ม", self.rule_add),
+                ("Edit|แก้", self.rule_edit),
+                ("Delete|ลบ", self.rule_del),
+                ("Up|ขึ้น", lambda: self.rule_move(-1)),
+                ("Down|ลง", lambda: self.rule_move(1)),
+            ):
                 ttk.Button(bf, text=bi(txt), command=fn, width=8).pack(pady=1)
-            ttk.Label(f, text=bi("Skip patterns (regex, one per line)|skip patterns (regex บรรทัดละอัน)")).pack(anchor="w")
+            ttk.Label(
+                f,
+                text=bi(
+                    "Skip patterns (regex, one per line)|skip patterns (regex บรรทัดละอัน)"
+                ),
+            ).pack(anchor="w")
             self.textbox(f, 2, "t_skips").pack(fill="x")
-            lf = ttk.LabelFrame(f, text=bi("Rule tester (offline, nothing is sent)|ทดสอบกฎ (ออฟไลน์ ไม่ส่งจริง)"), padding=6)
+            lf = ttk.LabelFrame(
+                f,
+                text=bi(
+                    "Rule tester (offline, nothing is sent)|ทดสอบกฎ (ออฟไลน์ ไม่ส่งจริง)"
+                ),
+                padding=6,
+            )
             lf.pack(fill="x", pady=6)
             self.tn = tk.StringVar(value="TestUser")
             self.tm = tk.StringVar(value="สวัสดีครับ")
@@ -5190,7 +6463,9 @@ def build_app():
             e = ttk.Entry(lf, textvariable=self.tm, width=44)
             e.pack(side="left", padx=4)
             e.bind("<Return>", lambda _e: self.test_rule())
-            ttk.Button(lf, text=bi("Test|ทดลอง"), command=self.test_rule).pack(side="left")
+            ttk.Button(lf, text=bi("Test|ทดลอง"), command=self.test_rule).pack(
+                side="left"
+            )
             self.tout = ttk.Label(lf, text="", foreground="#28744c")
             self.tout.pack(side="left", padx=8)
 
@@ -5230,13 +6505,20 @@ def build_app():
             self.dj_tree.delete(*self.dj_tree.get_children())
             q = self.dj_load_queue()
             if q.current is not None:
-                self.dj_tree.insert("", "end", iid="cur", values=(
-                    bi("now|กำลังเล่น"), q.current["title"], q.current["user"]))
+                self.dj_tree.insert(
+                    "",
+                    "end",
+                    iid="cur",
+                    values=(bi("now|กำลังเล่น"), q.current["title"], q.current["user"]),
+                )
             for i, item in enumerate(q.queue[:50], 1):
-                self.dj_tree.insert("", "end", iid=f"q{i}", values=(i, item["title"], item["user"]))
+                self.dj_tree.insert(
+                    "", "end", iid=f"q{i}", values=(i, item["title"], item["user"])
+                )
 
         def dj_browse_music_folder(self):
             from tkinter import filedialog
+
             current = Path(self.dj_music_dir_var.get().strip() or "music")
             if not current.is_absolute():
                 current = BASE / current
@@ -5253,14 +6535,20 @@ def build_app():
         def dj_speak_text(self, value=None):
             try:
                 text = validate_room_speech_text(
-                    self.dj_speech_var.get() if value is None else value)
+                    self.dj_speech_var.get() if value is None else value
+                )
             except ValueError as exc:
                 self.say(str(exc), bad=True)
                 return
 
             def complete(error):
-                message = ("Voice output failed: {0}".format(error) if error else
-                           bi("Voice finished through Windows output.|อ่านเสียงผ่านเอาต์พุต Windows เสร็จแล้ว"))
+                message = (
+                    f"Voice output failed: {error}"
+                    if error
+                    else bi(
+                        "Voice finished through Windows output.|อ่านเสียงผ่านเอาต์พุต Windows เสร็จแล้ว"
+                    )
+                )
                 self.q.put(("speech", 1 if error else 0, message))
 
             try:
@@ -5268,129 +6556,282 @@ def build_app():
             except (RuntimeError, ValueError) as exc:
                 self.say(str(exc), bad=True)
                 return
-            self.say(bi("Speaking through Windows default output...|กำลังอ่านเสียงผ่านเอาต์พุตหลักของ Windows..."))
+            self.say(
+                bi(
+                    "Speaking through Windows default output...|กำลังอ่านเสียงผ่านเอาต์พุตหลักของ Windows..."
+                )
+            )
 
         def dj_speak_current(self):
             queue = self.dj_load_queue()
             if queue.current is None:
-                self.say(bi("No current song to speak.|ไม่มีเพลงที่กำลังเล่นให้อ่านเสียง"), bad=True)
+                self.say(
+                    bi("No current song to speak.|ไม่มีเพลงที่กำลังเล่นให้อ่านเสียง"), bad=True
+                )
                 return
             elapsed, duration = dj_playback_times()
-            self.dj_speak_text(dj_status_speech(
-                queue.current, queue.queue[0] if queue.queue else None, elapsed, duration))
+            self.dj_speak_text(
+                dj_status_speech(
+                    queue.current,
+                    queue.queue[0] if queue.queue else None,
+                    elapsed,
+                    duration,
+                )
+            )
 
         def dj_open_youtube_search(self):
             try:
                 process = open_youtube_search(self.dj_youtube_query_var.get())
             except (OSError, ValueError) as exc:
-                self.msg.configure(text=bi("YouTube search could not open: {0}|เปิดค้นหา YouTube ไม่ได้: {0}").format(exc))
+                self.msg.configure(
+                    text=bi(
+                        "YouTube search could not open: {0}|เปิดค้นหา YouTube ไม่ได้: {0}"
+                    ).format(exc)
+                )
                 return
-            self.msg.configure(text=bi(
-                "Opened YouTube in a separate visible browser profile. Choose a result and press Play.|"
-                "เปิด YouTube ด้วยโปรไฟล์เบราว์เซอร์แยกแล้ว เลือกผลค้นหาและกดเล่นเอง")
-                + " (PID {0})".format(process.pid))
+            self.msg.configure(
+                text=bi(
+                    "Opened YouTube in a separate visible browser profile. Choose a result and press Play.|"
+                    "เปิด YouTube ด้วยโปรไฟล์เบราว์เซอร์แยกแล้ว เลือกผลค้นหาและกดเล่นเอง"
+                )
+                + f" (PID {process.pid})"
+            )
 
         def tab_music(self, f):
             brand = ttk.Frame(f)
             brand.pack(fill="x", pady=(0, 4))
             try:
                 original = tk.PhotoImage(
-                    master=self.root, file=str(app_resource_path("assets/zeazdev-room.png")))
+                    master=self.root,
+                    file=str(app_resource_path("assets/zeazdev-room.png")),
+                )
                 factor = max(1, (original.width() + 47) // 48)
                 self.zeazdev_room_photo = original.subsample(factor, factor)
-                ttk.Label(brand, image=self.zeazdev_room_photo).pack(side="left", padx=(0, 6))
+                ttk.Label(brand, image=self.zeazdev_room_photo).pack(
+                    side="left", padx=(0, 6)
+                )
             except (OSError, tk.TclError):
                 self.zeazdev_room_photo = None
-            ttk.Label(brand, text="ZeaZDev room", font=("Segoe UI", 12, "bold")).pack(side="left")
+            ttk.Label(brand, text="ZeaZDev room", font=("Segoe UI", 12, "bold")).pack(
+                side="left"
+            )
             ttk.Label(brand, text=bi("AutoDJ|ดีเจเพลง"), foreground="#8b672b").pack(
-                side="left", padx=8)
+                side="left", padx=8
+            )
             g = ttk.Frame(f)
             g.pack(fill="x")
             self.field(g, "DJ enabled|เปิดใช้ DJ", ("dj", "enabled"), "bool")
-            self.field(g, "Command prefix|คำสั่งขึ้นต้น", ("dj", "prefix"), width=6,
-                       hint="e.g. ! !request !randommusic !queue !current !skip !help")
+            self.field(
+                g,
+                "Command prefix|คำสั่งขึ้นต้น",
+                ("dj", "prefix"),
+                width=6,
+                hint="e.g. ! !request !randommusic !queue !current !skip !help",
+            )
             self.field(g, "Queue file|ไฟล์คิว", ("dj", "queue_file"), width=24)
-            self.field(g, "Max songs per user|เพลงสูงสุดต่อคน", ("dj", "max_per_user"), "int", width=6)
-            self.dj_music_dir_var = self.field(g, "Music folder|โฟลเดอร์เพลง", ("dj", "music_dir"), width=24)
+            self.field(
+                g,
+                "Max songs per user|เพลงสูงสุดต่อคน",
+                ("dj", "max_per_user"),
+                "int",
+                width=6,
+            )
+            self.dj_music_dir_var = self.field(
+                g, "Music folder|โฟลเดอร์เพลง", ("dj", "music_dir"), width=24
+            )
             music_row = g.grid_size()[1] - 1
             self.btn_dj_browse_music = ttk.Button(
-                g, text=bi("Browse...|เลือก..."), command=self.dj_browse_music_folder)
-            self.btn_dj_browse_music.grid(row=music_row, column=2, sticky="w", padx=4, pady=2)
-            ttk.Label(g, text=bi("Windows-supported audio files|ไฟล์เสียงที่ Windows รองรับ"),
-                      foreground="#666").grid(row=music_row, column=3, sticky="w")
-            self.field(g, "Audio backend|เสียง", ("dj", "audio_backend"), "choice", ("chat", "local", "youtube"), 10,
-                       hint="chat = announce only; local = play a file on this PC; youtube = visible player using !request URL or ID|chat = ประกาศ; local = เล่นไฟล์เสียงบนเครื่องนี้; youtube = เปิดวิดีโอในหน้าต่างผู้เล่น ใช้ !request ตามด้วย URL หรือ ID")
-            self.field(g, "Now playing template|แม่แบบกำลังเล่น", ("dj", "announce_now"), width=44,
-                       hint="placeholders {title} {user}")
-            self.field(g, "Queued template|แม่แบบคิว", ("dj", "announce_queued"), width=44,
-                       hint="placeholders {pos} {title}")
-            ttk.Label(f, text=bi(
-                "Chat commands: !request <song>  !randommusic  !queue  !current  !skip  !help. "
-                "Local audio plays on this PC - route it into Camfrog with a virtual cable or stereo mix.|"
-                "คำสั่งในแชท: !request <เพลง> !randommusic !queue !current !skip !help "
-                "เสียง local เล่นบนเครื่องนี้ - ส่งเข้า Camfrog ด้วย virtual cable หรือ stereo mix"),
-                foreground="#666", wraplength=900).pack(anchor="w", pady=(8, 4))
+                g, text=bi("Browse...|เลือก..."), command=self.dj_browse_music_folder
+            )
+            self.btn_dj_browse_music.grid(
+                row=music_row, column=2, sticky="w", padx=4, pady=2
+            )
+            ttk.Label(
+                g,
+                text=bi("Windows-supported audio files|ไฟล์เสียงที่ Windows รองรับ"),
+                foreground="#666",
+            ).grid(row=music_row, column=3, sticky="w")
+            self.field(
+                g,
+                "Audio backend|เสียง",
+                ("dj", "audio_backend"),
+                "choice",
+                ("chat", "local", "youtube"),
+                10,
+                hint="chat = announce only; local = play a file on this PC; youtube = visible player using !request URL or ID|chat = ประกาศ; local = เล่นไฟล์เสียงบนเครื่องนี้; youtube = เปิดวิดีโอในหน้าต่างผู้เล่น ใช้ !request ตามด้วย URL หรือ ID",
+            )
+            self.field(
+                g,
+                "Now playing template|แม่แบบกำลังเล่น",
+                ("dj", "announce_now"),
+                width=44,
+                hint="placeholders {title} {user}",
+            )
+            self.field(
+                g,
+                "Queued template|แม่แบบคิว",
+                ("dj", "announce_queued"),
+                width=44,
+                hint="placeholders {pos} {title}",
+            )
+            ttk.Label(
+                f,
+                text=bi(
+                    "Chat commands: !request <song>  !randommusic  !queue  !current  !skip  !help. "
+                    "Local audio plays on this PC - route it into Camfrog with a virtual cable or stereo mix.|"
+                    "คำสั่งในแชท: !request <เพลง> !randommusic !queue !current !skip !help "
+                    "เสียง local เล่นบนเครื่องนี้ - ส่งเข้า Camfrog ด้วย virtual cable หรือ stereo mix"
+                ),
+                foreground="#666",
+                wraplength=900,
+            ).pack(anchor="w", pady=(8, 4))
             voice_row = ttk.LabelFrame(
-                f, text=bi("Speak to room with Windows voice|ใช้เสียง Windows พูดเข้าห้อง"), padding=6)
+                f,
+                text=bi("Speak to room with Windows voice|ใช้เสียง Windows พูดเข้าห้อง"),
+                padding=6,
+            )
             voice_row.pack(fill="x", pady=(2, 6))
             self.dj_speech_var = tk.StringVar()
-            speech_entry = ttk.Entry(voice_row, textvariable=self.dj_speech_var, width=58)
+            speech_entry = ttk.Entry(
+                voice_row, textvariable=self.dj_speech_var, width=58
+            )
             speech_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
             speech_entry.bind("<Return>", lambda _event: self.dj_speak_text())
-            ttk.Button(voice_row, text=bi("Speak text|พูดข้อความ"),
-                       command=self.dj_speak_text).pack(side="left", padx=(0, 4))
-            ttk.Button(voice_row, text=bi("Speak current song|พูดข้อมูลเพลงปัจจุบัน"),
-                       command=self.dj_speak_current).pack(side="left")
-            ttk.Label(f, text=bi(
-                "Voice uses the installed Windows speech voice and default playback device. Connect that output to Camfrog's microphone input; text is limited to 240 characters.|"
-                "ใช้เสียงพูดที่ติดตั้งใน Windows และอุปกรณ์เล่นเสียงหลัก ต่อเอาต์พุตนั้นเข้าไมโครโฟน Camfrog จำกัดข้อความ 240 ตัวอักษร"),
-                foreground="#666", wraplength=900).pack(anchor="w", pady=(0, 4))
-            youtube_row = ttk.LabelFrame(f, text=bi("YouTube assisted playback|เปิด YouTube แบบช่วยควบคุม"), padding=6)
+            ttk.Button(
+                voice_row, text=bi("Speak text|พูดข้อความ"), command=self.dj_speak_text
+            ).pack(side="left", padx=(0, 4))
+            ttk.Button(
+                voice_row,
+                text=bi("Speak current song|พูดข้อมูลเพลงปัจจุบัน"),
+                command=self.dj_speak_current,
+            ).pack(side="left")
+            ttk.Label(
+                f,
+                text=bi(
+                    "Voice uses the installed Windows speech voice and default playback device. Connect that output to Camfrog's microphone input; text is limited to 240 characters.|"
+                    "ใช้เสียงพูดที่ติดตั้งใน Windows และอุปกรณ์เล่นเสียงหลัก ต่อเอาต์พุตนั้นเข้าไมโครโฟน Camfrog จำกัดข้อความ 240 ตัวอักษร"
+                ),
+                foreground="#666",
+                wraplength=900,
+            ).pack(anchor="w", pady=(0, 4))
+            youtube_row = ttk.LabelFrame(
+                f,
+                text=bi("YouTube assisted playback|เปิด YouTube แบบช่วยควบคุม"),
+                padding=6,
+            )
             youtube_row.pack(fill="x", pady=(2, 6))
             self.dj_youtube_query_var = tk.StringVar()
             ttk.Entry(youtube_row, textvariable=self.dj_youtube_query_var).pack(
-                side="left", fill="x", expand=True, padx=(0, 6))
-            ttk.Button(youtube_row, text=bi("Open search window|เปิดหน้าต่างค้นหา"),
-                       command=self.dj_open_youtube_search).pack(side="left")
-            ttk.Label(f, text=bi(
-                "Queue playback: set audio backend to youtube and use !request <YouTube URL or ID>. "
-                "The visible player announces on play and advances on end; press Play if autoplay is blocked.|"
-                "เล่นจากคิว: ตั้ง audio backend เป็น youtube แล้วใช้ !request <URL หรือ ID YouTube> "
-                "player จะประกาศเมื่อเริ่มเล่นและเลื่อนคิวเมื่อจบ หาก autoplay ถูกบล็อกให้กด Play"),
-                foreground="#666", wraplength=900).pack(anchor="w", pady=(0, 4))
+                side="left", fill="x", expand=True, padx=(0, 6)
+            )
+            ttk.Button(
+                youtube_row,
+                text=bi("Open search window|เปิดหน้าต่างค้นหา"),
+                command=self.dj_open_youtube_search,
+            ).pack(side="left")
+            ttk.Label(
+                f,
+                text=bi(
+                    "Queue playback: set audio backend to youtube and use !request <YouTube URL or ID>. "
+                    "The visible player announces on play and advances on end; press Play if autoplay is blocked.|"
+                    "เล่นจากคิว: ตั้ง audio backend เป็น youtube แล้วใช้ !request <URL หรือ ID YouTube> "
+                    "player จะประกาศเมื่อเริ่มเล่นและเลื่อนคิวเมื่อจบ หาก autoplay ถูกบล็อกให้กด Play"
+                ),
+                foreground="#666",
+                wraplength=900,
+            ).pack(anchor="w", pady=(0, 4))
             lf = ttk.LabelFrame(f, text=bi("Queue|คิวเพลง"), padding=6)
             lf.pack(fill="both", expand=True)
-            self.dj_tree = ttk.Treeview(lf, columns=("n", "title", "user"), show="headings", height=10)
-            for c, w, h in (("n", 60, "#"), ("title", 380, "song|เพลง"), ("user", 160, "requested by|ขอโดย")):
+            self.dj_tree = ttk.Treeview(
+                lf, columns=("n", "title", "user"), show="headings", height=10
+            )
+            for c, w, h in (
+                ("n", 60, "#"),
+                ("title", 380, "song|เพลง"),
+                ("user", 160, "requested by|ขอโดย"),
+            ):
                 self.dj_tree.heading(c, text=h)
                 self.dj_tree.column(c, width=w, anchor="w")
             self.dj_tree.pack(side="left", fill="both", expand=True)
             row = ttk.Frame(lf)
             row.pack(side="left", anchor="n", padx=6)
-            ttk.Button(row, text=bi("Skip current|ข้ามเพลงปัจจุบัน"), command=self.dj_skip).pack(fill="x", pady=1)
-            ttk.Button(row, text=bi("Clear queue|ล้างคิว"), command=self.dj_clear).pack(fill="x", pady=1)
-            ttk.Button(row, text=bi("Refresh|รีเฟรช"), command=self.dj_refresh).pack(fill="x", pady=1)
+            ttk.Button(
+                row, text=bi("Skip current|ข้ามเพลงปัจจุบัน"), command=self.dj_skip
+            ).pack(fill="x", pady=1)
+            ttk.Button(row, text=bi("Clear queue|ล้างคิว"), command=self.dj_clear).pack(
+                fill="x", pady=1
+            )
+            ttk.Button(row, text=bi("Refresh|รีเฟรช"), command=self.dj_refresh).pack(
+                fill="x", pady=1
+            )
 
         def tab_advanced(self, f):
             g = ttk.Frame(f)
             g.pack(fill="x")
-            self.field(g, "Language|ภาษา", ("language",), "choice", ("auto", "th", "en"), 8)
-            self.field(g, "Poll seconds (0.2-60)|ความถี่ลูป", ("poll_seconds",), "float", width=8)
-            self.field(g, "Hot reload config|โหลดคอนฟิกใหม่เอง", ("reload_config",), "bool")
-            self.field(g, "Active hours only|ทำงานเฉพาะช่วงเวลา", ("active_hours", "enabled"), "bool")
+            self.field(
+                g, "Language|ภาษา", ("language",), "choice", ("auto", "th", "en"), 8
+            )
+            self.field(
+                g, "Poll seconds (0.2-60)|ความถี่ลูป", ("poll_seconds",), "float", width=8
+            )
+            self.field(
+                g, "Hot reload config|โหลดคอนฟิกใหม่เอง", ("reload_config",), "bool"
+            )
+            self.field(
+                g,
+                "Active hours only|ทำงานเฉพาะช่วงเวลา",
+                ("active_hours", "enabled"),
+                "bool",
+            )
             self.field(g, "  start (HH:MM)|  เริ่ม", ("active_hours", "start"), width=8)
             self.field(g, "  end (HH:MM)|  สิ้นสุด", ("active_hours", "end"), width=8)
-            self.field(g, "Require Camfrog foreground|ต้องอยู่หน้าสุดก่อนส่ง", ("safety", "require_foreground"), "bool")
-            self.field(g, "Restore previous window|คืนโฟกัสหลังส่ง", ("safety", "restore_previous_window"), "bool")
-            self.field(g, "Max consecutive failures|ล้มเหลวติดกันสูงสุด", ("safety", "max_consecutive_failures"), "int", width=6)
-            self.field(g, "Log level|ระดับล็อก", ("log", "level"), "choice", ("DEBUG", "INFO", "WARNING", "ERROR"), 10)
-            self.field(g, "Log chat text|เก็บเนื้อข้อความใน log", ("log", "log_message_text"), "bool",
-                       hint="off = privacy|ปิด = ความเป็นส่วนตัว")
+            self.field(
+                g,
+                "Require Camfrog foreground|ต้องอยู่หน้าสุดก่อนส่ง",
+                ("safety", "require_foreground"),
+                "bool",
+            )
+            self.field(
+                g,
+                "Restore previous window|คืนโฟกัสหลังส่ง",
+                ("safety", "restore_previous_window"),
+                "bool",
+            )
+            self.field(
+                g,
+                "Max consecutive failures|ล้มเหลวติดกันสูงสุด",
+                ("safety", "max_consecutive_failures"),
+                "int",
+                width=6,
+            )
+            self.field(
+                g,
+                "Log level|ระดับล็อก",
+                ("log", "level"),
+                "choice",
+                ("DEBUG", "INFO", "WARNING", "ERROR"),
+                10,
+            )
+            self.field(
+                g,
+                "Log chat text|เก็บเนื้อข้อความใน log",
+                ("log", "log_message_text"),
+                "bool",
+                hint="off = privacy|ปิด = ความเป็นส่วนตัว",
+            )
             self.field(g, "Stats enabled|เก็บสถิติ", ("stats", "enabled"), "bool")
             row = ttk.Frame(f)
             row.pack(fill="x", pady=10)
-            ttk.Button(row, text=bi("Start at Windows login|เริ่มเมื่อเข้า Windows"), command=lambda: self.helper("autostart-on")).pack(side="left")
-            ttk.Button(row, text=bi("Remove autostart|ยกเลิก autostart"), command=lambda: self.helper("autostart-off")).pack(side="left", padx=6)
+            ttk.Button(
+                row,
+                text=bi("Start at Windows login|เริ่มเมื่อเข้า Windows"),
+                command=lambda: self.helper("autostart-on"),
+            ).pack(side="left")
+            ttk.Button(
+                row,
+                text=bi("Remove autostart|ยกเลิก autostart"),
+                command=lambda: self.helper("autostart-off"),
+            ).pack(side="left", padx=6)
 
         # ---- config <-> widgets
         @staticmethod
@@ -5454,10 +6895,18 @@ def build_app():
                     errs.append(f"{bi(lab)}: {bi('invalid value|ค่าไม่ถูกต้อง')}")
             for key, (vars_, optional) in self.sel_vars.items():
                 try:
-                    self._set(d, key, strs_to_sel({k: v.get() for k, v in vars_.items()}, optional))
+                    self._set(
+                        d,
+                        key,
+                        strs_to_sel({k: v.get() for k, v in vars_.items()}, optional),
+                    )
                 except ValueError:
                     errs.append(f"{'.'.join(key)}: index")
-            d["autoreply"]["skip_patterns"] = [x.strip() for x in self.t_skips.get("1.0", "end").splitlines() if x.strip()]
+            d["autoreply"]["skip_patterns"] = [
+                x.strip()
+                for x in self.t_skips.get("1.0", "end").splitlines()
+                if x.strip()
+            ]
             d["autoreply"]["rules"] = copy.deepcopy(self.rules)
             return d, errs
 
@@ -5465,10 +6914,13 @@ def build_app():
         # ---- self-update from the GitHub release
         def _confirm_update(self, tag):
             from tkinter import messagebox
+
             return messagebox.askyesno(
                 "Update available",
                 "Version " + tag + " is available (running " + APP_VERSION + ").\n"
-                "Download and install it now?", parent=self.root)
+                "Download and install it now?",
+                parent=self.root,
+            )
 
         def check_update(self):
             def do():
@@ -5477,14 +6929,17 @@ def build_app():
                 if state == "ready":
                     print("restart the app to run the new version.")
                 return 0 if state in ("ready", "no-update") else 2
+
             self.run_bg(do, "checked")
 
         def auto_update_check(self):
             """Silent banner at startup: only speak up when something is newer."""
+
             def probe():
                 found = check_for_update("AutoDJ.exe")
                 print("update" if found else "none")
                 return 0
+
             self.run_bg(probe, "auto-update")
 
         def say(self, text, bad=False):
@@ -5492,7 +6947,9 @@ def build_app():
 
         def attach_autosave_hooks(self):
             vars_ = [var for _path, _kind, var, _label in self.binds]
-            vars_.extend(v for group, _optional in self.sel_vars.values() for v in group.values())
+            vars_.extend(
+                v for group, _optional in self.sel_vars.values() for v in group.values()
+            )
             for var in vars_:
                 trace_id = var.trace_add("write", self.schedule_autosave)
                 self._autosave_traces.append((var, trace_id))
@@ -5514,7 +6971,10 @@ def build_app():
                 self._autosave_after = None
 
         def schedule_autosave(self, *_args):
-            if not getattr(self, "auto_apply_var", None) or not self.auto_apply_var.get():
+            if (
+                not getattr(self, "auto_apply_var", None)
+                or not self.auto_apply_var.get()
+            ):
                 return
             self.cancel_autosave()
             self._autosave_after = self.root.after(700, self.auto_apply)
@@ -5534,11 +6994,21 @@ def build_app():
             if not errs:
                 errs, _warns = ConfigModel.check(cfg)
             if errs:
-                self.say(bi("auto-apply waiting for valid config|รอคอนฟิกที่ถูกต้อง") + ": " + errs[0], True)
+                self.say(
+                    bi("auto-apply waiting for valid config|รอคอนฟิกที่ถูกต้อง")
+                    + ": "
+                    + errs[0],
+                    True,
+                )
                 return
             running = bool(running_pid(self.model.cfg))
             if autosave_needs_confirmation(cfg, running):
-                self.say(bi("LIVE bot running: press Save to confirm changes|บอทโหมดจริงกำลังทำงาน: กด Save เพื่อยืนยัน"), True)
+                self.say(
+                    bi(
+                        "LIVE bot running: press Save to confirm changes|บอทโหมดจริงกำลังทำงาน: กด Save เพื่อยืนยัน"
+                    ),
+                    True,
+                )
                 return
             if cfg == self.model.cfg:
                 return
@@ -5548,10 +7018,18 @@ def build_app():
                 self.say(bi("auto-apply failed|ใช้ค่าอัตโนมัติไม่สำเร็จ") + f": {e}", True)
                 return
             if errs:
-                self.say(bi("auto-apply waiting for valid config|รอคอนฟิกที่ถูกต้อง") + ": " + errs[0], True)
+                self.say(
+                    bi("auto-apply waiting for valid config|รอคอนฟิกที่ถูกต้อง")
+                    + ": "
+                    + errs[0],
+                    True,
+                )
                 return
             self.draft = copy.deepcopy(cfg)
-            self.say(bi("auto-applied|ใช้ค่าและบันทึกแล้ว") + (f"  ({len(warns)} warning)" if warns else ""))
+            self.say(
+                bi("auto-applied|ใช้ค่าและบันทึกแล้ว")
+                + (f"  ({len(warns)} warning)" if warns else "")
+            )
             self.refresh_state()
 
         def save(self):
@@ -5562,8 +7040,11 @@ def build_app():
                 if autosave_needs_confirmation(cfg, running) and cfg != self.model.cfg:
                     ok = messagebox.askyesno(
                         bi("Apply LIVE changes?|ใช้การเปลี่ยนแปลงในโหมดจริง?"),
-                        bi("The running bot may hot-reload these settings and send real messages. Apply them now?|"
-                           "บอทที่กำลังทำงานอาจโหลดค่านี้แล้วส่งข้อความจริง ต้องการใช้ค่าตอนนี้หรือไม่?"))
+                        bi(
+                            "The running bot may hot-reload these settings and send real messages. Apply them now?|"
+                            "บอทที่กำลังทำงานอาจโหลดค่านี้แล้วส่งข้อความจริง ต้องการใช้ค่าตอนนี้หรือไม่?"
+                        ),
+                    )
                     if not ok:
                         self.say(bi("not saved|ไม่ได้บันทึก"), True)
                         return False
@@ -5573,7 +7054,9 @@ def build_app():
                 self.say(bi("not saved|ไม่ได้บันทึก"), True)
                 return False
             self.draft = copy.deepcopy(cfg)
-            self.say(bi("saved|บันทึกแล้ว") + (f"  ({len(warns)} warning)" if warns else ""))
+            self.say(
+                bi("saved|บันทึกแล้ว") + (f"  ({len(warns)} warning)" if warns else "")
+            )
             self.refresh_state()
             return True
 
@@ -5604,9 +7087,13 @@ def build_app():
         def live_toggled(self):
             if not self.live_var.get():
                 return
-            ok = messagebox.askyesno(bi("Go LIVE?|เปลี่ยนเป็นโหมดจริง?"), bi(
-                "Messages WILL be sent to Camfrog. Check your room rules and Camfrog terms first.\nContinue?|"
-                "จะส่งข้อความไปยัง Camfrog จริง ตรวจกฎห้องและเงื่อนไข Camfrog ก่อน\nดำเนินการต่อ?"))
+            ok = messagebox.askyesno(
+                bi("Go LIVE?|เปลี่ยนเป็นโหมดจริง?"),
+                bi(
+                    "Messages WILL be sent to Camfrog. Check your room rules and Camfrog terms first.\nContinue?|"
+                    "จะส่งข้อความไปยัง Camfrog จริง ตรวจกฎห้องและเงื่อนไข Camfrog ก่อน\nดำเนินการต่อ?"
+                ),
+            )
             if not ok:
                 self.live_var.set(False)
             self.refresh_state()
@@ -5617,7 +7104,9 @@ def build_app():
                 return
             cfg = self.model.cfg
             if not cfg["dry_run"] and not messagebox.askyesno(
-                    bi("LIVE|โหมดจริง"), bi("Start in LIVE mode (real messages)?|เริ่มโหมดจริง (ส่งข้อความจริง)?")):
+                bi("LIVE|โหมดจริง"),
+                bi("Start in LIVE mode (real messages)?|เริ่มโหมดจริง (ส่งข้อความจริง)?"),
+            ):
                 return
             args = SimpleNamespace(config=str(self.model.path), lang=None)
             self.run_bg(lambda: cmd_start(cfg, args), "start")
@@ -5635,19 +7124,30 @@ def build_app():
         def helper(self, cmd):
             cfg, errs = self.collect()
             if errs or ConfigModel.check(cfg)[0]:
-                messagebox.showerror(APP_NAME, "\n".join(errs or ConfigModel.check(cfg)[0]))
+                messagebox.showerror(
+                    APP_NAME, "\n".join(errs or ConfigModel.check(cfg)[0])
+                )
                 return
             setup_logging(cfg)
-            fn = {"windows": lambda: cmd_windows(cfg), "discover": lambda: cmd_discover(cfg),
-                  "autostart-on": lambda: cmd_autostart(SimpleNamespace(config=str(self.model.path), lang=None), True),
-                  "autostart-off": lambda: cmd_autostart(SimpleNamespace(config=None, lang=None), False)}[cmd]
+            fn = {
+                "windows": lambda: cmd_windows(cfg),
+                "discover": lambda: cmd_discover(cfg),
+                "autostart-on": lambda: cmd_autostart(
+                    SimpleNamespace(config=str(self.model.path), lang=None), True
+                ),
+                "autostart-off": lambda: cmd_autostart(
+                    SimpleNamespace(config=None, lang=None), False
+                ),
+            }[cmd]
             self.run_bg(fn, "helper")
 
         def detect(self):
             """Run detection and fill selectors; auto-apply saves valid proposals."""
             cfg, errs = self.collect()
             if errs or ConfigModel.check(cfg)[0]:
-                messagebox.showerror(APP_NAME, "\n".join(errs or ConfigModel.check(cfg)[0]))
+                messagebox.showerror(
+                    APP_NAME, "\n".join(errs or ConfigModel.check(cfg)[0])
+                )
                 return
             setup_logging(cfg)
             self.run_bg(lambda: cmd_detect(cfg, self.model.path, False, True), "detect")
@@ -5691,6 +7191,7 @@ def build_app():
                 except Exception as e:  # shown in the GUI, never a traceback window
                     rc, _ = 1, buf.write(f"{type(e).__name__}: {e}")
                 self.q.put((kind, rc, buf.getvalue().strip()))
+
             self.say("...")
             threading.Thread(target=work, daemon=True).start()
 
@@ -5701,11 +7202,20 @@ def build_app():
                 while True:
                     kind, rc, out = self.q.get_nowait()
                     if kind == "speech":
-                        self.say(out.splitlines()[-1] if out else t("ok"), rc not in (0, None))
+                        self.say(
+                            out.splitlines()[-1] if out else t("ok"),
+                            rc not in (0, None),
+                        )
                         continue
                     self.busy = False
-                    self.say(out.splitlines()[-1] if out else t("ok"), rc not in (0, None))
-                    if kind == "start" and rc == 0 and getattr(self, "_close_after", False):
+                    self.say(
+                        out.splitlines()[-1] if out else t("ok"), rc not in (0, None)
+                    )
+                    if (
+                        kind == "start"
+                        and rc == 0
+                        and getattr(self, "_close_after", False)
+                    ):
                         self.close_app()  # bot keeps running hidden; reopen the GUI any time
                         return
                     if kind == "checked" and rc == 0:
@@ -5724,11 +7234,21 @@ def build_app():
                             skipped = self.apply_proposal(out)
                             if skipped:
                                 extra = "\n" + "\n".join(
-                                    bi("kept in config (no box in this app): {0}|"
-                                       "อยู่ใน config แล้ว (ไม่มีช่องในแอปนี้): {0}").format(k)
-                                    for k in skipped)
-                        self.set_text(self.helper_out, "\n".join(
-                            ln for ln in out.splitlines() if not ln.startswith("PROPOSAL ")) + extra)
+                                    bi(
+                                        "kept in config (no box in this app): {0}|"
+                                        "อยู่ใน config แล้ว (ไม่มีช่องในแอปนี้): {0}"
+                                    ).format(k)
+                                    for k in skipped
+                                )
+                        self.set_text(
+                            self.helper_out,
+                            "\n".join(
+                                ln
+                                for ln in out.splitlines()
+                                if not ln.startswith("PROPOSAL ")
+                            )
+                            + extra,
+                        )
                     self.refresh_state()
             except queue.Empty:
                 pass
@@ -5760,16 +7280,33 @@ def build_app():
         def refresh_state(self):
             cfg = self.model.cfg
             pid = running_pid(cfg)
-            self.state_lbl.configure(text=(t("state_running", pid=pid) if pid else t("state_stopped")),
-                                     foreground="#28744c" if pid else "#a3303a")
-            live = (not cfg["dry_run"]) if not hasattr(self, "live_var") else self.live_var.get()
-            self.mode_lbl.configure(text=bi("LIVE|โหมดจริง") if live else bi("DRY-RUN|โหมดทดลอง"),
-                                    foreground="#9f3740" if live else "#8b672b")
+            self.state_lbl.configure(
+                text=(t("state_running", pid=pid) if pid else t("state_stopped")),
+                foreground="#28744c" if pid else "#a3303a",
+            )
+            live = (
+                (not cfg["dry_run"])
+                if not hasattr(self, "live_var")
+                else self.live_var.get()
+            )
+            self.mode_lbl.configure(
+                text=bi("LIVE|โหมดจริง") if live else bi("DRY-RUN|โหมดทดลอง"),
+                foreground="#9f3740" if live else "#8b672b",
+            )
             self.btn_start.state(["disabled"] if pid else ["!disabled"])
             self.btn_stop.state(["!disabled"] if pid else ["disabled"])
             s = read_stats(cfg)
-            self.stats_lbl.configure(text=t("stats_line", started=s.get("started", "?"), st=s.get("statuses", 0),
-                                               rp=s.get("replies", 0), fl=s.get("failures", 0)) if s else "")
+            self.stats_lbl.configure(
+                text=t(
+                    "stats_line",
+                    started=s.get("started", "?"),
+                    st=s.get("statuses", 0),
+                    rp=s.get("replies", 0),
+                    fl=s.get("failures", 0),
+                )
+                if s
+                else ""
+            )
 
         # ---- rules
         def _rule_parts(self, scope):
@@ -5781,9 +7318,19 @@ def build_app():
             for i, r in enumerate(rules):
                 th, en, anyl = reply_to_fields(r.get("reply"))
                 prev = (th or en or anyl).replace("\n", " / ")
-                tree.insert("", "end", iid=str(i), values=(
-                    i + 1, "" if r.get("enabled", True) else "off", r.get("lang", ""),
-                    "yes" if r.get("mention") else "", r.get("pattern", ""), prev))
+                tree.insert(
+                    "",
+                    "end",
+                    iid=str(i),
+                    values=(
+                        i + 1,
+                        "" if r.get("enabled", True) else "off",
+                        r.get("lang", ""),
+                        "yes" if r.get("mention") else "",
+                        r.get("pattern", ""),
+                        prev,
+                    ),
+                )
             if select is not None and rules:
                 tree.selection_set(str(min(select, len(rules) - 1)))
 
@@ -5834,7 +7381,12 @@ def build_app():
                 self.tout.configure(text=errs[0], foreground="#a3303a")
                 return
             try:
-                self.tout.configure(text=explain(cfg, self.tn.get().strip(), self.tm.get()).replace("\n", "  |  "), foreground="#28744c")
+                self.tout.configure(
+                    text=explain(cfg, self.tn.get().strip(), self.tm.get()).replace(
+                        "\n", "  |  "
+                    ),
+                    foreground="#28744c",
+                )
             except re.error as e:
                 self.tout.configure(text=str(e), foreground="#a3303a")
 
@@ -5902,7 +7454,8 @@ def version_newer(latest, current=APP_VERSION):
 def _validate_github_release_url(url):
     """Accept only HTTPS URLs on GitHub's release and asset hosts."""
     allowed_hosts = {
-        "github.com", "objects.githubusercontent.com",
+        "github.com",
+        "objects.githubusercontent.com",
         "release-assets.githubusercontent.com",
     }
     try:
@@ -5910,10 +7463,13 @@ def _validate_github_release_url(url):
         port = parsed.port
     except (TypeError, ValueError) as exc:
         raise ValueError("invalid GitHub release URL") from exc
-    if (parsed.scheme.casefold() != "https"
-            or (parsed.hostname or "").casefold() not in allowed_hosts
-            or parsed.username or parsed.password
-            or port not in (None, 443)):
+    if (
+        parsed.scheme.casefold() != "https"
+        or (parsed.hostname or "").casefold() not in allowed_hosts
+        or parsed.username
+        or parsed.password
+        or port not in (None, 443)
+    ):
         raise ValueError("update URL must use HTTPS on a GitHub release host")
     return str(url)
 
@@ -5927,9 +7483,12 @@ def _validate_github_response_url(response, requested_url):
 def github_latest_release(timeout=15.0):
     """(tag, notes, {asset_name: url}) for the newest release, or None."""
     request = urllib.request.Request(
-        "https://api.github.com/repos/{0}/releases/latest".format(GITHUB_REPO),
-        headers={"Accept": "application/vnd.github+json",
-                 "User-Agent": "camfrog-auto/{0}".format(APP_VERSION)})
+        f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": f"camfrog-auto/{APP_VERSION}",
+        },
+    )
     with urllib.request.urlopen(request, timeout=timeout) as response:
         data = json.loads(response.read().decode("utf-8", "replace"))
     tag = str(data.get("tag_name") or "").lstrip("v")
@@ -5961,8 +7520,14 @@ def check_release_assets(asset_name, timeout=15.0):
         return None
     sums_url = assets.get(UPDATE_ASSET_SUMS, "")
     if not sums_url:  # e.g. release-SHA256SUMS.txt alongside SHA256SUMS.txt
-        sums_url = next((value for name, value in sorted(assets.items())
-                         if name.endswith("SHA256SUMS.txt")), "")
+        sums_url = next(
+            (
+                value
+                for name, value in sorted(assets.items())
+                if name.endswith("SHA256SUMS.txt")
+            ),
+            "",
+        )
     if not sums_url:
         return None
     try:
@@ -5982,10 +7547,10 @@ def self_update(asset_name, confirm=None, timeout=15.0):
     """
     found = check_release_assets(asset_name, timeout)
     if found is None:
-        return "no-update", "no update available (running v{0}).".format(APP_VERSION)
+        return "no-update", f"no update available (running v{APP_VERSION})."
     tag, url, sums_url, _notes = found
     if confirm is not None and not confirm(tag):
-        return "declined", "update to v{0} declined.".format(tag)
+        return "declined", f"update to v{tag} declined."
     ok, message = stage_and_swap_update(url, asset_name, sums_url or None)
     return ("ready" if ok else "failed"), message
 
@@ -6002,7 +7567,8 @@ def download_update(url, target, timeout=60.0):
     """Stream a GitHub release asset to `target`. Returns the bytes written."""
     _validate_github_release_url(url)
     request = urllib.request.Request(
-        url, headers={"User-Agent": "camfrog-auto/{0}".format(APP_VERSION)})
+        url, headers={"User-Agent": f"camfrog-auto/{APP_VERSION}"}
+    )
     written = 0
     with urllib.request.urlopen(request, timeout=timeout) as response:
         _validate_github_response_url(response, url)
@@ -6020,7 +7586,8 @@ def verify_against_sums(sums_url, asset_name, local_path, timeout=30.0):
     """True when local_path matches the GitHub release's SHA256SUMS entry."""
     _validate_github_release_url(sums_url)
     request = urllib.request.Request(
-        sums_url, headers={"User-Agent": "camfrog-auto/{0}".format(APP_VERSION)})
+        sums_url, headers={"User-Agent": f"camfrog-auto/{APP_VERSION}"}
+    )
     with urllib.request.urlopen(request, timeout=timeout) as response:
         _validate_github_response_url(response, sums_url)
         text = response.read().decode("utf-8", "replace")
@@ -6049,8 +7616,8 @@ def stage_and_swap_update(url, asset_name, sums_url=None):
     if not sums_url:
         return False, "release checksum is unavailable; update refused."
     if not isinstance(asset_name, str) or not re.fullmatch(
-            r"[A-Za-z0-9][A-Za-z0-9._-]{0,123}\.exe",
-            asset_name, flags=re.IGNORECASE):
+        r"[A-Za-z0-9][A-Za-z0-9._-]{0,123}\.exe", asset_name, flags=re.IGNORECASE
+    ):
         return False, "invalid update asset name."
     try:
         _validate_github_release_url(url)
@@ -6068,18 +7635,18 @@ def stage_and_swap_update(url, asset_name, sums_url=None):
             return False, "checksum mismatch; update refused."
     except Exception as exc:
         staged.unlink(missing_ok=True)
-        return False, "download failed: {0}: {1}".format(type(exc).__name__, exc)
+        return False, f"download failed: {type(exc).__name__}: {exc}"
     script = exe.parent / "camfrog-update.cmd"
     script.write_text(
         "@echo off\r\n"
         "ping -n 4 127.0.0.1 >nul\r\n"
-        'move /Y "{staged}" "{exe}"\r\n'
-        'del "%~f0"\r\n'.format(staged=staged, exe=exe), encoding="utf-8")
+        f'move /Y "{staged}" "{exe}"\r\n'
+        'del "%~f0"\r\n',
+        encoding="utf-8",
+    )
     command = ["cmd", "/c", str(script)]
     spawn = {"cwd": str(exe.parent)}
     if os.name == "nt":  # CREATE_NO_WINDOW: no console flash during the swap
         spawn["creationflags"] = 0x08000000
     subprocess.Popen(command, close_fds=True, **spawn)
-    return True, "update is staged; it will replace {0} after the app exits.".format(asset_name)
-
-
+    return True, f"update is staged; it will replace {asset_name} after the app exits."

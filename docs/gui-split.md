@@ -12,7 +12,7 @@ apps need is inlined into each of them; that duplication is deliberate — each
 |---|---|---|---|
 | `room_control_gui.py` (`room_control_entry.py`) | `camfrog_auto.py`, profile `room` | `camfrog_gui.py`, room profile | `ClipboardController` from `clipboard_support.py` |
 | `im_autoreply_gui.py` (`im_autoreply_entry.py`) | `camfrog_auto.py`, profile `im_reply` | `camfrog_gui.py`, im_reply profile | `ClipboardController` from `clipboard_support.py` |
-| `camfrog_music_gui.py` (`music_dj_entry.py`) | `camfrog_auto.py`, profile `music` | `camfrog_gui.py`, profile `music` | ZeaZDev room UI, DJ queue controls, local MCI playback, visible YouTube IFrame player; `assets/zeazdev-room.png` is bundled as an immutable GUI resource; control seam stays in local files |
+| `camfrog_music_gui.py` (`autodj_entry.py`) | `camfrog_auto.py`, profile `music` | `camfrog_gui.py`, profile `music` | ZeaZDev room UI, DJ queue controls, local MCI playback, visible YouTube IFrame player; `assets/zeazdev-room.png` is bundled as an immutable GUI resource; control seam stays in local files |
 | `status_random_gui.py` (`status_random_entry.py`) | `camfrog_auto.py`, profile `status` | `camfrog_status_gui.py`, mode `random` | `SingleInstanceGuard`, pool helpers, `--worker` commands and `ClipboardController` kept; `cmd_start` / `cmd_stop` are the app's DATA_DIR versions (the engine copies are not carried) |
 | `status_marquee_gui.py` (`status_marquee_entry.py`) | `camfrog_auto.py`, profile `status` | `camfrog_status_gui.py`, mode `marquee` | Same as above; keeps marquee-only widgets |
 | `status_changer_gui.py` (`status_changer_entry.py`) | `camfrog_auto.py`, profile `status` | Combined Random, Marquee, and Activity Log tabs | Separate mode settings and pools under `status-data/`; one selected worker mode runs at a time. Random and Marquee executables keep their own data folders. |
@@ -49,7 +49,7 @@ and they document where each split module came from.
 
 Each app carries the same inlined self-update block: check `releases/latest` (read-only, no token) -> compare `APP_VERSION` -> download only its own asset -> verify against the release `SHA256SUMS.txt` -> stage `<app>.new` -> swap via `camfrog-update.cmd` after exit. `tests/test_update.py` covers the flow; a fresh `--dry-run` of `tools/release.py` shows what a publish would upload.
 
-The full-feature zip keeps `web-status/`, `auto-dj/`, and `cloudbot-manager/` as sibling app folders so the local Bot Manager controller can find the AutoDJ executable. Each app remains independently runnable. When the apps are installed separately, choose `AutoDJ.exe` from the Bot Manager page; legacy `music-dj.exe` layouts remain discovered while installed.
+The full-feature zip keeps `web-status/`, `auto-dj/`, and `cloudbot-manager/` as sibling app folders so the local Bot Manager controller can find the AutoDJ executable. Each app remains independently runnable. When the apps are installed separately, choose `AutoDJ.exe` from the Bot Manager page; legacy `autodj.exe` layouts remain discovered while installed.
 
 ## Change policy
 

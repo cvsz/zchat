@@ -109,7 +109,7 @@ def test_windows_build_uses_fresh_pytest_basetemp_per_invocation():
     assert '--basetemp="%PYTEST_TMP_DIR%"' in script
     assert '--basetemp="%PYTEST_TMP_DIR%_private"' in script
 
-def test_music_dj_packages_zeazdev_room_mascot_with_the_executable():
+def test_autodj_packages_zeazdev_room_mascot_with_the_executable():
     root = Path(__file__).resolve().parents[1]
     build = (root / "build.bat").read_text(encoding="utf-8")
     artwork = root / "assets" / "zeazdev-room.png"

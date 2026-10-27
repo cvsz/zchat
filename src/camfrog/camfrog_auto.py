@@ -2555,7 +2555,7 @@ RUN_VALUE = {
     "room": "CamfrogRoomControl",
     "im_reply": "CamfrogIMAutoReply",
     "status": f"CamfrogStatus{os.environ.get('ZCFATO_STATUS_MODE', 'App').title()}",
-    "music": "CamfrogMusicDJ",
+    "music": "CamfrogAutoDJ",
 }.get(APP_PROFILE, "CamfrogAuto")
 
 

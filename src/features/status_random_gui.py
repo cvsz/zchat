@@ -395,6 +395,7 @@ DEFAULTS = {
     # to hear; MP3 needs converting to WAV first).
     "dj": {
         "enabled": False, "prefix": "!", "queue_file": "dj_queue.json",
+    "playlist_file": "youtube.json",
         "max_per_user": 3, "music_dir": "music", "audio_backend": "chat",
         "announce_now": "[dj] Now playing: {title} (requested by {user})",
         "announce_queued": "[dj] Queued #{pos}: {title}",
@@ -1057,15 +1058,24 @@ def commit_web(win, ctrl, text: str, require_fg: bool = True, restore: bool = Fa
     if not foreground_ok(win):
         log.error(t("not_fg"))
         return False
+    try:
+        ctrl.set_focus()
+    except Exception:
+        pass
     ctrl.click_input()  # caret into the editable area
-    time.sleep(0.15)
+    time.sleep(0.20)
     if user32.GetForegroundWindow() != win.handle:
         log.error(t("not_fg"))
         return False
     old = _clip_get()
     pasted = _clip_set(text)
     try:
-        keyboard.send_keys("^a", pause=0.02)
+        try:
+            ctrl.set_focus()
+        except Exception:
+            pass
+        ctrl.click_input()
+        time.sleep(0.05)
         keyboard.send_keys("^v" if pasted else _escape_keys(text), pause=0.01, with_spaces=True)
         time.sleep(0.2)
     finally:
@@ -1851,7 +1861,7 @@ RUN_VALUE = {
     "room": "CamfrogRoomControl",
     "im_reply": "CamfrogIMAutoReply",
     "status": "CamfrogStatusRandom",
-    "music": "CamfrogMusicDJ",
+    "music": "CamfrogAutoDJ",
 }.get(APP_PROFILE, "CamfrogAuto")
 
 
@@ -3549,6 +3559,7 @@ DEFAULTS = {
     # Room music DJ: needs autoreply.enabled for chat plumbing (see CONFIG docs).
     "dj": {
         "enabled": False, "prefix": "!", "queue_file": "dj_queue.json",
+    "playlist_file": "youtube.json",
         "max_per_user": 3, "music_dir": "music", "audio_backend": "chat",
         "announce_now": "[dj] Now playing: {title} (requested by {user})",
         "announce_queued": "[dj] Queued #{pos}: {title}",

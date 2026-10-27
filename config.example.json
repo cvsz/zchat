@@ -135,6 +135,7 @@
     "enabled": false,
     "prefix": "!",
     "queue_file": "dj_queue.json",
+    "playlist_file": "youtube.json",
     "max_per_user": 3,
     "music_dir": "music",
     "audio_backend": "chat",
