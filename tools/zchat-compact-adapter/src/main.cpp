@@ -47,6 +47,21 @@ std::wstring file_version(const std::wstring& path) {
            std::to_wstring(LOWORD(info->dwFileVersionLS));
 }
 
+std::wstring process_image_path(HWND hwnd) {
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (!pid) return {};
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!process) return {};
+    std::wstring path(32768, L'\\0');
+    DWORD length = static_cast<DWORD>(path.size());
+    const BOOL ok = QueryFullProcessImageNameW(process, 0, path.data(), &length);
+    CloseHandle(process);
+    if (!ok) return {};
+    path.resize(length);
+    return path;
+}
+
 std::wstring window_text(HWND hwnd) {
     const int length = GetWindowTextLengthW(hwnd);
     if (length <= 0 || length > 1024) return {};
@@ -105,7 +120,9 @@ BOOL CALLBACK scan_window(HWND hwnd, LPARAM param) {
     }
     const auto width = ctx->options->size.width;
     const auto height = ctx->options->size.height;
-    const std::wstring detail = title + L" (" + std::to_wstring(current.right-current.left) +
+    const auto image_path = process_image_path(hwnd);
+    const auto version = image_path.empty() ? std::wstring(L"unknown") : file_version(image_path);
+    const std::wstring detail = title + L" [exe_version=" + version + L"] (" + std::to_wstring(current.right-current.left) +
         L"x" + std::to_wstring(current.bottom-current.top) + L" -> " +
         std::to_wstring(width) + L"x" + std::to_wstring(height) + L")";
     if (!ctx->options->apply) {
