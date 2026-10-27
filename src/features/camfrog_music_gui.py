@@ -54,9 +54,7 @@ def system_taskkill_path():
     return os.path.join(buffer.value, "taskkill.exe")
 
 
-# ============================================================
 # Inlined engine (camfrog_auto.py) - no shared imports.
-# ============================================================
 
 
 # Windowed/no-console builds have no stdout/stderr; force UTF-8 so Thai prints safely.
@@ -5335,9 +5333,7 @@ def set_lang(value):
     LANG = value
 
 
-# ============================================================
 # Inlined clipboard support (clipboard_support.py).
-# ============================================================
 
 _WIDGET_CLASSES = {
     "Entry",
@@ -5654,9 +5650,7 @@ class ClipboardController:
         return "break"
 
 
-# ============================================================
 # GUI (from camfrog_gui.py.py), profile: music.
-# ============================================================
 
 
 APP_NAME = "ZeaZDev room AutoDJ"
@@ -6033,13 +6027,18 @@ def build_app():
             )
             style.configure("TNotebook", background="#f4f1e8")
             style.configure("TNotebook.Tab", padding=(11, 6), font=("Segoe UI", 9))
+<<<<<<< HEAD
             style.map(
                 "TNotebook.Tab",
                 background=[("selected", "#fffdfa")],
                 foreground=[("selected", "#8b672b")],
             )
-            self.root.geometry("800x560")
-            self.root.minsize(660, 460)
+            self.root.geometry("360x480")
+            self.root.minsize(320, 240)
+            style.map("TNotebook.Tab", background=[("selected", "#fffdfa")],
+                      foreground=[("selected", "#8b672b")])
+            self.root.geometry("360x480")
+            self.root.minsize(320, 240)
             self.model = ConfigModel(cfg_path)
             self.q = queue.Queue()
             self.busy = False
