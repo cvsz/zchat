@@ -2,6 +2,7 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace zchat::adapter {
 struct Size {
@@ -15,5 +16,7 @@ inline constexpr Size kMaximumSize{4096, 4096};
 
 bool is_managed_window_title(std::wstring_view title);
 bool is_valid_size(Size size);
+bool is_allowed_process_image(std::wstring_view image_path,
+                              const std::vector<std::wstring>& allowed_images);
 std::wstring json_escape(std::wstring_view value);
 } // namespace zchat::adapter

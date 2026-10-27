@@ -9,9 +9,9 @@ Camfrog/LINE windows, or automate application controls.
 ## Safety defaults
 
 - Default mode is **dry-run**. It only logs and reports matching windows.
-- Use `--apply` to resize matching visible, non-minimized windows.
-- The allowlist is title-prefix based (`ZChat `, `ZChat-`, `ZChat:`); unrelated
-  windows are excluded.
+- `--apply` requires at least one `--allow-image` with an existing absolute executable path.
+- The title-prefix filter (`ZChat `, `ZChat-`, `ZChat:`) is secondary; a title alone never
+  authorizes resizing. Unknown or non-allowlisted process images are skipped.
 - Size validation is bounded to 320×240 through 4096×4096.
 - Existing window position, z-order, and foreground focus are preserved.
 - JSON Lines diagnostics are appended to `zchat-compact-adapter.jsonl` by default.
@@ -33,19 +33,21 @@ ctest --test-dir build/zchat-compact-adapter -C Release --output-on-failure
 # Inspect candidates without changing anything
 .\build\zchat-compact-adapter\Release\zchat-compact-adapter.exe
 
-# Apply compact size to visible ZChat windows
-.\build\zchat-compact-adapter\Release\zchat-compact-adapter.exe --apply
+# Apply only to a specific executable image; repeat --allow-image for additional trusted images
+.\build\zchat-compact-adapter\Release\zchat-compact-adapter.exe --apply --allow-image "C:\Apps\ZChat\zchat.exe"
 
 # Override dimensions and log path
-.\build\zchat-compact-adapter\Release\zchat-compact-adapter.exe --width 420 --height 560 --apply --log .\adapter.jsonl
+.\build\zchat-compact-adapter\Release\zchat-compact-adapter.exe --width 420 --height 560 --apply --allow-image "C:\Apps\ZChat\zchat.exe" --log .\adapter.jsonl
 ```
 
 ## Version detection
 
-The adapter includes a Windows file-version reader based on the PE version resource.
-The first release logs adapter version and per-window outcomes. It deliberately does
-not infer a Camfrog client version from the window title or modify the client. Process
-image path/version reporting is a follow-up before using version-specific resize rules.
+The adapter reads the owning process image path and PE version. In apply mode, it
+canonicalizes and checks the image path against the explicit `--allow-image` list before
+calling `SetWindowPos`; failure to read or match the image is fail-closed. The allowlist
+identifies the executable image, not a script passed to a shared interpreter. For script
+deployments, prefer a dedicated virtual-environment interpreter or a packaged executable
+so unrelated Python applications do not share the same allowlist entry.
 
 ## Tests and limits
 

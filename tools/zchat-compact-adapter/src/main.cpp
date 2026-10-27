@@ -63,6 +63,20 @@ std::wstring process_image_path(HWND hwnd) {
     return path;
 }
 
+bool canonicalize_existing_image_path(std::wstring& path) {
+    if (path.empty() || !std::filesystem::path(path).is_absolute()) return false;
+    const DWORD required = GetFullPathNameW(path.c_str(), 0, nullptr, nullptr);
+    if (!required || required > 32768) return false;
+    std::wstring full(required, L'\0');
+    const DWORD length = GetFullPathNameW(path.c_str(), required, full.data(), nullptr);
+    if (!length || length >= required) return false;
+    full.resize(length);
+    const DWORD attributes = GetFileAttributesW(full.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY)) return false;
+    path = full;
+    return true;
+}
+
 std::wstring window_text(HWND hwnd) {
     const int length = GetWindowTextLengthW(hwnd);
     if (length <= 0 || length > 1024) return {};
@@ -72,7 +86,12 @@ std::wstring window_text(HWND hwnd) {
     return text;
 }
 
-struct Options { Size size{360, 480}; bool apply{false}; std::wstring log_path{L"zchat-compact-adapter.jsonl"}; };
+struct Options {
+    Size size{360, 480};
+    bool apply{false};
+    std::wstring log_path{L"zchat-compact-adapter.jsonl"};
+    std::vector<std::wstring> allowed_images;
+};
 bool parse_int(const wchar_t* value, int& out) {
     try {
         size_t used = 0; const int n = std::stoi(value, &used);
@@ -87,13 +106,27 @@ bool parse_args(int argc, wchar_t** argv, Options& o) {
         else if (arg == L"--width" && i + 1 < argc) { if (!parse_int(argv[++i], o.size.width)) return false; }
         else if (arg == L"--height" && i + 1 < argc) { if (!parse_int(argv[++i], o.size.height)) return false; }
         else if (arg == L"--log" && i + 1 < argc) o.log_path = argv[++i];
+        else if (arg == L"--allow-image" && i + 1 < argc) {
+            std::wstring image_path = argv[++i];
+            if (!canonicalize_existing_image_path(image_path)) {
+                std::wcerr << L"--allow-image must be an existing absolute executable path.\n";
+                return false;
+            }
+            o.allowed_images.push_back(image_path);
+        }
         else if (arg == L"--help") {
-            std::wcout << L"Usage: zchat-compact-adapter [--width 360] [--height 480] [--apply] [--log path]\n"
-                       << L"Default is dry-run. Only ZChat-branded top-level windows are considered.\n";
+            std::wcout << L"Usage: zchat-compact-adapter [--width 360] [--height 480] [--apply --allow-image <absolute-exe-path>] [--log path]\n"
+                       << L"Default is dry-run. Apply mode requires one or more exact process-image paths.\n"
+                       << L"Title prefixes are an additional filter, not process identity.\n";
             return false;
         } else return false;
     }
-    return zchat::adapter::is_valid_size(o.size);
+    if (!zchat::adapter::is_valid_size(o.size)) return false;
+    if (o.apply && o.allowed_images.empty()) {
+        std::wcerr << L"--apply requires at least one --allow-image <absolute-exe-path>.\n";
+        return false;
+    }
+    return true;
 }
 
 struct ScanContext { IUIAutomation* automation; Options* options; unsigned seen{0}; unsigned changed{0}; };
@@ -121,8 +154,15 @@ BOOL CALLBACK scan_window(HWND hwnd, LPARAM param) {
     }
     const auto width = ctx->options->size.width;
     const auto height = ctx->options->size.height;
-    const auto image_path = process_image_path(hwnd);
+    auto image_path = process_image_path(hwnd);
+    if (!image_path.empty() && !canonicalize_existing_image_path(image_path)) image_path.clear();
     const auto version = image_path.empty() ? std::wstring(L"unknown") : file_version(image_path);
+    if (ctx->options->apply &&
+        !zchat::adapter::is_allowed_process_image(image_path, ctx->options->allowed_images)) {
+        log_event(L"process_image_not_allowed", title + L" [exe_version=" + version + L"]");
+        std::wcout << L"SKIPPED (process image not allowlisted) " << title << L"\n";
+        return TRUE;
+    }
     const std::wstring detail = title + L" [exe_version=" + version + L"] (" + std::to_wstring(current.right-current.left) +
         L"x" + std::to_wstring(current.bottom-current.top) + L" -> " +
         std::to_wstring(width) + L"x" + std::to_wstring(height) + L")";
@@ -145,7 +185,12 @@ BOOL CALLBACK scan_window(HWND hwnd, LPARAM param) {
 
 int wmain(int argc, wchar_t** argv) {
     Options options;
-    if (!parse_args(argc, argv, options)) return argc > 1 && std::wstring(argv[1]) == L"--help" ? 0 : 2;
+    if (!parse_args(argc, argv, options)) {
+        for (int i = 1; i < argc; ++i) {
+            if (std::wstring(argv[i]) == L"--help") return 0;
+        }
+        return 2;
+    }
     log_file.open(options.log_path, std::ios::out | std::ios::app);
     log_event(L"startup", L"version=1.0.0 mode=" + std::wstring(options.apply ? L"apply" : L"dry-run"));
 
