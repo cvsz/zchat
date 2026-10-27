@@ -14,6 +14,12 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Configure C++20 compact adapter
+        run: cmake -S tools/zchat-compact-adapter -B build/zchat-compact-adapter -A x64
+      - name: Build C++20 compact adapter
+        run: cmake --build build/zchat-compact-adapter --config Release
+      - name: Run compact adapter CTest
+        run: ctest --test-dir build/zchat-compact-adapter -C Release --output-on-failure
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
