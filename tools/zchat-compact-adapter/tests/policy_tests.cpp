@@ -24,6 +24,35 @@ int main() {
     check(is_managed_window_title(L"ZChat Spoofed") &&
           !is_allowed_process_image(L"C:\\Other\\spoof.exe", allowed_images),
           "title prefix alone does not authorize a process");
+
+    int resize_calls = 0;
+    const auto successful_resize = [&]() {
+        ++resize_calls;
+        return true;
+    };
+    check(execute_resize_if_authorized(false, true,
+              L"C:\\Program Files\\ZChat\\zchat.exe", allowed_images,
+              successful_resize) == ResizeOutcome::dry_run,
+          "dry-run returns without applying resize");
+    check(resize_calls == 0, "dry-run never calls resize callback");
+    check(execute_resize_if_authorized(true, true, L"C:\\Other\\zchat.exe",
+              allowed_images, successful_resize) == ResizeOutcome::process_image_not_allowed,
+          "unallowlisted process is denied at mutation boundary");
+    check(resize_calls == 0, "unallowlisted process never calls resize callback");
+    check(execute_resize_if_authorized(true, false,
+              L"C:\\Program Files\\ZChat\\zchat.exe", allowed_images,
+              successful_resize) == ResizeOutcome::title_not_managed,
+          "unmanaged title is denied at mutation boundary");
+    check(resize_calls == 0, "unmanaged title never calls resize callback");
+    check(execute_resize_if_authorized(true, true,
+              L"C:\\Program Files\\ZChat\\zchat.exe", allowed_images,
+              successful_resize) == ResizeOutcome::resized,
+          "allowlisted apply mode invokes resize callback");
+    check(resize_calls == 1, "authorized apply calls resize exactly once");
+    check(execute_resize_if_authorized(true, true,
+              L"C:\\Program Files\\ZChat\\zchat.exe", allowed_images,
+              []() { return false; }) == ResizeOutcome::resize_failed,
+          "failed Win32 resize is reported as failure");
     check(is_valid_size(kCompactDefault), "accept compact default");
     check(is_valid_size({320, 240}), "accept lower bound");
     check(!is_valid_size({319, 480}), "reject too narrow");

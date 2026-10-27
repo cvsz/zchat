@@ -40,6 +40,21 @@ bool is_allowed_process_image(std::wstring_view image_path,
     return false;
 }
 
+ResizeOutcome execute_resize_if_authorized(
+    bool apply,
+    bool title_managed,
+    std::wstring_view image_path,
+    const std::vector<std::wstring>& allowed_images,
+    const std::function<bool()>& resize) {
+    if (!title_managed) return ResizeOutcome::title_not_managed;
+    if (!apply) return ResizeOutcome::dry_run;
+    if (!is_allowed_process_image(image_path, allowed_images)) {
+        return ResizeOutcome::process_image_not_allowed;
+    }
+    if (!resize) return ResizeOutcome::resize_failed;
+    return resize() ? ResizeOutcome::resized : ResizeOutcome::resize_failed;
+}
+
 bool is_valid_size(Size size) {
     return size.width >= kMinimumSize.width &&
            size.height >= kMinimumSize.height &&

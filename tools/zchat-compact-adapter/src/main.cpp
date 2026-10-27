@@ -157,27 +157,37 @@ BOOL CALLBACK scan_window(HWND hwnd, LPARAM param) {
     auto image_path = process_image_path(hwnd);
     if (!image_path.empty() && !canonicalize_existing_image_path(image_path)) image_path.clear();
     const auto version = image_path.empty() ? std::wstring(L"unknown") : file_version(image_path);
-    if (ctx->options->apply &&
-        !zchat::adapter::is_allowed_process_image(image_path, ctx->options->allowed_images)) {
-        log_event(L"process_image_not_allowed", title + L" [exe_version=" + version + L"]");
-        std::wcout << L"SKIPPED (process image not allowlisted) " << title << L"\n";
-        return TRUE;
-    }
     const std::wstring detail = title + L" [exe_version=" + version + L"] (" + std::to_wstring(current.right-current.left) +
         L"x" + std::to_wstring(current.bottom-current.top) + L" -> " +
         std::to_wstring(width) + L"x" + std::to_wstring(height) + L")";
-    if (!ctx->options->apply) {
+    const auto outcome = zchat::adapter::execute_resize_if_authorized(
+        ctx->options->apply,
+        zchat::adapter::is_managed_window_title(title),
+        image_path,
+        ctx->options->allowed_images,
+        [&]() {
+            return SetWindowPos(hwnd, nullptr, 0, 0, width, height,
+                                SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE) != FALSE;
+        });
+    switch (outcome) {
+    case zchat::adapter::ResizeOutcome::title_not_managed:
+        return TRUE;
+    case zchat::adapter::ResizeOutcome::dry_run:
         log_event(L"dry_run_match", detail);
         std::wcout << L"DRY-RUN " << detail << L"\n";
         return TRUE;
-    }
-    if (SetWindowPos(hwnd, nullptr, 0, 0, width, height,
-                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE)) {
+    case zchat::adapter::ResizeOutcome::process_image_not_allowed:
+        log_event(L"process_image_not_allowed", title + L" [exe_version=" + version + L"]");
+        std::wcout << L"SKIPPED (process image not allowlisted) " << title << L"\n";
+        return TRUE;
+    case zchat::adapter::ResizeOutcome::resized:
         ++ctx->changed;
         log_event(L"resize_applied", detail);
         std::wcout << L"RESIZED " << detail << L"\n";
-    } else {
+        return TRUE;
+    case zchat::adapter::ResizeOutcome::resize_failed:
         log_event(L"resize_failed", title + L" error=" + std::to_wstring(GetLastError()));
+        return TRUE;
     }
     return TRUE;
 }

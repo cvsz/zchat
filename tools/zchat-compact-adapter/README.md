@@ -51,7 +51,10 @@ so unrelated Python applications do not share the same allowlist entry.
 
 ## Tests and limits
 
-The policy test executable covers title allowlisting, size bounds, and JSON escaping.
+The policy test executable covers title and process-image allowlisting, size bounds, JSON escaping,
+and the resize mutation boundary. Injected resize callbacks verify that dry-run, unmanaged titles,
+and non-allowlisted process images never invoke the resize operation, while an authorized apply
+invokes it exactly once and propagates failures.
 Build/runtime validation requires Windows; CI or a Windows developer machine must run
 the commands above. A UIA element lookup only establishes that a window is exposed to
 UI Automation; it does not establish that all controls fit at 360×480. GUI acceptance
