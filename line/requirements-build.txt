@@ -1,6 +1,6 @@
 # Reproducible Windows build toolchain for LINE Status Changer.
 PyInstaller==6.22.3
-pyinstaller-hooks-contrib==2026.8
+pyinstaller-hooks-contrib==2026.9
 pywin32==312
 pywinauto==0.6.9
 comtypes==1.4.17
