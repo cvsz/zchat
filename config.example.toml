@@ -1,0 +1,86 @@
+# AutoDJ Configuration — copy to config.toml and edit
+# All keys are optional; defaults are shown.
+# Lines starting with # are comments.
+
+# ─── Identity ──────────────────────────────────────────────
+bot_nick = "AutoDJ"
+admins = ["YourNickHere"]
+prefix = "!"
+lang = "en"                       # en | th (bot replies and GUI)
+
+# ─── Chat I/O ──────────────────────────────────────────────
+chat_reader = "uia"               # uia | logtail | console
+chat_sender = "uia"               # uia | logtail | console
+send_mode = "auto"                # auto | background | foreground
+send_verify = true                # auto mode: confirm line appeared in room
+send_interval = 1.5               # flood control (seconds between posts)
+max_msg_len = 180                 # hard wrap length (Camfrog message limit)
+
+# ─── Window discovery ──────────────────────────────────────
+window_title_re = ".*"            # regex for room window title (no "Camfrog" in it)
+process_re = "(?i)camfrog"        # window must belong to a process whose exe name matches
+window_exclude_re = ""            # drop matching titles when several windows match
+window_index = 0                  # which match to use after filtering (0 = first)
+auto_discover = true              # at startup (uia): find room window + chat/input controls, save to config.toml
+view_kind = "auto"                # auto | web | text
+web_view_title = "wb-log-room-data"   # substring of chat-history pane title
+web_input_title = "wb-edit-data"      # substring of message-box pane title
+web_strict_body = true            # drop plain text that directly follows a message body
+view_type = "Document"            # text-mode: control type for history (Document/Edit/List/etc.)
+view_index = 0                    # text-mode: which instance to use
+input_type = "Edit"               # text-mode: control type for message box
+input_index = -1                  # text-mode: which instance to use (-1 = last)
+
+# ─── Audio / Playback ──────────────────────────────────────
+mpv_path = "mpv"                  # path to mpv.exe (or just "mpv" if on PATH)
+audio_device = ""                 # "" = default device
+volume = 70                       # 0-100
+music_dirs = []                   # local folders scanned at startup (relative or absolute)
+autoplay_sources = []             # YouTube URLs/playlists, local folders/files added to pool at startup
+shuffle = true                    # random pick from autoplay pool
+allowed_hosts = [                 # hosts allowed for !play links
+  "youtube.com", "youtu.be", "music.youtube.com"
+]
+ytdlp_path = ""                   # "" = auto: next to mpv or on PATH
+mpv_timeout = 30.0                # seconds to wait for one mpv track (0 = no timeout)
+
+# ─── Queue limits ──────────────────────────────────────────
+max_requests_per_user = 3
+max_queue = 50
+max_duration = 900                # seconds (15 min)
+voteskip_threshold = 3
+cooldown = 3.0                    # per-user command cooldown (seconds)
+
+# ─── Announcements ─────────────────────────────────────────
+announce_next = true
+msg_now = ""                      # custom "now playing" template (empty = built-in for lang)
+msg_next = ""                     # custom "up next" template
+
+# ─── TTS (Text-to-Speech) ──────────────────────────────────
+tts_voice = ""                    # Windows voice name (empty = default)
+tts_rate = 170                    # speech rate
+tts_duck = 25                     # music volume during TTS (0-100)
+
+# ─── Logging ───────────────────────────────────────────────
+log_file = ""                     # also write log to this file (rotating, 1 MB x 3)
+poll_interval = 0.5               # seconds between chat reads
+
+# ─── Playlist persistence ──────────────────────────────────
+playlist_file = "playlist.json"   # user requests (!play, GUI, !load) are appended here
+
+# ─── Search ────────────────────────────────────────────────
+search_limit = 1                  # YouTube results per non-admin !play (1 = first match only)
+
+# ─── Auto-launch Camfrog ──────────────────────────────────
+auto_launch = false
+camfrog_exe = ""
+client_title_re = ".*"
+room = ""
+join_uri_template = ""
+launch_timeout = 60
+
+# ─── Blocked users ─────────────────────────────────────────
+blocked_users = []                # nicks whose commands are ignored (admins cannot be blocked)
+
+# ─── Chat line regex (rarely needs changing) ───────────────
+line_regex = '''^(?:\[?\d{1,2}:\d{2}(?::\d{2})?\]?\s*)?(?P<user>[^:\s][^:]{0,30}):\s(?P<text>.+)$'''

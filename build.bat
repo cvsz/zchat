@@ -378,8 +378,15 @@ echo === BUILD MUSIC DJ ===
     --distpath dist\auto-dj --workpath build\auto-dj ^
     --name AutoDJ %ICONARG% ^
     --add-data "assets\zeazdev-room.png;assets" ^
+    --add-data "config.example.toml;." ^
     --collect-all pywinauto --collect-all psutil --collect-submodules comtypes ^
-    --paths src\camfrog --paths src\features ^
+    --hidden-import camfrog_autodj.doctor --hidden-import camfrog_autodj.discover ^
+    --hidden-import camfrog_autodj.launcher --hidden-import camfrog_autodj.gui ^
+    --hidden-import camfrog_autodj.adapters.uia --hidden-import camfrog_autodj.adapters.console ^
+    --hidden-import camfrog_autodj.adapters.logtail --hidden-import camfrog_autodj.webchat ^
+    --hidden-import camfrog_autodj.windows --hidden-import camfrog_autodj.winmsg ^
+    --hidden-import camfrog_autodj.textutil --hidden-import camfrog_autodj.tts ^
+    --paths src\camfrog --paths src\camfrog_autodj --paths src\features ^
     src\features\autodj_entry.py
 if errorlevel 1 goto :fail
 
