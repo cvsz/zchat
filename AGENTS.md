@@ -7,7 +7,7 @@ This repository contains ZChat application code: Camfrog Windows automation, sta
 - Read README.md, CONTRIBUTING.md, SECURITY.md, ROADMAP.md, and the closest AGENTS.md before editing.
 - Keep code, configuration, filenames, commit messages, and technical documentation in English.
 - Prefer the smallest reviewable change that satisfies the requested scope.
-- Never weaken CI, security scanning, dependency review, branch protections, or release controls merely to make a check pass. 
+- Never weaken CI, security scanning, dependency review, branch protections, or release controls merely to make a check pass.
 - Governance verification (2026-10-29): live repository ruleset `26005245` is active but currently contains only `deletion` and `non_fast_forward` rules; it does not require pull-request reviews or status checks, and the API reports `current_user_can_bypass=always`. The connected GitHub integration receives HTTP 403 when reading branch protection, so administrator read-back remains outstanding. Until an administrator verifies effective settings, treat required reviews/checks as NOT enforced by GitHub, manually verify CI on the exact merge head, and do not claim that branch protection or required CI gates are configured.
 - Never commit credentials, tokens, private keys, production endpoints, personal data, or realistic secrets. Use documented placeholders.
 - Do not invent project-specific owners, domains, deployment providers, package registries, cloud accounts, or credentials.
