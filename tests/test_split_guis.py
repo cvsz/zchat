@@ -1126,7 +1126,7 @@ def test_entry_points_import_their_module():
             ("status_marquee_entry", "status_marquee_gui"),
             ("status_changer_entry", "status_changer_gui"),
             ("chat_im_private_entry", "chat_im_private_gui"),
-            ("autodj_entry", "camfrog_music_gui"),
+            ("autodj_entry", "camfrog_autodj"),
             ("web_status_entry", "web_status_gui")):
         mod = importlib.import_module(entry)
         assert importlib.import_module(module) is not None
