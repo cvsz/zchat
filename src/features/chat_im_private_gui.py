@@ -66,6 +66,19 @@ def _source_base() -> Path:
     return here
 
 
+def _robust_path(val):
+    if not val:
+        return None
+    s = str(val).strip()
+    if os.name != "nt" and len(s) >= 2 and s[1] == ":" and s[0].isalpha():
+        drive = s[0].lower()
+        rest = s[2:].replace("\\", "/")
+        posix_p = Path(f"/mnt/{drive}{rest}" if rest.startswith("/") else f"/mnt/{drive}/{rest}")
+        if posix_p.exists() or posix_p.parent.exists():
+            return posix_p
+    return Path(val)
+
+
 BASE = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) \
     else _source_base()
 
@@ -75,9 +88,9 @@ APP_PROFILES = {"full", "room", "im_reply", "status", "music"}
 # Standalone executables can pin runtime state to their own directory. Status
 # workers use ZCFATO_DATA_DIR, which takes precedence over the GUI app directory.
 if os.environ.get("ZCFATO_DATA_DIR"):
-    BASE = Path(os.environ["ZCFATO_DATA_DIR"])
+    BASE = _robust_path(os.environ["ZCFATO_DATA_DIR"])
 elif os.environ.get("CAMFROG_APP_DATA_DIR"):
-    BASE = Path(os.environ["CAMFROG_APP_DATA_DIR"])
+    BASE = _robust_path(os.environ["CAMFROG_APP_DATA_DIR"])
 
 # Nickname regex: Unicode word chars + space . - (Camfrog allows Thai in nicknames).
 # LINE_RE nick capture is permissive; validation happens via NICK_RE.
@@ -3138,10 +3151,14 @@ def private_config_path(path):
     candidate = Path(path)
     if not candidate.is_absolute():
         candidate = BASE / candidate
-    candidate = candidate.resolve()
     try:
-        candidate.relative_to(BASE.resolve())
-    except ValueError as exc:
+        p_res = candidate.resolve()
+        b_res = BASE.resolve()
+        example_res = (_source_base() / "config.example.json").resolve()
+        if p_res != example_res and os.path.commonpath([str(p_res), str(b_res)]) != str(b_res):
+            raise ValueError("Private chat config must stay beside this executable.")
+        candidate = p_res
+    except Exception as exc:
         raise ValueError("Private chat config must stay beside this executable.") from exc
     return candidate
 

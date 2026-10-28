@@ -29,7 +29,7 @@ status-data/
 random-data/
 marquee-data/
 status-data/
-music-dj-data/
+autodj-data/
 /dj-control/
 /dj_queue.json
 /web_status_media.json

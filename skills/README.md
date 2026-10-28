@@ -8,6 +8,11 @@ Each skill lives in one top-level directory:
 skills/<skill-name>/SKILL.md
 ```
 
+## Available Skills
+
+- `zeaz-skill-finder`: Helps users discover and install agent skills.
+- `github-release-workflow`: Guides GPG commit, push, multi-account review/audit (`policedbc`), and merging (`cvsz`) workflows.
+
 ## Design rules
 
 - One skill per directory.

@@ -100,7 +100,7 @@ echo === PYTHON COMPILE CHECK ===
     src\features\status_marquee_entry.py ^
     src\features\status_changer_entry.py ^
     src\features\im_autoreply_entry.py ^
-    src\features\music_dj_entry.py ^
+    src\features\autodj_entry.py ^
     src\camfrog\camfrog_tray.py ^
     src\camfrog\clipboard_support.py ^
     src\features\web_status_entry.py ^
@@ -187,7 +187,7 @@ if exist "dist\status-random\status-random.exe" del /q "dist\status-random\statu
 if exist "dist\status-marquee\status-marquee.exe" del /q "dist\status-marquee\status-marquee.exe"
 if exist "dist\status-changer\status-changer.exe" del /q "dist\status-changer\status-changer.exe"
 if exist "dist\im-autoreply\im-autoreply.exe" del /q "dist\im-autoreply\im-autoreply.exe"
-if exist "dist\music-dj\music-dj.exe" del /q "dist\music-dj\music-dj.exe"
+if exist "dist\autodj\autodj.exe" del /q "dist\autodj\autodj.exe"
 if exist "dist\auto-dj\AutoDJ.exe" del /q "dist\auto-dj\AutoDJ.exe"
 if exist "dist\AutoDJ.exe" del /q "dist\AutoDJ.exe"
 if exist "dist\web-status\web-status.exe" del /q "dist\web-status\web-status.exe"
@@ -379,7 +379,7 @@ echo === BUILD MUSIC DJ ===
     --add-data "assets\zeazdev-room.png;assets" ^
     --collect-all pywinauto --collect-all psutil --collect-submodules comtypes ^
     --paths src\camfrog --paths src\features ^
-    src\features\music_dj_entry.py
+    src\features\autodj_entry.py
 if errorlevel 1 goto :fail
 
 

@@ -8,6 +8,14 @@ echo FULL BUILD + CODE SIGNING (ZCoder / ZEAZDEV)
 echo ============================================================
 echo.
 
+rem --- Load environment variables from .env if present ---
+if exist ".env" (
+    echo [Config] Loading environment from .env ...
+    for /f "delims=" %%i in (.env) do (
+        echo %%i | findstr /r "^#" >nul || set "%%i"
+    )
+)
+
 call full-build.bat %*
 if errorlevel 1 (
     echo.
