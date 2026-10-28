@@ -319,7 +319,7 @@ echo === BUILD WEB STATUS UPDATER (GUI + CONSOLE PROTOTYPE) ===
     --distpath dist\web-status --workpath build\web-status ^
     --name web-status %ICONARG% ^
     --collect-all psutil ^
-    --add-data "assets\zttato.png;assets" ^
+    --add-data "assets\logo.png;assets" ^
     --paths src\camfrog --paths src\features ^
     src\features\web_status_entry.py
 if errorlevel 1 goto :fail
@@ -332,7 +332,7 @@ echo === BUILD STANDALONE CLOUD BOT MANAGER (CLOUDBOT ONLY) ===
     --distpath dist\cloudbot-manager --workpath build\cloudbot-manager ^
     --name CloudBot-Manager %ICONARG% ^
     --collect-all psutil ^
-    --add-data "assets\zttato.png;assets" ^
+    --add-data "assets\logo.png;assets" ^
     --paths src\camfrog --paths src\features ^
     src\features\cloudbot_manager_entry.py
 if errorlevel 1 goto :fail

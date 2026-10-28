@@ -3161,7 +3161,7 @@ class WebStatusManager:
         logo_image = None
         try:
             logo_image = self.tk.PhotoImage(
-                file=str(resource_root / "assets" / "zttato.png")).subsample(16, 16)
+                file=str(resource_root / "assets" / "logo.png")).subsample(16, 16)
         except (self.tk.TclError, OSError):
             pass
         self._splash_photo = logo_image
