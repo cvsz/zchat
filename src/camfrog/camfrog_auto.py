@@ -4770,9 +4770,9 @@ def main(argv=None, force_strict_background=False):
             p_res = cfg_path.resolve()
             b_res = BASE.resolve()
             example_res = (_source_base() / "config.example.json").resolve()
-            if p_res != example_res and os.path.commonpath([str(p_res), str(b_res)]) != str(b_res):
-                raise ValueError("Config not within base")
-        except Exception:
+            if p_res != example_res:
+                p_res.relative_to(b_res)
+        except ValueError:
             print("This app's config must stay inside its own folder.")
             return 2
     if a.cmd == "init":
