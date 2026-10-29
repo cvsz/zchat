@@ -28,6 +28,8 @@ foreach ($exe in $exes) {
   $File = $exe.FullName
   $r = Set-AuthenticodeSignature -FilePath $File -Certificate $cert -HashAlgorithm SHA256 -TimestampServer $TimestampServer
   "{0}: {1} ({2})" -f $File, $r.Status, $r.StatusMessage
-  if ($r.SignerCertificate -eq $null) { "Warning: signing failed for $File" }
+  if ($r.Status -ne "Valid" -or $null -eq $r.SignerCertificate) {
+    throw ("Authenticode signing failed for {0}: {1} ({2})" -f $File, $r.Status, $r.StatusMessage)
+  }
 }
 "Successfully processed signing for all .exe files under $SearchPath."
