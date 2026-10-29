@@ -2555,7 +2555,7 @@ RUN_VALUE = {
     "room": "CamfrogRoomControl",
     "im_reply": "CamfrogIMAutoReply",
     "status": f"CamfrogStatus{os.environ.get('ZCFATO_STATUS_MODE', 'App').title()}",
-    "music": "CamfrogMusicDJ",
+    "music": "CamfrogAutoDJ",
 }.get(APP_PROFILE, "CamfrogAuto")
 
 
@@ -4767,7 +4767,11 @@ def main(argv=None, force_strict_background=False):
         if not cfg_path.is_absolute():
             cfg_path = BASE / cfg_path
         try:
-            cfg_path.resolve().relative_to(BASE.resolve())
+            p_res = cfg_path.resolve()
+            b_res = BASE.resolve()
+            example_res = (_source_base() / "config.example.json").resolve()
+            if p_res != example_res:
+                p_res.relative_to(b_res)
         except ValueError:
             print("This app's config must stay inside its own folder.")
             return 2

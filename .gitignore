@@ -29,7 +29,7 @@ status-data/
 random-data/
 marquee-data/
 status-data/
-music-dj-data/
+autodj-data/
 /dj-control/
 /dj_queue.json
 /web_status_media.json
@@ -54,9 +54,13 @@ samsung-*.xml
 docs/Camfrog Status 2009.exe
 presence-evidence/
 presence-evidence.sqlite3*
+emergency-stops.sqlite3
 
 # Locally installed Camfrog client distribution and access data.
 /camfrog-client/
+log.txt
+nul
+*nul*
 
 .venv-runtime/
 

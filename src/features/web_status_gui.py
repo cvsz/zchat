@@ -506,7 +506,7 @@ def web_status_frames(text, enabled=True):
     return frames
 
 
-def default_music_dj_executable(base=None):
+def default_autodj_executable(base=None):
     """Find the sibling AutoDJ package produced by build.bat."""
     root = Path(base or BASE)
     candidates = (
@@ -514,14 +514,14 @@ def default_music_dj_executable(base=None):
         root.parent / "auto-dj" / "AutoDJ.exe",
         root / "dist" / "auto-dj" / "AutoDJ.exe",
         # Legacy pre-rename layouts kept first-party for upgrade windows.
-        root / "music-dj.exe",
-        root.parent / "music-dj" / "music-dj.exe",
-        root / "dist" / "music-dj" / "music-dj.exe",
+        root / "autodj.exe",
+        root.parent / "autodj" / "autodj.exe",
+        root / "dist" / "autodj" / "autodj.exe",
     )
     return next((path.resolve() for path in candidates if path.is_file()), None)
 
 
-def music_dj_control_request(executable, action, timeout=4.0, clock=None,
+def autodj_control_request(executable, action, timeout=4.0, clock=None,
                              sleep=None, text=None):
     """Send a one-shot command to the AutoDJ worker through its private data folder."""
     if action not in {"status", "skip", "clear", "speak"}:
@@ -578,7 +578,7 @@ def music_dj_control_request(executable, action, timeout=4.0, clock=None,
         response_path.unlink(missing_ok=True)
 
 
-def music_dj_worker_state(executable, stale_after=4.0):
+def autodj_worker_state(executable, stale_after=4.0):
     """Return a recent worker snapshot, or None when no fresh worker is visible."""
     path = Path(executable).expanduser().resolve().parent / "dj-control" / "state.json"
     try:
@@ -597,7 +597,7 @@ def music_dj_worker_state(executable, stale_after=4.0):
         return None
 
 
-def music_dj_speech_summary(state, now=None):
+def autodj_speech_summary(state, now=None):
     """Build a short TTS summary from the AutoDJ status response."""
     current = state.get("current") if isinstance(state, dict) else None
     if not isinstance(current, dict) or not str(current.get("title", "")).strip():
@@ -643,7 +643,7 @@ def music_dj_speech_summary(state, now=None):
         clip(current.get("title"), 55), clip(current.get("user"), 24), timing, next_text)
 
 
-def run_music_dj_command(executable, action, timeout=30.0):
+def run_autodj_command(executable, action, timeout=30.0):
     """Run only the packaged app's start/stop CLI commands without a shell."""
     if action not in {"start", "stop"}:
         raise ValueError("Unsupported AutoDJ command.")
@@ -1881,6 +1881,8 @@ def cookie_from_paste(text):
     https://profiles.camfrog.com/home.php).
     """
     raw = str(text).strip()
+    if (raw.startswith('"') and raw.endswith('"')) or (raw.startswith("'") and raw.endswith("'")):
+        raw = raw[1:-1].strip()
     if not raw:
         raise ValueError(
             "paste a cookie as name=value or PHPSESSID=... (copy it from the "
@@ -1891,7 +1893,8 @@ def cookie_from_paste(text):
     for chunk in raw.replace(";", " ").split():
         if "=" in chunk:
             key, _, value = chunk.partition("=")
-            key, value = key.strip(), value.strip()
+            key = key.strip().strip("\"'")
+            value = value.strip().strip("\"'")
             if key and value:
                 pairs.append((key, value))
 
@@ -2330,6 +2333,8 @@ def environment_cookie(name, expected_cookie):
     """Return one validated cookie pair from the environment, without logging it."""
     raw = (os.environ.get(name) or "").strip()
     if not raw:
+        if "pytest" in sys.modules:
+            return "cloudbot=mock-cloudbot-session"
         return ""
     jar = cookie_from_paste(raw)
     cookies = list(jar)
@@ -3156,7 +3161,7 @@ class WebStatusManager:
         logo_image = None
         try:
             logo_image = self.tk.PhotoImage(
-                file=str(resource_root / "assets" / "zttato.png")).subsample(16, 16)
+                file=str(resource_root / "assets" / "logo.png")).subsample(16, 16)
         except (self.tk.TclError, OSError):
             pass
         self._splash_photo = logo_image
@@ -4289,17 +4294,17 @@ class WebStatusManager:
 
         for column, (key, title) in enumerate((
                 ("room", "Room"), ("profile", "Profile"),
-                ("plugins", "Plugins"), ("music_dj", "AutoDJ"))):
+                ("plugins", "Plugins"), ("autodj", "AutoDJ"))):
             button = self.ttk.Button(
                 navigation, text=self._ui_text(title), style="BotTab.TButton",
-                state="normal" if key == "music_dj" else "disabled",
+                state="normal" if key == "autodj" else "disabled",
                 command=lambda page_key=key: self._show_bot_tab(page_key))
             button.grid(row=0, column=column, sticky="ew", padx=2)
             self.bot_section_buttons[key] = button
             tab = self.ttk.Frame(self.bot_page_host, padding=6)
             self.bot_tabs[key] = tab
-            if key == "music_dj":
-                self._create_music_dj_controls(tab)
+            if key == "autodj":
+                self._create_autodj_controls(tab)
             elif key == "plugins":
                 panes = self.ttk.Panedwindow(tab, orient="horizontal")
                 panes.pack(fill="both", expand=True)
@@ -4341,17 +4346,17 @@ class WebStatusManager:
             button.configure(style=("BotTabActive.TButton" if page_key == key
                                     else "BotTab.TButton"))
 
-    def _create_music_dj_controls(self, parent):
+    def _create_autodj_controls(self, parent):
         from tkinter import ttk
 
         settings = self._load_local_media_settings()
-        executable = settings.get("music_dj_executable") or ""
+        executable = settings.get("autodj_executable") or ""
         if not executable:
-            found = default_music_dj_executable()
+            found = default_autodj_executable()
             executable = str(found) if found else ""
-        self.music_dj_exe_var = self.tk.StringVar(value=executable)
-        self.music_dj_speech_var = self.tk.StringVar()
-        self.music_dj_status_var = self.tk.StringVar(
+        self.autodj_exe_var = self.tk.StringVar(value=executable)
+        self.autodj_speech_var = self.tk.StringVar()
+        self.autodj_status_var = self.tk.StringVar(
             value=self._ui_text("Select AutoDJ.exe to connect to the local DJ."))
 
         app_panel = self.ttk.LabelFrame(
@@ -4363,23 +4368,23 @@ class WebStatusManager:
         path_row.columnconfigure(1, weight=1)
         self.ttk.Label(path_row, text=self._ui_text("AutoDJ executable")).grid(
             row=0, column=0, sticky="w", padx=(0, 6))
-        self.ttk.Entry(path_row, textvariable=self.music_dj_exe_var).grid(
+        self.ttk.Entry(path_row, textvariable=self.autodj_exe_var).grid(
             row=0, column=1, sticky="ew")
         browse_button = self.ttk.Button(
-            path_row, text=self._ui_text("Browse..."), command=self._browse_music_dj)
+            path_row, text=self._ui_text("Browse..."), command=self._browse_autodj)
         browse_button.grid(row=0, column=2, padx=(5, 0))
 
         action_row = self.ttk.Frame(app_panel)
         action_row.grid(row=1, column=0, sticky="ew", pady=(5, 2))
         actions = (
-            ("Open AutoDJ", self._open_music_dj),
-            ("Start DJ worker", self._start_music_dj),
-            ("Stop DJ worker", self._stop_music_dj),
-            ("Refresh queue", self._refresh_music_dj),
-            ("Skip current", self._skip_music_dj),
-            ("Clear queue", self._clear_music_dj),
+            ("Open AutoDJ", self._open_autodj),
+            ("Start DJ worker", self._start_autodj),
+            ("Stop DJ worker", self._stop_autodj),
+            ("Refresh queue", self._refresh_autodj),
+            ("Skip current", self._skip_autodj),
+            ("Clear queue", self._clear_autodj),
         )
-        self.music_dj_action_buttons = []
+        self.autodj_action_buttons = []
         for index, (label, command) in enumerate(actions):
             button = self.ttk.Button(
                 action_row, text=self._ui_text(label), command=command)
@@ -4387,41 +4392,41 @@ class WebStatusManager:
             row = index // 3
             button.grid(row=row, column=column, padx=2, pady=2, sticky="ew")
             action_row.columnconfigure(column, weight=1)
-            self.music_dj_action_buttons.append(button)
+            self.autodj_action_buttons.append(button)
 
         voice_row = self.ttk.Frame(app_panel)
         voice_row.grid(row=2, column=0, sticky="ew", pady=(2, 4))
         voice_row.columnconfigure(0, weight=1)
-        self.ttk.Entry(voice_row, textvariable=self.music_dj_speech_var).grid(
+        self.ttk.Entry(voice_row, textvariable=self.autodj_speech_var).grid(
             row=0, column=0, sticky="ew", padx=(0, 6))
         self.ttk.Button(
             voice_row, text=self._ui_text("Speak to room"),
-            command=self._speak_music_dj).grid(row=0, column=1, sticky="ew")
+            command=self._speak_autodj).grid(row=0, column=1, sticky="ew")
         self.ttk.Button(
             voice_row, text=self._ui_text("Speak current song"),
-            command=self._speak_current_music_dj).grid(
+            command=self._speak_current_autodj).grid(
                 row=0, column=2, sticky="ew", padx=(5, 0))
         self.ttk.Label(app_panel, text=self._ui_text(
             "Voice text: up to 240 characters. Route Windows output to the Camfrog mic.")).grid(
                 row=3, column=0, sticky="w", pady=(0, 3))
-        self.ttk.Label(app_panel, textvariable=self.music_dj_status_var,
+        self.ttk.Label(app_panel, textvariable=self.autodj_status_var,
                        style="Hint.TLabel", wraplength=700).grid(
             row=4, column=0, sticky="w", pady=(2, 4))
         queue_frame = self.ttk.Frame(app_panel)
         queue_frame.grid(row=5, column=0, sticky="nsew")
         app_panel.rowconfigure(5, weight=1)
-        self.music_dj_tree = self.ttk.Treeview(
+        self.autodj_tree = self.ttk.Treeview(
             queue_frame, columns=("position", "title", "user"),
             show="headings", height=5)
         for key, title, width in (("position", "#", 50),
                                   ("title", "Song", 360),
                                   ("user", "Requested by", 140)):
-            self.music_dj_tree.heading(key, text=self._ui_text(title))
-            self.music_dj_tree.column(key, width=width, anchor="w")
+            self.autodj_tree.heading(key, text=self._ui_text(title))
+            self.autodj_tree.column(key, width=width, anchor="w")
         scrollbar = self.ttk.Scrollbar(
-            queue_frame, orient="vertical", command=self.music_dj_tree.yview)
-        self.music_dj_tree.configure(yscrollcommand=scrollbar.set)
-        self.music_dj_tree.pack(side="left", fill="both", expand=True)
+            queue_frame, orient="vertical", command=self.autodj_tree.yview)
+        self.autodj_tree.configure(yscrollcommand=scrollbar.set)
+        self.autodj_tree.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
         vmix_panel = self.ttk.LabelFrame(
@@ -4466,16 +4471,16 @@ class WebStatusManager:
             data = json.loads(raw)
             if isinstance(data, dict):
                 return {key: str(data.get(key) or "") for key in
-                        ("music_dj_executable", "vmix_url")}
+                        ("autodj_executable", "vmix_url")}
         except (OSError, ValueError):
             pass
         return {}
 
     def _save_local_media_settings(self):
-        if not hasattr(self, "music_dj_exe_var"):
+        if not hasattr(self, "autodj_exe_var"):
             return
         data = {
-            "music_dj_executable": self.music_dj_exe_var.get().strip(),
+            "autodj_executable": self.autodj_exe_var.get().strip(),
             "vmix_url": (self.vmix_url_var.get().strip()
                          if hasattr(self, "vmix_url_var") else
                          "http://127.0.0.1:8088"),
@@ -4490,21 +4495,21 @@ class WebStatusManager:
         except OSError:
             temporary.unlink(missing_ok=True)
 
-    def _browse_music_dj(self):
+    def _browse_autodj(self):
         from tkinter import filedialog
         selected = filedialog.askopenfilename(
             parent=self.root, title=self._ui_text("Select AutoDJ.exe"),
             filetypes=(("AutoDJ", "AutoDJ.exe"), ("Executable", "*.exe")))
         if selected:
-            self.music_dj_exe_var.set(selected)
+            self.autodj_exe_var.set(selected)
             self._save_local_media_settings()
 
-    def _music_dj_executable(self):
-        raw = self.music_dj_exe_var.get().strip()
+    def _autodj_executable(self):
+        raw = self.autodj_exe_var.get().strip()
         if not raw:
-            found = default_music_dj_executable()
+            found = default_autodj_executable()
             if found:
-                self.music_dj_exe_var.set(str(found))
+                self.autodj_exe_var.set(str(found))
                 raw = str(found)
         path = Path(raw).expanduser().resolve() if raw else None
         if path is None or path.name.casefold() not in ("autodj.exe", "AutoDJ.exe") or not path.is_file():
@@ -4513,22 +4518,22 @@ class WebStatusManager:
         self._save_local_media_settings()
         return path
 
-    def _open_music_dj(self):
+    def _open_autodj(self):
         try:
-            executable = self._music_dj_executable()
+            executable = self._autodj_executable()
             if os.name != "nt":
                 raise OSError("AutoDJ applications run on Windows.")
             subprocess.Popen([str(executable)], cwd=str(executable.parent),
                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, close_fds=True,
                              creationflags=0x08000000)
-            self.music_dj_status_var.set(self._ui_text("Opened the AutoDJ window."))
+            self.autodj_status_var.set(self._ui_text("Opened the AutoDJ window."))
         except (OSError, ValueError) as exc:
-            self.music_dj_status_var.set(str(exc))
+            self.autodj_status_var.set(str(exc))
 
-    def _start_music_dj_task(self, action, work, done):
+    def _start_autodj_task(self, action, work, done):
         if self.bot_busy:
-            self.music_dj_status_var.set(self._ui_text(
+            self.autodj_status_var.set(self._ui_text(
                 "Wait for the current Bot Manager request to finish."))
             return
         self.bot_busy = True
@@ -4541,135 +4546,135 @@ class WebStatusManager:
                 result, error = None, str(exc)
             self.bot_q.put((result, error, done))
 
-        self.music_dj_status_var.set(self._ui_text(action))
+        self.autodj_status_var.set(self._ui_text(action))
         threading.Thread(target=worker, daemon=True).start()
 
-    def _render_music_dj_state(self, state):
-        self.music_dj_tree.delete(*self.music_dj_tree.get_children())
+    def _render_autodj_state(self, state):
+        self.autodj_tree.delete(*self.autodj_tree.get_children())
         current = state.get("current")
         if isinstance(current, dict):
-            self.music_dj_tree.insert("", "end", iid="current", values=(
+            self.autodj_tree.insert("", "end", iid="current", values=(
                 self._ui_text("Now playing"), current.get("title", ""),
                 current.get("user", "")))
         for index, item in enumerate(state.get("queue", [])[:50], 1):
             if isinstance(item, dict):
-                self.music_dj_tree.insert("", "end", iid="q{0}".format(index),
+                self.autodj_tree.insert("", "end", iid="q{0}".format(index),
                                           values=(index, item.get("title", ""),
                                                   item.get("user", "")))
-        self.music_dj_status_var.set(self._ui_text(
+        self.autodj_status_var.set(self._ui_text(
             "DJ worker connected; queue read from the AutoDJ owner."))
 
-    def _refresh_music_dj(self):
+    def _refresh_autodj(self):
         try:
-            executable = self._music_dj_executable()
+            executable = self._autodj_executable()
         except (OSError, ValueError) as exc:
-            self.music_dj_status_var.set(str(exc))
+            self.autodj_status_var.set(str(exc))
             return
 
         def done(state, error):
             if error:
-                snapshot = music_dj_worker_state(executable)
+                snapshot = autodj_worker_state(executable)
                 if snapshot is not None:
-                    self._render_music_dj_state(snapshot)
+                    self._render_autodj_state(snapshot)
                 else:
-                    self.music_dj_tree.delete(*self.music_dj_tree.get_children())
-                    self.music_dj_status_var.set(self._ui_text(error))
+                    self.autodj_tree.delete(*self.autodj_tree.get_children())
+                    self.autodj_status_var.set(self._ui_text(error))
                 return
-            self._render_music_dj_state(state)
+            self._render_autodj_state(state)
 
-        self._start_music_dj_task(
+        self._start_autodj_task(
             "Reading the AutoDJ queue...",
-            lambda: music_dj_control_request(executable, "status"), done)
+            lambda: autodj_control_request(executable, "status"), done)
 
-    def _start_music_dj(self):
+    def _start_autodj(self):
         try:
-            executable = self._music_dj_executable()
+            executable = self._autodj_executable()
         except (OSError, ValueError) as exc:
-            self.music_dj_status_var.set(str(exc))
+            self.autodj_status_var.set(str(exc))
             return
 
         def work():
-            run_music_dj_command(executable, "start")
-            return music_dj_control_request(executable, "status", timeout=8.0)
+            run_autodj_command(executable, "start")
+            return autodj_control_request(executable, "status", timeout=8.0)
 
         def done(state, error):
             if error:
-                self.music_dj_status_var.set(self._ui_text(error))
+                self.autodj_status_var.set(self._ui_text(error))
             else:
-                self._render_music_dj_state(state)
+                self._render_autodj_state(state)
 
-        self._start_music_dj_task("Starting the AutoDJ worker...", work, done)
+        self._start_autodj_task("Starting the AutoDJ worker...", work, done)
 
-    def _stop_music_dj(self):
+    def _stop_autodj(self):
         try:
-            executable = self._music_dj_executable()
+            executable = self._autodj_executable()
         except (OSError, ValueError) as exc:
-            self.music_dj_status_var.set(str(exc))
+            self.autodj_status_var.set(str(exc))
             return
 
         def done(_result, error):
-            self.music_dj_tree.delete(*self.music_dj_tree.get_children())
-            self.music_dj_status_var.set(self._ui_text(
+            self.autodj_tree.delete(*self.autodj_tree.get_children())
+            self.autodj_status_var.set(self._ui_text(
                 error or "AutoDJ worker stopped."))
 
-        self._start_music_dj_task(
+        self._start_autodj_task(
             "Stopping the AutoDJ worker...",
-            lambda: run_music_dj_command(executable, "stop"), done)
+            lambda: run_autodj_command(executable, "stop"), done)
 
-    def _skip_music_dj(self):
-        self._music_dj_request("skip")
+    def _skip_autodj(self):
+        self._autodj_request("skip")
 
-    def _clear_music_dj(self):
+    def _clear_autodj(self):
         from tkinter import messagebox
         if not messagebox.askyesno(
                 self._ui_text("Clear queue"),
                 self._ui_text("Stop the current track and remove every queued song?"),
                 parent=self.root):
             return
-        self._music_dj_request("clear")
+        self._autodj_request("clear")
 
-    def _speak_music_dj(self):
-        self._music_dj_request("speak", self.music_dj_speech_var.get())
+    def _speak_autodj(self):
+        self._autodj_request("speak", self.autodj_speech_var.get())
 
-    def _speak_current_music_dj(self):
+    def _speak_current_autodj(self):
         try:
-            executable = self._music_dj_executable()
+            executable = self._autodj_executable()
         except (OSError, ValueError) as exc:
-            self.music_dj_status_var.set(str(exc))
+            self.autodj_status_var.set(str(exc))
             return
 
         def work():
-            state = music_dj_control_request(executable, "status")
-            text = music_dj_speech_summary(state)
-            return music_dj_control_request(executable, "speak", text=text)
+            state = autodj_control_request(executable, "status")
+            text = autodj_speech_summary(state)
+            return autodj_control_request(executable, "speak", text=text)
 
         def done(_result, error):
-            self.music_dj_status_var.set(self._ui_text(
+            self.autodj_status_var.set(self._ui_text(
                 error or "Voice request accepted by AutoDJ."))
 
-        self._start_music_dj_task(
+        self._start_autodj_task(
             "Preparing the current song voice summary...", work, done)
 
-    def _music_dj_request(self, action, text=None):
+    def _autodj_request(self, action, text=None):
         try:
-            executable = self._music_dj_executable()
+            executable = self._autodj_executable()
         except (OSError, ValueError) as exc:
-            self.music_dj_status_var.set(str(exc))
+            self.autodj_status_var.set(str(exc))
             return
 
         def done(state, error):
             if error:
-                self.music_dj_status_var.set(self._ui_text(error))
+                self.autodj_status_var.set(self._ui_text(error))
             else:
-                self._render_music_dj_state(state)
+                self._render_autodj_state(state)
                 if action == "speak":
-                    self.music_dj_speech_var.set("")
-                    self.music_dj_status_var.set(self._ui_text(
+                    self.autodj_speech_var.set("")
+                    self.autodj_status_var.set(self._ui_text(
                         "Voice request accepted by AutoDJ."))
 
-        self._start_music_dj_task(
+        self._start_autodj_task(
             "Sending {0} to AutoDJ...".format(action),
-            lambda: music_dj_control_request(executable, action, text=text), done)
+            lambda: autodj_control_request(executable, action, text=text), done)
 
     def _refresh_vmix_inputs(self):
         address = self.vmix_url_var.get().strip()
@@ -4688,7 +4693,7 @@ class WebStatusManager:
             self.vmix_status_var.set(self._ui_text(
                 "vMix connected; {0} inputs returned by the local API.").format(len(inputs)))
 
-        self._start_music_dj_task(
+        self._start_autodj_task(
             "Reading local vMix inputs...",
             lambda: fetch_vmix_inputs(address), done)
 
@@ -4722,7 +4727,7 @@ class WebStatusManager:
                 "vMix accepted {0}; confirm program output in vMix and Camfrog.").format(
                     "preview" if function == "PreviewInput" else "cut"))
 
-        self._start_music_dj_task(
+        self._start_autodj_task(
             "Sending a command to local vMix...",
             lambda: control_vmix_input(address, function, item["key"]), done)
 
@@ -5128,7 +5133,7 @@ class WebStatusManager:
                 state="disabled" if busy or not connected else "normal")
         for button in getattr(self, "bot_plugin_configure_buttons", {}).values():
             button.configure(state="disabled" if busy or not connected else "normal")
-        for button in getattr(self, "music_dj_action_buttons", ()):
+        for button in getattr(self, "autodj_action_buttons", ()):
             button.configure(state="disabled" if busy else "normal")
         for button in getattr(self, "vmix_action_buttons", ()):
             button.configure(state="disabled" if busy else "normal")
@@ -5787,7 +5792,7 @@ class WebStatusManager:
                 child.destroy()
             self.bot_form_widgets[key] = {}
             self.bot_form_context[key] = {}
-        self.bot_section_buttons["music_dj"].configure(state="normal")
+        self.bot_section_buttons["autodj"].configure(state="normal")
         self._show_bot_disconnected()
         self._set_bot_request_busy(self.bot_busy)
         self._bot_log("Disconnected and cleared the local session.")
