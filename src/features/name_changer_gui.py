@@ -489,8 +489,8 @@ class StandaloneNameChangerGUI:
 
         self.root = root or self.tk.Tk()
         self.root.title(APP_TITLE)
-        self.root.geometry("540x500")
-        self.root.minsize(480, 420)
+        self.root.geometry("360x480")
+        self.root.minsize(320, 240)
 
         self.manager = NameManager(DEFAULT_THAI_NAMES + DEFAULT_EN_NAMES)
 

@@ -2960,8 +2960,8 @@ class WebStatusManager:
         load_dotenv(BASE / ".env")  # pick up the encrypted account, if saved
         self.root = self.tk.Tk()
         self.root.title("ZChat Web Status")
-        self.root.geometry("400x300")
-        self.root.minsize(300, 220)
+        self.root.geometry("360x480")
+        self.root.minsize(320, 240)
         self.root.resizable(True, True)
         self._is_fullscreen = False
         self._pre_fullscreen_geometry = "400x300"

@@ -101,8 +101,8 @@ class PrivateChatManager:
         style.map("TNotebook.Tab", background=[("selected", "#fffdfa")],
                   foreground=[("selected", "#8b672b")])
         self.root.title("Camfrog Private Chat")
-        self.root.geometry("460x360")
-        self.root.minsize(360, 280)
+        self.root.geometry("360x480")
+        self.root.minsize(320, 240)
 
         self.ttk.Label(self.root, text=(
             "Open a private chat in Camfrog, then refresh this list. "

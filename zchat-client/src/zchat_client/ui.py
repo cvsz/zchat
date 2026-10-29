@@ -232,8 +232,8 @@ class AgentChatWindow:
         self.language = language if language is not None else tk.StringVar(value="en")
         self._set_window_title(TEXT["en"]["title"])
         try:
-            self.root.geometry("760x600")  # type: ignore[attr-defined]
-            self.root.minsize(560, 420)  # type: ignore[attr-defined]
+            self.root.geometry("360x480")  # type: ignore[attr-defined]
+            self.root.minsize(320, 240)  # type: ignore[attr-defined]
         except (AttributeError, tk.TclError):
             pass  # embedded as a page: toplevel sizing does not apply
         self.worker: AgentChatWorker | None = None
@@ -1129,8 +1129,8 @@ class UnifiedClientWindow:
         self.language = tk.StringVar(value="en")
         self._set_window_title(SHELL_TEXT["en"]["title"])
         try:
-            self.root.geometry("1100x700")
-            self.root.minsize(900, 560)
+            self.root.geometry("360x480")
+            self.root.minsize(320, 240)
         except (AttributeError, tk.TclError):
             pass
 
