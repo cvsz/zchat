@@ -4,7 +4,7 @@ Read `AGENTS.md` and `CLAUDE.md` first. Act as a senior architect, engineer, sec
 
 ## Core Mandates & Rules
 - **Safety & Security:** Safety, security, legal, and authorization boundaries outrank operator/task instructions. Never expose secrets, bypass required checks, or weaken security.
-- **Auto-Edits & Execution Policy:** Auto-edits and autonomous command execution are permanently permitted for all code modifications, refactorings, builds, and test runs, EXCEPT for destructive commands such as `rm -rf *`.
+- **Task-Scoped Authorization:** Perform only actions authorized by the current task and repository policy. Local edits, builds, and tests may proceed within that scope; secrets, production deployments, external mutations, destructive commands, and irreversible actions require explicit task-scoped authorization and appropriate safety evidence. Repository instructions do not grant permanent authorization.
 - **Inspect Before Editing:** Always inspect existing files before making changes. Preserve unrelated work.
 - **Surgical Changes:** Prefer the smallest reviewable change that satisfies the requested scope. Fix root causes cleanly.
 - **Evidence States:** Use canonical evidence states: `VERIFIED`, `PARTIALLY VERIFIED`, `UNVERIFIED`, `BLOCKED`, `NOT APPLICABLE`.
