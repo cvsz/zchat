@@ -3,7 +3,7 @@ PYTHON ?= $(if $(VENV_PYTHON),$(firstword $(VENV_PYTHON)),python3)
 RUFF := $(PYTHON) -m ruff
 PYTEST := $(PYTHON) -m pytest
 
-.PHONY: help venv setup validate validate-template format lint test test-zchat-client test-line build build-full build-full-signed build-all release release-unsigned security clean ci
+.PHONY: help venv setup validate validate-template format lint test test-zchat-client test-line build build-full build-full-signed build-all build-installer build-installer-signed release release-unsigned security clean ci
 
 help:
 	@printf '%s\n' 'Project tasks:' \
@@ -19,6 +19,8 @@ help:
 		'  build-full        Full build: Camfrog + line-status-changer + zchat-client (full-build.bat)' \
 		'  build-full-signed Full build + Authenticode signing (full-build-exe.bat)' \
 		'  build-all         Alias for build-full-signed (default full build)' \
+		'  build-installer       Build NSIS installer (unsigned)' \
+		'  build-installer-signed Build NSIS installer + Authenticode signing' \
 		'  release           Build full + sign + publish GitHub release (--release)' \
 		'  release-unsigned  Build full + publish release without signing (--release)' \
 		'  security          Audit root and installed Python dependencies' \
@@ -128,3 +130,22 @@ clean:
 	find . \( -name .git -o -name .pytest_cache -o -name .venv -o -name venv -o -name node_modules -o -name build -o -name dist -o -name __pycache__ \) -prune -o -type d -name '.ruff_cache' -prune -exec rm -rf {} +
 
 ci: validate-template format lint test security
+
+# Installer targets (Windows only)
+ifeq ($(OS),Windows_NT)
+build-installer:
+	installer\build_installer.bat
+else
+build-installer:
+	@echo 'Installer build requires Windows with NSIS.' >&2
+	@exit 2
+endif
+
+ifeq ($(OS),Windows_NT)
+build-installer-signed:
+	installer\build_installer.ps1 -SignCertificate "$(ZCODER_CERT_THUMBPRINT)"
+else
+build-installer-signed:
+	@echo 'Installer build requires Windows with NSIS.' >&2
+	@exit 2
+endif
