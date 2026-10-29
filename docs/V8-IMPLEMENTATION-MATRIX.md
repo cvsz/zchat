@@ -59,7 +59,7 @@ observer bundle; the tools refuse to fabricate an EXTERNAL_EFFECT_VERIFIED state
 | room-control | VERIFIED (unit/CI) | `room-control.spec`, `tests/test_room_control*` + CI `test` job green at 5a02499 |
 | chat-im-private | VERIFIED (unit/CI) | `chat-im-private.spec`, `tests/test_im.py`, `tests/test_private_chat_gui.py`; IM auto-reply refuses IM windows by design |
 | im-autoreply | VERIFIED (unit/CI) | `im-autoreply.spec`, `tests/test_im.py`; room rules never answer private chats (`log_kind` validation) |
-| auto-dj (AutoDJ.exe, was music-dj) | VERIFIED (unit/CI) | `tests/test_dj.py`, `tests/test_music_gui.py`; local `.wav` backend + queue; `!randommusic` opens visible YouTube search + posts link to room; Thai queries added |
+| auto-dj (AutoDJ.exe, was autodj) | VERIFIED (unit/CI) | `tests/test_dj.py`, `tests/test_music_gui.py`; local `.wav` backend + queue; `!randommusic` opens visible YouTube search + posts link to room; Thai queries added |
 | status-changer | VERIFIED (unit/CI) | `status-changer.spec`, `tests/test_camfrog_status_engine.py`, `tests/test_status_gui.py`; fail-closed foreground + resource-lock gates |
 | status-marquee | VERIFIED (unit/CI) | `status-marquee.spec`, `tests/test_status_gui.py`; marquee frame rendering + UTF-8 clip |
 | status-random | VERIFIED (unit/CI) | `status-random.spec`, `tests/test_status_gui.py`; random frame selection |

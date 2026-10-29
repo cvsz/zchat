@@ -89,3 +89,14 @@ jobs:
             line/dist/line-status-changer.exe
             line/dist/SHA256SUMS.txt
           if-no-files-found: error
+
+  # Workflow-level status check for branch protection
+  ci:
+    needs: [test, control-server, build-windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 1
+    steps:
+      - name: CI gate passed
+        run: echo "All required checks passed"
