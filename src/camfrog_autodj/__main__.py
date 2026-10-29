@@ -9,6 +9,7 @@ from . import __version__
 from .adapters import build_adapter
 from .config import Config, ConfigError
 from .engine import Engine
+from .single_instance import setup_single_instance_and_crash_reporting
 from .textutil import clean_text
 
 
@@ -56,6 +57,9 @@ def main():
 
 
 def _run(a, level):
+    # Set up single-instance enforcement and crash reporting (early, before config)
+    instance, crash_reporter = setup_single_instance_and_crash_reporting("AutoDJ")
+
     if a.windows:
         from .windows import list_all
         for c in list_all():
@@ -107,12 +111,17 @@ def _run(a, level):
         print("sent:", a.say)
         return
     eng = Engine(cfg, build_adapter(cfg))
-    if a.gui:
-        from .gui import App
-        eng.start()
-        App(eng).mainloop()
-    else:
-        eng.run()
+    try:
+        if a.gui:
+            from .gui import App
+            eng.start()
+            App(eng).mainloop()
+        else:
+            eng.run()
+    finally:
+        # Cleanup single-instance mutex and crash reporter
+        instance.release()
+        crash_reporter.cleanup()
 
 
 if __name__ == "__main__":
