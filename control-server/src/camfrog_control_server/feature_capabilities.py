@@ -29,7 +29,7 @@ _FEATURES = (
     ("camfrog.status_marquee", "camfrog", True, True),
     ("camfrog.im_autoreply", "camfrog", True, False),
     ("camfrog.web_status", "camfrog", False, False),
-    ("camfrog.music_dj", "camfrog", True, False),
+    ("camfrog.autodj", "camfrog", True, False),
     ("camfrog.status_changer", "camfrog", True, True),
     ("line.status_changer", "line", True, False),
 )

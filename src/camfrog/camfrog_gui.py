@@ -178,8 +178,11 @@ class ConfigModel:
         self.path = Path(path).resolve()
         if APP_PROFILE in ("room", "im_reply"):
             try:
-                self.path.relative_to(ca.BASE.resolve())
-            except ValueError as exc:
+                p_res = self.path.resolve()
+                b_res = ca.BASE.resolve()
+                if os.path.commonpath([str(p_res), str(b_res)]) != str(b_res):
+                    raise ValueError("This app's config must stay inside its own folder.")
+            except Exception as exc:
                 raise ValueError("This app's config must stay inside its own folder.") from exc
         self.cfg = None
 

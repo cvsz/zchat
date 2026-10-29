@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import web_status_gui as wsg  # noqa: E402
 
 
-def test_music_dj_control_request_uses_protocol_and_cleans_up(tmp_path):
+def test_autodj_control_request_uses_protocol_and_cleans_up(tmp_path):
     executable = tmp_path / "AutoDJ.exe"
 
     def simulate_worker(_delay):
@@ -27,14 +27,14 @@ def test_music_dj_control_request_uses_protocol_and_cleans_up(tmp_path):
          (request["request_id"] + ".response.json")).write_text(
             json.dumps(response), encoding="utf-8")
 
-    result = wsg.music_dj_control_request(
+    result = wsg.autodj_control_request(
         executable, "status", timeout=1, sleep=simulate_worker)
 
     assert result["current"] == {"title": "Song", "user": "Ann"}
     assert list((tmp_path / "dj-control").iterdir()) == []
 
 
-def test_music_dj_control_request_sends_bounded_voice_text(tmp_path):
+def test_autodj_control_request_sends_bounded_voice_text(tmp_path):
     executable = tmp_path / "AutoDJ.exe"
     seen = {}
 
@@ -53,7 +53,7 @@ def test_music_dj_control_request_sends_bounded_voice_text(tmp_path):
          (request["request_id"] + ".response.json")).write_text(
             json.dumps(response), encoding="utf-8")
 
-    result = wsg.music_dj_control_request(
+    result = wsg.autodj_control_request(
         executable, "speak", timeout=1, sleep=simulate_worker, text="สวัสดีครับ")
 
     assert result["ok"] is True
@@ -61,11 +61,11 @@ def test_music_dj_control_request_sends_bounded_voice_text(tmp_path):
     assert seen["text"] == "สวัสดีครับ"
     assert list((tmp_path / "dj-control").iterdir()) == []
     with pytest.raises(ValueError, match="240 printable"):
-        wsg.music_dj_control_request(executable, "speak", text="x" * 241)
+        wsg.autodj_control_request(executable, "speak", text="x" * 241)
 
 
-def test_music_dj_voice_summary_includes_requester_time_and_next_song():
-    summary = wsg.music_dj_speech_summary({
+def test_autodj_voice_summary_includes_requester_time_and_next_song():
+    summary = wsg.autodj_speech_summary({
         "current": {"title": "Current song", "user": "Ann"},
         "queue": [{"title": "Next song", "user": "Bob"}],
         "updated_at": 1000,
@@ -77,17 +77,17 @@ def test_music_dj_voice_summary_includes_requester_time_and_next_song():
     assert "Next song, requested by Bob" in summary
     assert len(summary) <= 240
     with pytest.raises(ValueError, match="no current song"):
-        wsg.music_dj_speech_summary({"current": None})
+        wsg.autodj_speech_summary({"current": None})
 
 
-def test_music_dj_control_refuses_unknown_actions_and_wrong_executables(tmp_path):
+def test_autodj_control_refuses_unknown_actions_and_wrong_executables(tmp_path):
     with pytest.raises(ValueError, match="Unsupported"):
-        wsg.music_dj_control_request(tmp_path / "AutoDJ.exe", "restart")
+        wsg.autodj_control_request(tmp_path / "AutoDJ.exe", "restart")
     with pytest.raises(ValueError, match="packaged AutoDJ.exe"):
-        wsg.music_dj_control_request(tmp_path / "other.exe", "status")
+        wsg.autodj_control_request(tmp_path / "other.exe", "status")
 
 
-def test_music_dj_state_requires_a_fresh_valid_snapshot(tmp_path, monkeypatch):
+def test_autodj_state_requires_a_fresh_valid_snapshot(tmp_path, monkeypatch):
     executable = tmp_path / "AutoDJ.exe"
     state_dir = tmp_path / "dj-control"
     state_dir.mkdir()
@@ -100,10 +100,10 @@ def test_music_dj_state_requires_a_fresh_valid_snapshot(tmp_path, monkeypatch):
     }
     (state_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
 
-    assert wsg.music_dj_worker_state(executable) == state
+    assert wsg.autodj_worker_state(executable) == state
     state["updated_at"] -= 30
     (state_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
-    assert wsg.music_dj_worker_state(executable) is None
+    assert wsg.autodj_worker_state(executable) is None
 
 
 @pytest.mark.parametrize("address", [

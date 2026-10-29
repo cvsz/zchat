@@ -100,7 +100,7 @@ echo === PYTHON COMPILE CHECK ===
     src\features\status_marquee_entry.py ^
     src\features\status_changer_entry.py ^
     src\features\im_autoreply_entry.py ^
-    src\features\music_dj_entry.py ^
+    src\features\autodj_entry.py ^
     src\camfrog\camfrog_tray.py ^
     src\camfrog\clipboard_support.py ^
     src\features\web_status_entry.py ^
@@ -187,9 +187,10 @@ if exist "dist\status-random\status-random.exe" del /q "dist\status-random\statu
 if exist "dist\status-marquee\status-marquee.exe" del /q "dist\status-marquee\status-marquee.exe"
 if exist "dist\status-changer\status-changer.exe" del /q "dist\status-changer\status-changer.exe"
 if exist "dist\im-autoreply\im-autoreply.exe" del /q "dist\im-autoreply\im-autoreply.exe"
-if exist "dist\music-dj\music-dj.exe" del /q "dist\music-dj\music-dj.exe"
+if exist "dist\autodj\autodj.exe" del /q "dist\autodj\autodj.exe"
 if exist "dist\auto-dj\AutoDJ.exe" del /q "dist\auto-dj\AutoDJ.exe"
-if exist "dist\AutoDJ.exe" del /q "dist\AutoDJ.exe"
+if exist "dist\music-dj\music-dj.exe" del /q "dist\music-dj\music-dj.exe"
+if exist "dist\music-dj" rmdir /s /q "dist\music-dj"
 if exist "dist\web-status\web-status.exe" del /q "dist\web-status\web-status.exe"
 if exist "dist\web-status.exe" del /q "dist\web-status.exe"
 if exist "dist\cloudbot-manager\CloudBot-Manager.exe" del /q "dist\cloudbot-manager\CloudBot-Manager.exe"
@@ -318,7 +319,7 @@ echo === BUILD WEB STATUS UPDATER (GUI + CONSOLE PROTOTYPE) ===
     --distpath dist\web-status --workpath build\web-status ^
     --name web-status %ICONARG% ^
     --collect-all psutil ^
-    --add-data "assets\zttato.png;assets" ^
+    --add-data "assets\logo.png;assets" ^
     --paths src\camfrog --paths src\features ^
     src\features\web_status_entry.py
 if errorlevel 1 goto :fail
@@ -331,7 +332,7 @@ echo === BUILD STANDALONE CLOUD BOT MANAGER (CLOUDBOT ONLY) ===
     --distpath dist\cloudbot-manager --workpath build\cloudbot-manager ^
     --name CloudBot-Manager %ICONARG% ^
     --collect-all psutil ^
-    --add-data "assets\zttato.png;assets" ^
+    --add-data "assets\logo.png;assets" ^
     --paths src\camfrog --paths src\features ^
     src\features\cloudbot_manager_entry.py
 if errorlevel 1 goto :fail
@@ -377,9 +378,16 @@ echo === BUILD MUSIC DJ ===
     --distpath dist\auto-dj --workpath build\auto-dj ^
     --name AutoDJ %ICONARG% ^
     --add-data "assets\zeazdev-room.png;assets" ^
+    --add-data "config.example.toml;." ^
     --collect-all pywinauto --collect-all psutil --collect-submodules comtypes ^
-    --paths src\camfrog --paths src\features ^
-    src\features\music_dj_entry.py
+    --hidden-import camfrog_autodj.doctor --hidden-import camfrog_autodj.discover ^
+    --hidden-import camfrog_autodj.launcher --hidden-import camfrog_autodj.gui ^
+    --hidden-import camfrog_autodj.adapters.uia --hidden-import camfrog_autodj.adapters.console ^
+    --hidden-import camfrog_autodj.adapters.logtail --hidden-import camfrog_autodj.webchat ^
+    --hidden-import camfrog_autodj.windows --hidden-import camfrog_autodj.winmsg ^
+    --hidden-import camfrog_autodj.textutil --hidden-import camfrog_autodj.tts ^
+    --paths src\camfrog --paths src\camfrog_autodj --paths src\features ^
+    src\features\autodj_entry.py
 if errorlevel 1 goto :fail
 
 

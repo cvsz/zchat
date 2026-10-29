@@ -9923,7 +9923,7 @@ Outputs:
   dist\status-marquee\status-marquee.exe
   dist\im-autoreply\im-autoreply.exe
   dist\web-status\web-status.exe
-  dist\music-dj\music-dj.exe
+  dist\autodj\autodj.exe
   dist\status-changer\status-changer.exe
   dist\zchat-client\zchat-client.exe
   dist\zchat-client\SHA256SUMS.txt

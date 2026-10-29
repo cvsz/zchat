@@ -4,7 +4,7 @@
 - **100% Functionality Validation & Robustness across all 8 Core Modules**:
   - `chat-im-private`: Real Auto-Reply & private window routing with keyboard protection.
   - `im-autoreply`: Unattended background reply engine with session retention.
-  - `auto-dj` (AutoDJ.exe, was music-dj): DJ auto-broadcast, media player integration, automated track titles.
+  - `auto-dj` (AutoDJ.exe, was autodj): DJ auto-broadcast, media player integration, automated track titles.
   - `room-control`: Operator room management with automated moderator actions.
   - `status-changer`: Direct-memory & non-invasive status updating.
   - `status-marquee`: Text animation engine with background ticker scheduling.
