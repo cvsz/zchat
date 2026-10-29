@@ -5,8 +5,6 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
-from pywinauto import Desktop
-
 log = logging.getLogger("autodj")
 
 
@@ -19,9 +17,19 @@ class Candidate:
     exe: str
 
 
+def _get_desktop():
+    """Get UIA Desktop, only available on Windows with pywinauto."""
+    try:
+        from pywinauto import Desktop
+        return Desktop(backend="uia")
+    except ImportError:
+        raise RuntimeError("pywinauto not available (Windows only)")
+
+
 def list_all() -> list[Candidate]:
     out = []
-    for w in Desktop(backend="uia").windows():
+    desktop = _get_desktop()
+    for w in desktop.windows():
         try:
             pid = w.process_id()
             import psutil

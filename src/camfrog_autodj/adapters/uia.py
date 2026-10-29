@@ -49,8 +49,57 @@ class UiaAdapter(ChatAdapter):
         self._view = self._input = None
         self._web = False
 
-    def _find(self, ctype, idx):
-        return self.win.descendants(control_type=ctype)[idx]
+    def _find(self, ctype, idx, description: str = "") -> object | None:
+        """Find a control by type and index with bounds checking."""
+        try:
+            controls = self.win.descendants(control_type=ctype)
+        except Exception as e:
+            log.debug("failed to enumerate %s controls: %s", ctype, e)
+            return None
+
+        if not controls:
+            log.warning("no %s controls found%s", ctype, f" ({description})" if description else "")
+            return None
+
+        if idx < 0:
+            idx = len(controls) + idx
+        if idx < 0 or idx >= len(controls):
+            log.warning("%s[%d] out of range (0-%d)%s", ctype, idx, len(controls) - 1,
+                        f" ({description})" if description else "")
+            # Try to auto-find a suitable control
+            return self._auto_find_control(controls, ctype, description)
+
+        return controls[idx]
+
+    def _auto_find_control(self, controls, ctype, description: str = "") -> object | None:
+        """Try to find a suitable control when the configured index is out of bounds."""
+        # For view/history: prefer controls that have text content
+        # For input: prefer enabled, editable controls
+        for i, ctrl in enumerate(controls):
+            try:
+                if ctype == "Edit":
+                    # Input control: should be enabled and not read-only
+                    vp = ctrl.iface_value
+                    if (ctrl.iface.CurrentIsEnabled and not vp.CurrentIsReadOnly and
+                            ctrl.iface.CurrentIsEnabled):
+                        log.info("auto-selected %s[%d] as input%s", ctype, i,
+                                 f" ({description})" if description else "")
+                        return ctrl
+                else:
+                    # View/history control: should have text content
+                    text = _read(ctrl)
+                    if text and len(text) > 10:
+                        log.info("auto-selected %s[%d] as view%s", ctype, i,
+                                 f" ({description})" if description else "")
+                        return ctrl
+            except Exception:
+                continue
+
+        # Fallback: first control
+        if controls:
+            log.info("fallback to %s[0]%s", ctype, f" ({description})" if description else "")
+            return controls[0]
+        return None
 
     def _resolve(self):
         if self.win is None:
@@ -65,8 +114,10 @@ class UiaAdapter(ChatAdapter):
             if self.cfg.view_kind == "web":
                 raise RuntimeError(f"no pane titled like {self.cfg.web_view_title!r} in the window")
         self._web = False
-        self._view = self._find(self.cfg.view_type, self.cfg.view_index)
+        self._view = self._find(self.cfg.view_type, self.cfg.view_index, "view/history")
         self._input = None
+        if self._view is None:
+            raise RuntimeError(f"no {self.cfg.view_type} control found at index {self.cfg.view_index}")
         log.info("chat: text control %s[%d]", self.cfg.view_type, self.cfg.view_index)
 
     def _lines(self) -> list[str]:
@@ -100,7 +151,7 @@ class UiaAdapter(ChatAdapter):
         if self._view is None:
             self._resolve()
         if not self._web and self._input is None:
-            self._input = self._find(self.cfg.input_type, self.cfg.input_index)
+            self._input = self._find(self.cfg.input_type, self.cfg.input_index, "message input")
         if self._input is None:
             raise RuntimeError("chat message box not found")
 
