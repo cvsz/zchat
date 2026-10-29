@@ -249,3 +249,22 @@ def test_release_rejects_mismatched_tag(monkeypatch):
     monkeypatch.setattr(release, "app_version", lambda: "2.99.0")
     with pytest.raises(SystemExit, match="must match APP_VERSION"):
         release.main(["--tag", "v0.0.1"])
+
+
+def test_signing_script_fails_closed_on_invalid_authenticode_status():
+    root = Path(__file__).resolve().parents[1]
+    script = (root / "tools" / "sign_exe.ps1").read_text(encoding="utf-8")
+
+    assert '$r.Status -ne "Valid"' in script
+    assert '$null -eq $r.SignerCertificate' in script
+    assert 'throw ("Authenticode signing failed for {0}: {1} ({2})" -f $File, $r.Status, $r.StatusMessage)' in script
+    assert 'Warning: signing failed for $File' not in script
+
+
+def test_full_build_exe_propagates_authenticode_failure():
+    root = Path(__file__).resolve().parents[1]
+    script = (root / "full-build-exe.bat").read_text(encoding="utf-8")
+    signing_failure = script.split("if errorlevel 1 (", 2)[2].split(") else (", 1)[0]
+
+    assert "CODE SIGNING FAILED" in signing_failure
+    assert "exit /b 1" in signing_failure

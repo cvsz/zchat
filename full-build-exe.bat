@@ -33,7 +33,8 @@ if defined ZCODER_CERT_THUMBPRINT (
 
 if errorlevel 1 (
     echo.
-    echo CODE SIGNING WARNING/FAILED (check certificate / thumbprint)
+    echo CODE SIGNING FAILED (check certificate / thumbprint)
+    exit /b 1
 ) else (
     echo.
     echo CODE SIGNING SUCCESS: All .exe files signed successfully.
