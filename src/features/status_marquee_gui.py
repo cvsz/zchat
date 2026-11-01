@@ -4335,8 +4335,8 @@ def build_app():
             self.root.configure(background="#f4f1e8")
             self.app_name = "Marquee Status"
             self.root.title(f"ZChat {self.app_name}")
-            self.root.geometry("430x610")
-            self.root.minsize(420, 600)
+            self.root.geometry("360x480")
+            self.root.minsize(320, 240)
             self.root.resizable(True, True)
             try:
                 self.root.iconbitmap(str(_application_icon_path()))

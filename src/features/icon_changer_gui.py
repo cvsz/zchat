@@ -1019,8 +1019,8 @@ class StandaloneIconChangerGUI:
 
         self.root = root or self.tk.Tk()
         self.root.title(APP_TITLE)
-        self.root.geometry("520x460")
-        self.root.minsize(450, 400)
+        self.root.geometry("360x480")
+        self.root.minsize(320, 240)
 
         self._init_styles()
 

@@ -126,8 +126,8 @@ def build_app(config_path=CONFIG_PATH):
             self.root = tk.Tk()
             self.root.configure(background="#f4f1e8")
             self.root.title("LINE Status Changer")
-            self.root.geometry("560x600")
-            self.root.minsize(500, 520)
+            self.root.geometry("360x480")
+            self.root.minsize(320, 240)
             self.root.resizable(True, True)
             self.root.report_callback_exception = self.report_callback_exception
             try:
