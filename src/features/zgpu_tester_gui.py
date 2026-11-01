@@ -28,8 +28,8 @@ class ZGPUTesterApp:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("zGPU LLM Acceleration Studio")
-        self.root.geometry("640x580")
-        self.root.minsize(500, 450)
+        self.root.geometry("360x480")
+        self.root.minsize(320, 240)
 
         self.endpoint_var = tk.StringVar(value=DEFAULT_ZGPU_RPC_URL)
         self.api_key_var = tk.StringVar(value="")

@@ -6038,8 +6038,8 @@ def build_app():
                 background=[("selected", "#fffdfa")],
                 foreground=[("selected", "#8b672b")],
             )
-            self.root.geometry("800x560")
-            self.root.minsize(660, 460)
+            self.root.geometry("360x480")
+            self.root.minsize(320, 240)
             self.model = ConfigModel(cfg_path)
             self.q = queue.Queue()
             self.busy = False

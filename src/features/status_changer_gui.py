@@ -5794,8 +5794,8 @@ def build_app():
                 if _unverified_status_test_submit_enabled():
                     title += " [UNVERIFIED TEST MODE]"
                 self.root.title(title)
-                self.root.geometry("520x700")
-                self.root.minsize(480, 640)
+                self.root.geometry("360x480")
+                self.root.minsize(320, 240)
                 self.root.resizable(True, True)
                 try:
                     self.root.iconbitmap(str(_application_icon_path()))
